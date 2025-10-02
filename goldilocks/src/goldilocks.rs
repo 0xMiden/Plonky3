@@ -49,7 +49,7 @@ impl Goldilocks {
 
     /// Expose the inner value; does not guarantee the uniqueness of data
     pub const fn inner(&self) -> u64 {
-        self.0
+        self.value
     }
 
     /// Convert a constant u64 array into a constant Goldilocks array.
