@@ -40,8 +40,16 @@ pub struct Goldilocks {
 }
 
 impl Goldilocks {
-    pub(crate) const fn new(value: u64) -> Self {
-        Self { value }
+    /// Create a new element from u64;
+    pub const fn new(value: u64) -> Self {
+        Self {
+            value: if value >= P { value - P } else { value },
+        }
+    }
+
+    /// Expose the inner value; does not guarantee the uniqueness of data
+    pub const fn inner(&self) -> u64 {
+        self.0
     }
 
     /// Convert a constant u64 array into a constant Goldilocks array.
