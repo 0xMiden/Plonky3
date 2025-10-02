@@ -1,5 +1,6 @@
-use alloc::vec;
+use alloc::string::String;
 use alloc::vec::Vec;
+use alloc::{format, vec};
 use core::fmt::{Debug, Display, Formatter};
 use core::hash::{Hash, Hasher};
 use core::iter::{Product, Sum};
@@ -477,6 +478,20 @@ impl QuotientMap<i64> for Goldilocks {
     #[inline(always)]
     unsafe fn from_canonical_unchecked(int: i64) -> Self {
         Self::from_int(int)
+    }
+}
+
+impl TryFrom<u64> for Goldilocks {
+    type Error = String;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        if value >= P {
+            Err(format!(
+                "invalid field element: value {value} is greater than or equal to the field modulus"
+            ))
+        } else {
+            Ok(Self::new(value))
+        }
     }
 }
 
