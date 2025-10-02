@@ -165,6 +165,30 @@ impl Randomizable for Goldilocks {
     }
 }
 
+impl From<u8> for Goldilocks {
+    fn from(value: u8) -> Self {
+        Self {
+            value: value as u64,
+        }
+    }
+}
+
+impl From<u16> for Goldilocks {
+    fn from(value: u16) -> Self {
+        Self {
+            value: value as u64,
+        }
+    }
+}
+
+impl From<u32> for Goldilocks {
+    fn from(value: u32) -> Self {
+        Self {
+            value: value as u64,
+        }
+    }
+}
+
 impl PartialEq for Goldilocks {
     fn eq(&self, other: &Self) -> bool {
         self.as_canonical_u64() == other.as_canonical_u64()
