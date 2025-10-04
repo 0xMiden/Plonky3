@@ -54,7 +54,7 @@ impl Goldilocks {
     }
 
     /// Expose the inner value; does guarantee the uniqueness of data
-    pub fn as_int(&self) -> u64 {
+    pub const fn as_int(&self) -> u64 {
         if self.value >= P {
             self.value - P
         } else {
