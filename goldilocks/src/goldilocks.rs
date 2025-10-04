@@ -140,6 +140,12 @@ impl Goldilocks {
     };
 }
 
+impl Into<u64> for Goldilocks {
+    fn into(self) -> u64 {
+        self.as_int()
+    }
+}
+
 impl Deserializable for Goldilocks {
     fn read_from<R: ByteReader>(source: &mut R) -> Result<Self, DeserializationError> {
         let inner = u64::read_from(source)?;
