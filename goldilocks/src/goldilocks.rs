@@ -53,6 +53,15 @@ impl Goldilocks {
         self.value
     }
 
+    /// Expose the inner value; does guarantee the uniqueness of data
+    pub fn as_int(&self) -> u64 {
+        if self.value >= P {
+            self.value - P
+        } else {
+            self.value
+        }
+    }
+
     /// Convert a constant u64 array into a constant Goldilocks array.
     ///
     /// This is a const version of `.map(Goldilocks::new)`.
