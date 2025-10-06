@@ -140,12 +140,6 @@ impl Goldilocks {
     };
 }
 
-impl Into<u64> for Goldilocks {
-    fn into(self) -> u64 {
-        self.as_int()
-    }
-}
-
 impl From<Goldilocks> for u64 {
     fn from(value: Goldilocks) -> Self {
         value.as_int()
