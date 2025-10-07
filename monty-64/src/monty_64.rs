@@ -173,7 +173,7 @@ impl<MP: MontyParameters64> MontyField64<MP> {
 
         while exp > 0 {
             if exp & 1 == 1 {
-                result = result * base;
+                result *= base;
             }
             base = base * base;
             exp >>= 1;
@@ -489,6 +489,7 @@ impl<MP: MontyParameters64> Div for MontyField64<MP> {
     type Output = Self;
 
     #[inline]
+    #[allow(clippy::suspicious_arithmetic_impl)]
     fn div(self, rhs: Self) -> Self {
         self * rhs.inverse()
     }

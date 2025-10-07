@@ -14,7 +14,7 @@ fn test_poseidon2_equivalence_with_standard_goldilocks() {
     let test_input = [0u64, 1, 2, 3, 4, 5, 6, 7];
 
     // Montgomery version
-    let mut input_monty = test_input.map(|x| Goldilocks::new(x));
+    let mut input_monty = test_input.map(Goldilocks::new);
     let poseidon2_monty: crate::poseidon2::Poseidon2GoldilocksHL<8> = Poseidon2::new(
         ExternalLayerConstants::<Goldilocks, 8>::new_from_saved_array(
             crate::poseidon2::HL_GOLDILOCKS_MONTY_8_EXTERNAL_ROUND_CONSTANTS,
@@ -50,7 +50,7 @@ fn test_poseidon2_equivalence_with_standard_goldilocks() {
 fn test_mds_matrix_functionality() {
     use crate::mds::MdsMatrixGoldilocksMonty;
 
-    let mds = MdsMatrixGoldilocksMonty::default();
+    let mds = MdsMatrixGoldilocksMonty;
 
     // Test with 8 elements
     let input_8 = [

@@ -31,7 +31,7 @@ pub fn main() {
     std::panic::set_hook(Box::new(|info| {
         if let Some(msg) = info.payload().downcast_ref::<String>() {
             if !msg.contains("WebAssembly.Table.grow") {
-                console::error_1(&format!("Panic: {}", msg).into());
+                console::error_1(&format!("Panic: {msg}").into());
             }
         }
     }));
@@ -50,13 +50,13 @@ pub fn benchmark_goldilocks_multiplication() -> f64 {
     // Warm up
     let mut result = a;
     for _ in 0..100 {
-        result = result * b;
+        result *= b;
     }
 
     // Benchmark 1,000,000 multiplications with proper timing
     let start = performance_now();
     for _ in 0..1_000_000 {
-        result = result * b;
+        result *= b;
     }
     let end = performance_now();
 
@@ -81,13 +81,13 @@ pub fn benchmark_goldilocks_addition() -> f64 {
     // Warm up
     let mut result = a;
     for _ in 0..100 {
-        result = result + b;
+        result += b;
     }
 
     // Benchmark 1,000,000 additions
     let start = performance_now();
     for _ in 0..1_000_000 {
-        result = result + b;
+        result += b;
     }
     let end = performance_now();
 
@@ -110,13 +110,13 @@ pub fn benchmark_goldilocks_monty_multiplication() -> f64 {
     // Warm up
     let mut result = a;
     for _ in 0..100 {
-        result = result * b;
+        result *= b;
     }
 
     // Benchmark 1,000,000 multiplications
     let start = performance_now();
     for _ in 0..1_000_000 {
-        result = result * b;
+        result *= b;
     }
     let end = performance_now();
 
@@ -141,13 +141,13 @@ pub fn benchmark_goldilocks_monty_addition() -> f64 {
     // Warm up
     let mut result = a;
     for _ in 0..100 {
-        result = result + b;
+        result += b;
     }
 
     // Benchmark 1,000,000 additions
     let start = performance_now();
     for _ in 0..1_000_000 {
-        result = result + b;
+        result += b;
     }
     let end = performance_now();
 

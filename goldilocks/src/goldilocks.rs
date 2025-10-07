@@ -167,15 +167,12 @@ impl Randomizable for Goldilocks {
     const VALUE_SIZE: usize = 8;
 
     fn from_random_bytes(source: &[u8]) -> Option<Self> {
-        let value = match u64::from_random_bytes(source) {
-            Some(p) => p,
-            None => return None,
-        };
+        let value = u64::from_random_bytes(source)?;
 
         if value >= P {
             None
         } else {
-            Some(Goldilocks { value: value })
+            Some(Goldilocks { value })
         }
     }
 }

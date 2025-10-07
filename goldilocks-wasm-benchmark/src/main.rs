@@ -21,13 +21,13 @@ fn benchmark_goldilocks_multiplication() -> f64 {
     // Warm up
     let mut result = a;
     for _ in 0..100 {
-        result = result * b;
+        result *= b;
     }
 
     // Benchmark 1,000,000 multiplications
     let start = Instant::now();
     for _ in 0..1_000_000 {
-        result = result * b;
+        result *= b;
     }
     let duration = start.elapsed();
 
@@ -35,10 +35,7 @@ fn benchmark_goldilocks_multiplication() -> f64 {
     let _ = black_box(result);
 
     let duration_ms = duration.as_secs_f64() * 1000.0;
-    println!(
-        "Goldilocks multiplication: 1,000,000 ops in {:.3}ms",
-        duration_ms
-    );
+    println!("Goldilocks multiplication: 1,000,000 ops in {duration_ms:.3}ms");
     duration_ms
 }
 
@@ -51,13 +48,13 @@ fn benchmark_goldilocks_addition() -> f64 {
     // Warm up
     let mut result = a;
     for _ in 0..100 {
-        result = result + b;
+        result += b;
     }
 
     // Benchmark 1,000,000 additions
     let start = Instant::now();
     for _ in 0..1_000_000 {
-        result = result + b;
+        result += b;
     }
     let duration = start.elapsed();
 
@@ -65,7 +62,7 @@ fn benchmark_goldilocks_addition() -> f64 {
     let _ = black_box(result);
 
     let duration_ms = duration.as_secs_f64() * 1000.0;
-    println!("Goldilocks addition: 1,000,000 ops in {:.3}ms", duration_ms);
+    println!("Goldilocks addition: 1,000,000 ops in {duration_ms:.3}ms");
     duration_ms
 }
 
@@ -79,13 +76,13 @@ fn benchmark_goldilocks_monty_multiplication() -> f64 {
     // Warm up
     let mut result = a;
     for _ in 0..100 {
-        result = result * b;
+        result *= b;
     }
 
     // Benchmark 1,000,000 multiplications
     let start = Instant::now();
     for _ in 0..1_000_000 {
-        result = result * b;
+        result *= b;
     }
     let duration = start.elapsed();
 
@@ -93,10 +90,7 @@ fn benchmark_goldilocks_monty_multiplication() -> f64 {
     let _ = black_box(result);
 
     let duration_ms = duration.as_secs_f64() * 1000.0;
-    println!(
-        "Goldilocks Monty multiplication: 1,000,000 ops in {:.3}ms",
-        duration_ms
-    );
+    println!("Goldilocks Monty multiplication: 1,000,000 ops in {duration_ms:.3}ms");
     duration_ms
 }
 
@@ -109,13 +103,13 @@ fn benchmark_goldilocks_monty_addition() -> f64 {
     // Warm up
     let mut result = a;
     for _ in 0..100 {
-        result = result + b;
+        result += b;
     }
 
     // Benchmark 1,000,000 additions
     let start = Instant::now();
     for _ in 0..1_000_000 {
-        result = result + b;
+        result += b;
     }
     let duration = start.elapsed();
 
@@ -123,10 +117,7 @@ fn benchmark_goldilocks_monty_addition() -> f64 {
     let _ = black_box(result);
 
     let duration_ms = duration.as_secs_f64() * 1000.0;
-    println!(
-        "Goldilocks Monty addition: 1,000,000 ops in {:.3}ms",
-        duration_ms
-    );
+    println!("Goldilocks Monty addition: 1,000,000 ops in {duration_ms:.3}ms");
     duration_ms
 }
 
@@ -142,10 +133,10 @@ fn main() {
 
     println!();
     println!("=== Summary (1,000,000 operations each) ===");
-    println!("Goldilocks multiplication: {:.3}ms", mult_time);
-    println!("Goldilocks addition: {:.3}ms", add_time);
-    println!("Goldilocks-Monty multiplication: {:.3}ms", monty_mult_time);
-    println!("Goldilocks-Monty addition: {:.3}ms", monty_add_time);
+    println!("Goldilocks multiplication: {mult_time:.3}ms");
+    println!("Goldilocks addition: {add_time:.3}ms");
+    println!("Goldilocks-Monty multiplication: {monty_mult_time:.3}ms");
+    println!("Goldilocks-Monty addition: {monty_add_time:.3}ms");
 
     println!();
     println!("=== Performance Analysis ===");
@@ -153,30 +144,20 @@ fn main() {
     if monty_mult_time > 0.0 {
         let mult_speedup = mult_time / monty_mult_time;
         if mult_speedup > 1.0 {
-            println!(
-                "✅ Monty multiplication is {:.2}x faster than standard",
-                mult_speedup
-            );
+            println!("✅ Monty multiplication is {mult_speedup:.2}x faster than standard");
         } else {
-            println!(
-                "⚠️  Standard multiplication is {:.2}x faster than Monty",
-                1.0 / mult_speedup
-            );
+            let inv_speedup = 1.0 / mult_speedup;
+            println!("⚠️  Standard multiplication is {inv_speedup:.2}x faster than Monty");
         }
     }
 
     if monty_add_time > 0.0 {
         let add_speedup = add_time / monty_add_time;
         if add_speedup > 1.0 {
-            println!(
-                "✅ Monty addition is {:.2}x faster than standard",
-                add_speedup
-            );
+            println!("✅ Monty addition is {add_speedup:.2}x faster than standard");
         } else {
-            println!(
-                "⚠️  Standard addition is {:.2}x faster than Monty",
-                1.0 / add_speedup
-            );
+            let inv_speedup = 1.0 / add_speedup;
+            println!("⚠️  Standard addition is {inv_speedup:.2}x faster than Monty");
         }
     }
 
@@ -186,7 +167,7 @@ fn main() {
 
     println!();
     println!("=== Overall Performance ===");
-    println!("Total operations: {}", total_ops);
-    println!("Total time: {:.3}ms", total_time_ms);
-    println!("Operations per second: {:.0}", ops_per_second);
+    println!("Total operations: {total_ops}");
+    println!("Total time: {total_time_ms:.3}ms");
+    println!("Operations per second: {ops_per_second:.0}");
 }

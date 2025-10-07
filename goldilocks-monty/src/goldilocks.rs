@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn test_basic_arithmetic() {
         let a_u64 = (2u128.pow(64) - 2u128.pow(32)) as u64;
-        let b_u64 = (a_u64 - 1) as u64;
+        let b_u64 = a_u64 - 1;
         let a = Goldilocks::new(a_u64);
         let b = Goldilocks::new(b_u64);
 
