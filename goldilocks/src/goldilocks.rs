@@ -138,6 +138,14 @@ impl Goldilocks {
         }
         powers_of_two
     };
+
+    /// Compute the inverse of the field element. Return 0 if the input is 0
+    pub fn inverse_unwrap_zero(&self) -> Self {
+        match self.try_inverse() {
+            None => Self::ZERO,
+            Some(p) => p,
+        }
+    }
 }
 
 impl From<Goldilocks> for u64 {
