@@ -43,6 +43,19 @@ impl<F, A, const D: usize> BinomialExtensionField<F, D, A> {
     }
 }
 
+impl<F, const D: usize> BinomialExtensionField<F, D>
+where
+    Self: Field,
+{
+    /// Compute the inverse of the field element. Return 0 if the input is 0
+    pub fn inverse_unwrap_zero(&self) -> Self {
+        match self.try_inverse() {
+            None => Self::ZERO,
+            Some(p) => p,
+        }
+    }
+}
+
 impl<F: Field, A: Algebra<F>, const D: usize> Default for BinomialExtensionField<F, D, A> {
     fn default() -> Self {
         Self::new(array::from_fn(|_| A::ZERO))
