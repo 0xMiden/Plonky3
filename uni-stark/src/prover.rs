@@ -49,6 +49,8 @@ where
         );
     }
 
+    // ark_std::println!("cs count {}", air.)
+
     // Compute the height `N = 2^n` and `log_2(height)`, `n`, of the trace.
     let degree = trace.height();
     let log_degree = log2_strict_usize(degree);
@@ -56,9 +58,11 @@ where
 
     // Compute the constraint polynomials as vectors of symbolic expressions.
     let symbolic_constraints = get_symbolic_constraints(air, 0, public_values.len());
+    ark_std::println!("symbolic constraints count {}", symbolic_constraints.len());
 
     // Count the number of constraints that we have.
-    let constraint_count = symbolic_constraints.len();
+    // Note that the aux trace's symbolic constraints are over extension field and therefore requires more constraints
+    let max_constraint_count = symbolic_constraints.len() * SC::Challenge::DIMENSION;
 
     // ark_std::println!("symbolic: {:?}", symbolic_constraints);
 
@@ -143,14 +147,14 @@ where
         .map(|_| challenger.sample_algebra_element())
         .collect();
     let (aux_trace_commit, aux_trace, aux_trace_data) = {
-        let aux_trace = generate_logup_trace(&trace, &randomness[0]);
-        // let aux_trace = generate_logup_trace(&trace, &-SC::Challenge::ONE); // TODO -- remove
+        // let aux_trace = generate_logup_trace(&trace, &randomness[0]);
+        let aux_trace = generate_logup_trace(&trace, &-SC::Challenge::ONE); // TODO -- remove
         let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
             .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
 
         challenger.observe(aux_trace_commit.clone());
 
-        ark_std::println!("aux trace: {:?}", aux_trace);
+        // ark_std::println!("aux trace: {:?}", aux_trace);
         //    ark_std::println!("aux trace data: {:?}", aux_trace_data);
 
         (aux_trace_commit, aux_trace, aux_trace_data)
@@ -196,6 +200,8 @@ where
     let aux_trace_on_quotient_domain =
         pcs.get_evaluations_on_domain(&aux_trace_data, 0, quotient_domain);
 
+    ark_std::println!("max constraint_count: {:?}", max_constraint_count);
+
     // Compute the quotient polynomial `Q(x)` by evaluating
     //          `C(T_1(x), ..., T_w(x), T_1(hx), ..., T_w(hx), selectors(x)) / Z_H(x)`
     // at every point in the quotient domain. The degree of `Q(x)` is `<= deg(C(x)) - N = 2N - 2` in the case
@@ -206,10 +212,10 @@ where
         trace_domain,
         quotient_domain,
         trace_on_quotient_domain,
-        // aux_trace_on_quotient_domain,
-        // &randomness,
+        aux_trace_on_quotient_domain,
+        &randomness,
         alpha,
-        constraint_count,
+        max_constraint_count,
     );
 
     // Due to `alpha`, evaluations of `Q` all lie in the extension field `E`.
@@ -333,10 +339,10 @@ fn quotient_values<SC, A, Mat>(
     trace_domain: Domain<SC>,
     quotient_domain: Domain<SC>,
     trace_on_quotient_domain: Mat,
-    // aux_trace_on_quotient_domain: Mat,
-    // randomness: &[SC::Challenge],
+    aux_trace_on_quotient_domain: Mat,
+    randomness: &[SC::Challenge],
     alpha: SC::Challenge,
-    constraint_count: usize,
+    max_constraint_count: usize,
 ) -> Vec<SC::Challenge>
 where
     SC: StarkGenericConfig,
@@ -362,7 +368,7 @@ where
         sels.inv_vanishing.push(Val::<SC>::default());
     }
 
-    let mut alpha_powers = alpha.powers().collect_n(constraint_count);
+    let mut alpha_powers = alpha.powers().collect_n(max_constraint_count);
     alpha_powers.reverse();
     // alpha powers looks like Vec<EF> ~ Vec<[F; D]>
     // It's useful to also have access to the transpose of this of form [Vec<F>; D].
@@ -390,16 +396,16 @@ where
                 width,
             );
 
-            // let aux = RowMajorMatrix::new(
-            //     aux_trace_on_quotient_domain.vertically_packed_row_pair(i_start, next_step),
-            //     12, // fix
-            // );
+            let aux = RowMajorMatrix::new(
+                aux_trace_on_quotient_domain.vertically_packed_row_pair(i_start, next_step),
+                aux_trace_on_quotient_domain.width(), // fix
+            );
 
             let accumulator = PackedChallenge::<SC>::ZERO;
             let mut folder = ProverConstraintFolder {
                 main: main.as_view(),
-                // aux: aux.as_view(),
-                // randomness,
+                aux: aux.as_view(),
+                randomness,
                 public_values,
                 is_first_row,
                 is_last_row,
@@ -409,6 +415,8 @@ where
                 accumulator,
                 constraint_index: 0,
             };
+
+            ark_std::println!("start to evaluate");
             air.eval(&mut folder);
 
             // quotient(x) = constraints(x) / Z_H(x)

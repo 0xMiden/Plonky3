@@ -33,7 +33,6 @@
 // In its basic form, asserts a^(self.degree-1) * b = c
 // (so that the total constraint degree is self.degree)
 
-
 // If `uses_transition_constraints`, checks that on transition rows, the first a = row number
 // */
 // pub struct MulAir {

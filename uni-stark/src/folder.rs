@@ -1,8 +1,8 @@
 use alloc::vec::Vec;
 
 use p3_air::{AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder};
-use p3_field::{BasedVectorSpace, PackedField};
-use p3_matrix::dense::RowMajorMatrixView;
+use p3_field::{BasedVectorSpace, PackedField, PackedFieldExtension, PackedValue};
+use p3_matrix::dense::{DenseMatrix, RowMajorMatrixView};
 use p3_matrix::stack::ViewPair;
 
 use crate::{PackedChallenge, PackedVal, StarkGenericConfig, Val};
@@ -16,10 +16,10 @@ use crate::{PackedChallenge, PackedVal, StarkGenericConfig, Val};
 pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     /// The matrix containing rows on which the constraint polynomial is to be evaluated
     pub main: RowMajorMatrixView<'a, PackedVal<SC>>,
-    // /// Optional: the matrix containing rows on which the aux constraint polynomial is to be evaluated
-    // pub aux: RowMajorMatrixView<'a, PackedVal<SC>>,
-    // /// Optional: the randomness used to compute the aux tract
-    // pub randomness: &'a [SC::Challenge],
+    /// Optional: the matrix containing rows on which the aux constraint polynomial is to be evaluated
+    pub aux: RowMajorMatrixView<'a, PackedVal<SC>>,
+    /// Optional: the randomness used to compute the aux tract
+    pub randomness: &'a [SC::Challenge],
     /// Public inputs to the AIR
     pub public_values: &'a Vec<Val<SC>>,
     /// Evaluations of the Selector polynomial for the first row of the trace
@@ -106,16 +106,16 @@ impl<'a, SC: StarkGenericConfig> AirBuilder for ProverConstraintFolder<'a, SC> {
         self.constraint_index += 1;
     }
 
-    #[inline]
-    fn assert_zeros<const N: usize, I: Into<Self::Expr>>(&mut self, array: [I; N]) {
-        let expr_array = array.map(Into::into);
-        self.accumulator += PackedChallenge::<SC>::from_basis_coefficients_fn(|i| {
-            let alpha_powers = &self.decomposed_alpha_powers[i]
-                [self.constraint_index..(self.constraint_index + N)];
-            PackedVal::<SC>::packed_linear_combination::<N>(alpha_powers, &expr_array)
-        });
-        self.constraint_index += N;
-    }
+    // #[inline]
+    // fn assert_zeros<const N: usize, I: Into<Self::Expr>>(&mut self, array: [I; N]) {
+    //     let expr_array = array.map(Into::into);
+    //     self.accumulator += PackedChallenge::<SC>::from_basis_coefficients_fn(|i| {
+    //         let alpha_powers = &self.decomposed_alpha_powers[i]
+    //             [self.constraint_index..(self.constraint_index + N)];
+    //         PackedVal::<SC>::packed_linear_combination::<N>(alpha_powers, &expr_array)
+    //     });
+    //     self.constraint_index += N;
+    // }
 }
 
 impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverConstraintFolder<'_, SC> {
@@ -146,18 +146,60 @@ impl<SC: StarkGenericConfig> ExtensionBuilder for ProverConstraintFolder<'_, SC>
 }
 
 impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for ProverConstraintFolder<'a, SC> {
-    type MP = RowMajorMatrixView<'a, PackedChallenge<SC>>;
+    type MP = DenseMatrix<PackedChallenge<SC>>;
     type RandomVar = SC::Challenge;
     /// Return the matrix representing permutation registers.
     fn permutation(&self) -> Self::MP {
-        // self.aux
-        todo!()
+        ark_std::println!("permutation {:?}", self.aux);
+
+        // First, we need to unpack all the PackedVal<SC> values to get individual Val<SC> elements.
+        // Each PackedVal<SC> contains multiple Val<SC> values packed together.
+        let unpacked_values: Vec<Val<SC>> = self
+            .aux
+            .values
+            .iter()
+            .flat_map(|packed_val| packed_val.as_slice().iter().copied())
+            .collect();
+
+        // Now chunk the unpacked base field values by the extension degree
+        // and convert each chunk to a challenge in the extension field.
+        let challenges: Vec<SC::Challenge> = unpacked_values
+            .chunks_exact(SC::Challenge::DIMENSION)
+            .map(|chunk| {
+                SC::Challenge::from_basis_coefficients_slice(chunk)
+                    .expect("Failed to convert basis coefficients to challenge")
+            })
+            .collect();
+
+        ark_std::println!("permutation challenges {:?}", challenges);
+
+        // Now pack the challenges. PackedChallenge has a WIDTH which determines how many
+        // challenges are packed together.
+        let packed_challenges: Vec<PackedChallenge<SC>> = challenges
+            .chunks_exact(PackedVal::<SC>::WIDTH)
+            .map(|chunk| PackedChallenge::<SC>::from_ext_slice(chunk))
+            .collect();
+
+        // Determine the number of extension columns
+        let num_cols = self.aux.width / SC::Challenge::DIMENSION;
+
+        ark_std::println!(
+            "permutation challenges width {:?} {}",
+            self.aux.width,
+            num_cols
+        );
+
+        let res = DenseMatrix::new(packed_challenges, num_cols);
+
+        ark_std::println!("permutation res {:?}", res);
+
+        res
     }
 
     /// Return the list of randomness values for permutation argument.
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
-        // self.randomness
-        todo!()
+        self.randomness
+        // todo!()
     }
 }
 
