@@ -23,6 +23,10 @@ pub trait BaseAirWithPublicValues<F>: BaseAir<F> {
     }
 }
 
+pub trait MultiPhaseBaseAir<F>: BaseAir<F> {
+    fn aux_width(&self) -> usize;
+}
+
 /// An algebraic intermediate representation (AIR) definition.
 ///
 /// Contains an evaluation function for computing the constraints of the AIR.
