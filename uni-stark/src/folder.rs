@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use p3_air::{AirBuilder, AirBuilderWithPublicValues};
+use p3_air::{AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder};
 use p3_field::{BasedVectorSpace, PackedField};
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::ViewPair;
@@ -16,6 +16,10 @@ use crate::{PackedChallenge, PackedVal, StarkGenericConfig, Val};
 pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     /// The matrix containing rows on which the constraint polynomial is to be evaluated
     pub main: RowMajorMatrixView<'a, PackedVal<SC>>,
+    /// Optional: the matrix containing rows on which the aux constraint polynomial is to be evaluated
+    pub aux: Option<RowMajorMatrixView<'a, PackedChallenge<SC>>>,
+    /// Optional: the randomness used to compute the aux tract
+    pub randomness: Option<&'a [SC::Challenge]>,
     /// Public inputs to the AIR
     pub public_values: &'a Vec<Val<SC>>,
     /// Evaluations of the Selector polynomial for the first row of the trace
@@ -43,6 +47,10 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
 pub struct VerifierConstraintFolder<'a, SC: StarkGenericConfig> {
     /// Pair of consecutive rows from the committed polynomial evaluations
     pub main: ViewPair<'a, SC::Challenge>,
+    /// Optional: pair of consecutive rows from the committed polynomial evaluations
+    pub aux: Option<ViewPair<'a, SC::Challenge>>,
+    /// Optional: the randomness used to compute the aux tract
+    pub randomness: Option<&'a [SC::Challenge]>,
     /// Public values that are inputs to the computation
     pub public_values: &'a Vec<Val<SC>>,
     /// Evaluations of the Selector polynomial for the first row of the trace
@@ -119,6 +127,40 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverConstraintFold
     }
 }
 
+impl<SC: StarkGenericConfig> ExtensionBuilder for ProverConstraintFolder<'_, SC> {
+    type EF = SC::Challenge;
+
+    type ExprEF = PackedChallenge<SC>;
+
+    type VarEF = PackedChallenge<SC>;
+
+    fn assert_zero_ext<I>(&mut self, x: I)
+    where
+        I: Into<Self::ExprEF>,
+    {
+        x.into()
+            .as_basis_coefficients_slice()
+            .iter()
+            .for_each(|&x| self.assert_zero(x));
+    }
+}
+
+impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for ProverConstraintFolder<'a, SC> {
+    type MP = RowMajorMatrixView<'a, PackedChallenge<SC>>;
+    type RandomVar = SC::Challenge;
+    /// Return the matrix representing permutation registers.
+    fn permutation(&self) -> Self::MP {
+        self.aux
+            .expect("aux trace not found: permutation is not enabled")
+    }
+
+    /// Return the list of randomness values for permutation argument.
+    fn permutation_randomness(&self) -> &[Self::RandomVar] {
+        self.randomness
+            .expect("aux randomness not found: permutation is not enabled")
+    }
+}
+
 impl<'a, SC: StarkGenericConfig> AirBuilder for VerifierConstraintFolder<'a, SC> {
     type F = Val<SC>;
     type Expr = SC::Challenge;
@@ -160,5 +202,40 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for VerifierConstraintFo
 
     fn public_values(&self) -> &[Self::F] {
         self.public_values
+    }
+}
+
+impl<SC: StarkGenericConfig> ExtensionBuilder for VerifierConstraintFolder<'_, SC> {
+    type EF = SC::Challenge;
+
+    type ExprEF = SC::Challenge;
+    type VarEF = SC::Challenge;
+
+    fn assert_zero_ext<I>(&mut self, x: I)
+    where
+        I: Into<Self::ExprEF>,
+    {
+        x.into()
+            .as_basis_coefficients_slice()
+            .iter()
+            .for_each(|&x| self.assert_zero(x));
+    }
+}
+
+impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for VerifierConstraintFolder<'a, SC> {
+    type MP = ViewPair<'a, SC::Challenge>;
+
+    type RandomVar = SC::Challenge;
+
+    /// Return the matrix representing permutation registers.
+    fn permutation(&self) -> Self::MP {
+        self.aux
+            .expect("aux trace not found: permutation is not enabled")
+    }
+
+    /// Return the list of randomness values for permutation argument.
+    fn permutation_randomness(&self) -> &[Self::RandomVar] {
+        self.randomness
+            .expect("aux randomness not found: permutation is not enabled")
     }
 }

@@ -207,6 +207,8 @@ mod tests {
     use p3_baby_bear::BabyBear;
     use p3_field::{BasedVectorSpace, extension::BinomialExtensionField};
 
+    use crate::{gen_logup_col, permute};
+
     use super::*;
 
     /// A test AIR that enforces a simple linear transition logic:
@@ -230,6 +232,10 @@ mod tests {
         fn aux_width(&self) -> usize {
             // 3 extension field elements per row
             12
+        }
+
+        fn num_randomness(&self) -> usize {
+            1
         }
     }
 
@@ -304,11 +310,6 @@ mod tests {
         }
     }
 
-    // A very simple permutation
-    fn permute<F: Field>(x: &Vec<F>) -> Vec<F> {
-        x.iter().rev().cloned().collect::<Vec<F>>()
-    }
-
     // Generate a main trace.
     // The first column is incremental
     // The second column is the rev of the first column
@@ -323,18 +324,7 @@ mod tests {
         RowMajorMatrix::new(main_values, 2)
     }
 
-    // Give a column m[c], for each i, generate aux[c][i] = 1/(r-m[c][i])
-    // Slow, don't use in production - use batch inversion instead
-    fn gen_aux_col(
-        main_col: &[BabyBear],
-        aux_randomness: &BinomialExtensionField<BabyBear, 4>,
-    ) -> Vec<BinomialExtensionField<BabyBear, 4>> {
-        main_col
-            .iter()
-            .map(|&x| (*aux_randomness - BinomialExtensionField::<BabyBear, 4>::from(x)).inverse())
-            .collect()
-    }
-
+    // Generate the aux trace for logup arguments.
     fn gen_aux(
         main_col: &Vec<BabyBear>,
         aux_randomness: &BinomialExtensionField<BabyBear, 4>,
@@ -342,8 +332,8 @@ mod tests {
         let perm_main_col = permute(main_col);
         let len = main_col.len();
 
-        let aux1 = gen_aux_col(&main_col, &aux_randomness);
-        let aux2 = gen_aux_col(&perm_main_col, &aux_randomness);
+        let aux1 = gen_logup_col(&main_col, aux_randomness);
+        let aux2 = gen_logup_col(&perm_main_col, aux_randomness);
         let mut aux3 = vec![aux1[0] - aux2[0]];
         for i in 1..len {
             aux3.push(aux3[i - 1] + aux1[i] - aux2[i])

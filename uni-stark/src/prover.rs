@@ -21,7 +21,7 @@ use crate::{
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, SC::Challenge, Val<SC>>>,
     #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
@@ -34,7 +34,19 @@ where
     A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
 {
     #[cfg(debug_assertions)]
-    crate::check_constraints::check_constraints(air, &trace, public_values);
+    {
+        // TODO: FIXME
+        // Create empty aux trace for debug constraint checking
+        let aux = RowMajorMatrix::new(vec![SC::Challenge::ZERO; trace.height()], 0);
+        let aux_randomness = vec![];
+        crate::check_constraints::check_constraints(
+            air,
+            &trace,
+            &aux,
+            &aux_randomness,
+            public_values,
+        );
+    }
 
     // Compute the height `N = 2^n` and `log_2(height)`, `n`, of the trace.
     let degree = trace.height();
@@ -346,6 +358,8 @@ where
             let accumulator = PackedChallenge::<SC>::ZERO;
             let mut folder = ProverConstraintFolder {
                 main: main.as_view(),
+                aux: None,
+                randomness: None,
                 public_values,
                 is_first_row,
                 is_last_row,

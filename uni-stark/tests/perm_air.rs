@@ -1,6 +1,8 @@
 use core::borrow::Borrow;
 
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, MultiPhaseBaseAir};
+use p3_air::{
+    Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, MultiPhaseBaseAir, PermutationAirBuilder,
+};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::{DuplexChallenger, HashChallenger, SerializingChallenger32};
 use p3_commit::ExtensionMmcs;
@@ -20,25 +22,28 @@ use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
 /// For testing the public values feature
-pub struct FibonacciAir {}
+pub struct TwoPhasePermAir {}
 
-impl<F> BaseAir<F> for FibonacciAir {
+impl<F> BaseAir<F> for TwoPhasePermAir {
     fn width(&self) -> usize {
-        NUM_FIBONACCI_COLS
+        // first 2 columns are for fibonacci sequence
+        // the third column is a permutation of the second column
+        3
     }
 }
 
-impl<F> MultiPhaseBaseAir<F> for FibonacciAir {
+impl<F> MultiPhaseBaseAir<F> for TwoPhasePermAir {
     fn aux_width(&self) -> usize {
-        0
+        // 3 extension field elements
+        12
     }
 
     fn num_randomness(&self) -> usize {
-        0
+        1
     }
 }
 
-impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {
+impl<AB: AirBuilderWithPublicValues + PermutationAirBuilder> Air<AB> for TwoPhasePermAir {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
 
@@ -48,27 +53,41 @@ impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {
         let b = pis[1];
         let x = pis[2];
 
-        let (local, next) = (
-            main.row_slice(0).expect("Matrix is empty?"),
-            main.row_slice(1).expect("Matrix only has 1 row?"),
-        );
-        let local: &FibonacciRow<AB::Var> = (*local).borrow();
-        let next: &FibonacciRow<AB::Var> = (*next).borrow();
+        // Fibonacci sequence
+        {
+            let (local, next) = (
+                main.row_slice(0).expect("Matrix is empty?"),
+                main.row_slice(1).expect("Matrix only has 1 row?"),
+            );
+            let local: &FibonacciRow<AB::Var> = (*local).borrow();
+            let next: &FibonacciRow<AB::Var> = (*next).borrow();
 
-        let mut when_first_row = builder.when_first_row();
+            let mut when_first_row = builder.when_first_row();
 
-        when_first_row.assert_eq(local.left.clone(), a);
-        when_first_row.assert_eq(local.right.clone(), b);
+            when_first_row.assert_eq(local.left.clone(), a);
+            when_first_row.assert_eq(local.right.clone(), b);
 
-        let mut when_transition = builder.when_transition();
+            let mut when_transition = builder.when_transition();
 
-        // a' <- b
-        when_transition.assert_eq(local.right.clone(), next.left.clone());
+            // a' <- b
+            when_transition.assert_eq(local.right.clone(), next.left.clone());
 
-        // b' <- a + b
-        when_transition.assert_eq(local.left.clone() + local.right.clone(), next.right.clone());
+            // b' <- a + b
+            when_transition.assert_eq(local.left.clone() + local.right.clone(), next.right.clone());
 
-        builder.when_last_row().assert_eq(local.right.clone(), x);
+            builder.when_last_row().assert_eq(local.right.clone(), x);
+        }
+
+        // Auxiliary permutation
+        {
+            let aux = builder.permutation();
+            let randomness = builder.permutation_randomness();
+
+            let (local, next) = (
+                aux.row_slice(0).expect("Matrix is empty?"),
+                aux.row_slice(1).expect("Matrix only has 1 row?"),
+            );
+        }
     }
 }
 
@@ -146,8 +165,8 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
     let config = MyConfig::new(pcs, challenger);
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
-    let proof = prove(&config, &FibonacciAir {}, trace, &pis);
-    verify(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");
+    let proof = prove(&config, &TwoPhasePermAir {}, trace, &pis);
+    verify(&config, &TwoPhasePermAir {}, &proof, &pis).expect("verification failed");
 }
 
 #[test]
@@ -194,8 +213,8 @@ fn test_zk() {
     let challenger = Challenger::from_hasher(vec![], byte_hash);
     let config = MyHidingConfig::new(pcs, challenger);
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
-    let proof = prove(&config, &FibonacciAir {}, trace, &pis);
-    verify(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");
+    let proof = prove(&config, &TwoPhasePermAir {}, trace, &pis);
+    verify(&config, &TwoPhasePermAir {}, &proof, &pis).expect("verification failed");
 }
 
 #[test]
@@ -230,5 +249,5 @@ fn test_incorrect_public_value() {
         BabyBear::ONE,
         BabyBear::from_u32(123_123), // incorrect result
     ];
-    prove(&config, &FibonacciAir {}, trace, &pis);
+    prove(&config, &TwoPhasePermAir {}, trace, &pis);
 }

@@ -25,6 +25,8 @@ pub trait BaseAirWithPublicValues<F>: BaseAir<F> {
 
 pub trait MultiPhaseBaseAir<F>: BaseAir<F> {
     fn aux_width(&self) -> usize;
+
+    fn num_randomness(&self) -> usize;
 }
 
 /// An algebraic intermediate representation (AIR) definition.
@@ -33,7 +35,7 @@ pub trait MultiPhaseBaseAir<F>: BaseAir<F> {
 /// This function can be applied to an evaluation trace in which case each
 /// constraint will compute a particular value or it can be applied symbolically
 /// with each constraint computing a symbolic expression.
-pub trait Air<AB: AirBuilder>: BaseAir<AB::F> {
+pub trait Air<AB: AirBuilder>: MultiPhaseBaseAir<AB::F> {
     /// Evaluate all AIR constraints using the provided builder.
     ///
     /// The builder provides both the trace on which the constraints

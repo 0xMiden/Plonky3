@@ -1,7 +1,10 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, PairBuilder};
+use p3_air::{
+    Air, AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder,
+    PermutationAirBuilder,
+};
 use p3_field::Field;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_util::log2_ceil_usize;
@@ -60,7 +63,13 @@ where
     F: Field,
     A: Air<SymbolicAirBuilder<F>>,
 {
-    let mut builder = SymbolicAirBuilder::new(preprocessed_width, air.width(), num_public_values);
+    let mut builder = SymbolicAirBuilder::new(
+        preprocessed_width,
+        air.width(),
+        air.aux_width(),
+        air.num_randomness(),
+        num_public_values,
+    );
     air.eval(&mut builder);
     builder.constraints()
 }
@@ -70,12 +79,20 @@ where
 pub struct SymbolicAirBuilder<F: Field> {
     preprocessed: RowMajorMatrix<SymbolicVariable<F>>,
     main: RowMajorMatrix<SymbolicVariable<F>>,
+    aux: RowMajorMatrix<SymbolicVariable<F>>,
+    randomness: Vec<SymbolicVariable<F>>,
     public_values: Vec<SymbolicVariable<F>>,
     constraints: Vec<SymbolicExpression<F>>,
 }
 
 impl<F: Field> SymbolicAirBuilder<F> {
-    pub(crate) fn new(preprocessed_width: usize, width: usize, num_public_values: usize) -> Self {
+    pub(crate) fn new(
+        preprocessed_width: usize,
+        width: usize,
+        aux_width: usize,
+        num_randomness: usize,
+        num_public_values: usize,
+    ) -> Self {
         let prep_values = [0, 1]
             .into_iter()
             .flat_map(|offset| {
@@ -89,12 +106,21 @@ impl<F: Field> SymbolicAirBuilder<F> {
                 (0..width).map(move |index| SymbolicVariable::new(Entry::Main { offset }, index))
             })
             .collect();
+        let aux_values = [0, 1] // Aux trace also use consecutive rows for LogUp based permutation check
+            .into_iter()
+            .flat_map(|offset| {
+                (0..aux_width).map(move |index| SymbolicVariable::new(Entry::Aux { offset }, index))
+            })
+            .collect();
+        let randomness = Self::sample_randomness(num_randomness);
         let public_values = (0..num_public_values)
             .map(move |index| SymbolicVariable::new(Entry::Public, index))
             .collect();
         Self {
             preprocessed: RowMajorMatrix::new(prep_values, preprocessed_width),
             main: RowMajorMatrix::new(main_values, width),
+            aux: RowMajorMatrix::new(aux_values, aux_width),
+            randomness: randomness,
             public_values,
             constraints: vec![],
         }
@@ -102,6 +128,12 @@ impl<F: Field> SymbolicAirBuilder<F> {
 
     pub(crate) fn constraints(self) -> Vec<SymbolicExpression<F>> {
         self.constraints
+    }
+
+    pub(crate) fn sample_randomness(num_randomness: usize) -> Vec<SymbolicVariable<F>> {
+        (0..num_randomness)
+            .map(|index| SymbolicVariable::new(Entry::Challenge, index))
+            .collect()
     }
 }
 
@@ -151,12 +183,38 @@ impl<F: Field> PairBuilder for SymbolicAirBuilder<F> {
     }
 }
 
+impl<F: Field> ExtensionBuilder for SymbolicAirBuilder<F> {
+    type EF = F;
+    type ExprEF = SymbolicExpression<F>;
+    type VarEF = SymbolicVariable<F>;
+
+    fn assert_zero_ext<I>(&mut self, x: I)
+    where
+        I: Into<Self::ExprEF>,
+    {
+        self.constraints.push(x.into());
+    }
+}
+
+impl<F: Field> PermutationAirBuilder for SymbolicAirBuilder<F> {
+    type MP = RowMajorMatrix<Self::VarEF>;
+    type RandomVar = SymbolicVariable<F>;
+
+    fn permutation(&self) -> Self::MP {
+        self.aux.clone()
+    }
+
+    fn permutation_randomness(&self) -> &[Self::RandomVar] {
+        &self.randomness
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    use p3_air::BaseAir;
+    use p3_air::{BaseAir, MultiPhaseBaseAir};
     use p3_baby_bear::BabyBear;
 
     use super::*;
@@ -170,6 +228,16 @@ mod tests {
     impl BaseAir<BabyBear> for MockAir {
         fn width(&self) -> usize {
             self.width
+        }
+    }
+
+    impl MultiPhaseBaseAir<BabyBear> for MockAir {
+        fn aux_width(&self) -> usize {
+            4
+        }
+
+        fn num_randomness(&self) -> usize {
+            1
         }
     }
 
@@ -269,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_air_builder_initialization() {
-        let builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 3);
+        let builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 12, 1, 3);
 
         let expected_main = [
             SymbolicVariable::<BabyBear>::new(Entry::Main { offset: 0 }, 0),
@@ -298,7 +366,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_air_builder_is_first_last_row() {
-        let builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 3);
+        let builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 12, 1, 3);
 
         assert!(
             matches!(builder.is_first_row(), SymbolicExpression::IsFirstRow),
@@ -313,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_air_builder_assert_zero() {
-        let mut builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 3);
+        let mut builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 12, 1, 3);
         let expr = SymbolicExpression::Constant(BabyBear::new(5));
         builder.assert_zero(expr.clone());
 
