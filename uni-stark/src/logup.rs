@@ -5,13 +5,19 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+
 use p3_field::{ExtensionField, Field, batch_multiplicative_inverse};
 use p3_matrix::Matrix;
 use p3_matrix::dense::DenseMatrix;
 
 /// Check if two vectors contain the same multiset of elements (i.e., form a permutation).
-/// This uses a simple O(n^2) algorithm suitable for debug assertions.
-/// We may use a BTreeMap -- but this requires F to implement Order.
+///
+/// Three possible approaches:
+/// 1. HashMap - requires Hash trait (not available for Field)
+/// 2. BTreeMap - requires Ord trait (not available for Field)
+/// 3. O(n^2) algorithm - only requires Eq (available via Field -> Packable)
+///
+/// We use approach #3, and it is for debug-only assertions.
 fn is_permutation<F: Field>(col1: &[&F], col2: &[&F]) -> bool {
     if col1.len() != col2.len() {
         return false;
@@ -106,10 +112,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use p3_baby_bear::BabyBear;
     use p3_field::PrimeCharacteristicRing;
     use p3_field::extension::BinomialExtensionField;
+
+    use super::*;
 
     type F = BabyBear;
     type EF = BinomialExtensionField<F, 4>;
@@ -181,8 +188,12 @@ mod tests {
         // Test that t_i * (r - x_i) = 1
         // Last two columns must form a permutation: [5, 7] and [7, 5]
         let trace_values = vec![
-            F::from_u64(1), F::from_u64(5), F::from_u64(7),
-            F::from_u64(2), F::from_u64(7), F::from_u64(5),
+            F::from_u64(1),
+            F::from_u64(5),
+            F::from_u64(7),
+            F::from_u64(2),
+            F::from_u64(7),
+            F::from_u64(5),
         ];
         let main_trace = DenseMatrix::new(trace_values, 3);
         let randomness = EF::from_u64(42);

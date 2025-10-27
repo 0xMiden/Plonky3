@@ -93,11 +93,23 @@ where
     challenger.observe(commitments.trace.clone());
     challenger.observe_slice(public_values);
 
+    // begin processing aux trace
+    let num_randomness = air.num_randomness();
+    if num_randomness != 0 {
+        let randomness: Vec<SC::Challenge> = (0..num_randomness)
+            .map(|_| challenger.sample_algebra_element())
+            .collect();
+
+        challenger.observe(commitments.aux.clone());
+    }
+
     // Get the first Fiat Shamir challenge which will be used to combine all constraint polynomials
     // into a single polynomial.
     //
     // Soundness Error: n/|EF| where n is the number of constraints.
     let alpha = challenger.sample_algebra_element();
+    ark_std::println!("verifier alpha: {:?}", alpha);
+
     challenger.observe(commitments.quotient_chunks.clone());
 
     // We've already checked that commitments.random is present if and only if ZK is enabled.
@@ -195,8 +207,8 @@ where
 
     let mut folder = VerifierConstraintFolder {
         main,
-        aux: None,
-        randomness: None,
+        // aux: None,
+        // randomness: None,
         public_values,
         is_first_row: sels.is_first_row,
         is_last_row: sels.is_last_row,

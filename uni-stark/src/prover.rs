@@ -7,14 +7,15 @@ use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, PackedValue, PrimeCharacteristicRing};
 use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::dense::{DenseMatrix, RowMajorMatrix};
 use p3_maybe_rayon::prelude::*;
 use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{
     Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
-    StarkGenericConfig, SymbolicAirBuilder, Val, get_log_quotient_degree, get_symbolic_constraints,
+    StarkGenericConfig, SymbolicAirBuilder, Val, generate_logup_trace, get_log_quotient_degree,
+    get_symbolic_constraints,
 };
 
 #[instrument(skip_all)]
@@ -59,7 +60,7 @@ where
     // Count the number of constraints that we have.
     let constraint_count = symbolic_constraints.len();
 
-    ark_std::println!("symbolic: {:?}", symbolic_constraints);
+    // ark_std::println!("symbolic: {:?}", symbolic_constraints);
 
     // Each constraint polynomial looks like `C_j(X_1, ..., X_w, Y_1, ..., Y_w, Z_1, ..., Z_j)`.
     // When evaluated on a given row, the X_i's will be the `i`'th element of the that row, the
@@ -120,8 +121,9 @@ where
     //      trace_commit contains the root of the tree
     //      trace_data contains the entire tree.
     //          - trace_data.leaves is the matrix containing `ET`.
-    let (trace_commit, trace_data) =
-        info_span!("commit to trace data").in_scope(|| pcs.commit([(ext_trace_domain, trace)]));
+    // TODO: avoid cloning the trace.
+    let (trace_commit, trace_data) = info_span!("commit to trace data")
+        .in_scope(|| pcs.commit([(ext_trace_domain, trace.clone())]));
 
     // Observe the instance.
     // degree < 2^255 so we can safely cast log_degree to a u8.
@@ -134,6 +136,27 @@ where
 
     // Observe the public input values.
     challenger.observe_slice(public_values);
+
+    // begin processing aux trace
+    let num_randomness = air.num_randomness();
+    let randomness: Vec<SC::Challenge> = (0..num_randomness)
+        .map(|_| challenger.sample_algebra_element())
+        .collect();
+    let (aux_trace_commit, aux_trace, aux_trace_data) = {
+        let aux_trace = generate_logup_trace(&trace, &randomness[0]);
+        // let aux_trace = generate_logup_trace(&trace, &-SC::Challenge::ONE); // TODO -- remove
+        let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
+            .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
+
+        challenger.observe(aux_trace_commit.clone());
+
+        ark_std::println!("aux trace: {:?}", aux_trace);
+        //    ark_std::println!("aux trace data: {:?}", aux_trace_data);
+
+        (aux_trace_commit, aux_trace, aux_trace_data)
+    };
+
+    ark_std::println!("aux trace: {:?}", aux_trace);
 
     // Get the first Fiat Shamir challenge which will be used to combine all constraint polynomials
     // into a single polynomial.
@@ -156,6 +179,7 @@ where
     // confirm that satisfying it indeed proves what the prover claims. Hence this should not be
     // a soundness issue.
     let alpha: SC::Challenge = challenger.sample_algebra_element();
+    ark_std::println!("prover alpha: {:?}", alpha);
 
     // A domain large enough to uniquely identify the quotient polynomial.
     // This domain must be contained in the domain over which `trace_data` is defined.
@@ -169,6 +193,8 @@ where
     // This only works if the trace domain is `gH'` and the quotient domain is `gK` for some subgroup `K` contained in `H'`.
     // TODO: Make this explicit in `get_evaluations_on_domain` or otherwise fix this.
     let trace_on_quotient_domain = pcs.get_evaluations_on_domain(&trace_data, 0, quotient_domain);
+    let aux_trace_on_quotient_domain =
+        pcs.get_evaluations_on_domain(&aux_trace_data, 0, quotient_domain);
 
     // Compute the quotient polynomial `Q(x)` by evaluating
     //          `C(T_1(x), ..., T_w(x), T_1(hx), ..., T_w(hx), selectors(x)) / Z_H(x)`
@@ -180,6 +206,8 @@ where
         trace_domain,
         quotient_domain,
         trace_on_quotient_domain,
+        // aux_trace_on_quotient_domain,
+        // &randomness,
         alpha,
         constraint_count,
     );
@@ -236,6 +264,7 @@ where
     // will be passed to the verifier.
     let commitments = Commitments {
         trace: trace_commit,
+        aux: aux_trace_commit,
         quotient_chunks: quotient_commit,
         random: opt_r_commit.clone(),
     };
@@ -304,6 +333,8 @@ fn quotient_values<SC, A, Mat>(
     trace_domain: Domain<SC>,
     quotient_domain: Domain<SC>,
     trace_on_quotient_domain: Mat,
+    // aux_trace_on_quotient_domain: Mat,
+    // randomness: &[SC::Challenge],
     alpha: SC::Challenge,
     constraint_count: usize,
 ) -> Vec<SC::Challenge>
@@ -312,6 +343,8 @@ where
     A: for<'a> Air<ProverConstraintFolder<'a, SC>>,
     Mat: Matrix<Val<SC>> + Sync,
 {
+    ark_std::println!("start quotient values");
+
     let quotient_size = quotient_domain.size();
     let width = trace_on_quotient_domain.width();
     let mut sels = debug_span!("Compute Selectors")
@@ -357,11 +390,16 @@ where
                 width,
             );
 
+            // let aux = RowMajorMatrix::new(
+            //     aux_trace_on_quotient_domain.vertically_packed_row_pair(i_start, next_step),
+            //     12, // fix
+            // );
+
             let accumulator = PackedChallenge::<SC>::ZERO;
             let mut folder = ProverConstraintFolder {
                 main: main.as_view(),
-                aux: None,
-                randomness: None,
+                // aux: aux.as_view(),
+                // randomness,
                 public_values,
                 is_first_row,
                 is_last_row,

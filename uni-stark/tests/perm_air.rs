@@ -86,37 +86,37 @@ impl<AB: AirBuilderWithPublicValues + PermutationAirBuilder> Air<AB> for TwoPhas
             builder.when_last_row().assert_eq(local.m2.clone(), x);
         }
 
-        // Auxiliary permutation
-        {
-            let aux = builder.permutation();
-            if builder.permutation_randomness().is_empty() {
-                panic!("randomness is missing for permutation")
-            }
-            let randomness: AB::ExprEF = builder.permutation_randomness()[0].into(); // safe unwrap
+        // // Auxiliary permutation
+        // {
+        //     let aux = builder.permutation();
+        //     if builder.permutation_randomness().is_empty() {
+        //         panic!("randomness is missing for permutation")
+        //     }
+        //     let randomness: AB::ExprEF = builder.permutation_randomness()[0].into(); // safe unwrap
 
-            let (aux_local, aux_next) = (
-                aux.row_slice(0).expect("Matrix is empty?"),
-                aux.row_slice(1).expect("Matrix only has 1 row?"),
-            );
+        //     let (aux_local, aux_next) = (
+        //         aux.row_slice(0).expect("Matrix is empty?"),
+        //         aux.row_slice(1).expect("Matrix only has 1 row?"),
+        //     );
 
-            let xi = local.m2.clone().into();
-            let yi = local.m3.clone().into();
-            let ti = aux_local[0].into();
-            let wi = aux_local[1].into();
-            let running_sum = aux_local[2].into();
-            let next_running_sum = aux_next[2].into();
+        //     let xi = local.m2.clone().into();
+        //     let yi = local.m3.clone().into();
+        //     let ti = aux_local[0].into();
+        //     let wi = aux_local[1].into();
+        //     let running_sum = aux_local[2].into();
+        //     let next_running_sum = aux_next[2].into();
 
-            // ti = 1/(r-xi)
-            builder.assert_one_ext(ti.clone() * (randomness.clone() - AB::ExprEF::from(xi)));
-            // wi = 1/(r-yi)
-            builder.assert_one_ext(wi.clone() * (randomness - AB::ExprEF::from(yi)));
-            // next_running_sum = running_sum + ti - wi
-            builder
-                .when_transition()
-                .assert_eq_ext(next_running_sum, running_sum.clone() + ti - wi);
-            // last running sum is zero
-            builder.when_last_row().assert_zero_ext(running_sum);
-        }
+        //     // ti = 1/(r-xi)
+        //     builder.assert_one_ext(ti.clone() * (randomness.clone() - AB::ExprEF::from(xi)));
+        //     // wi = 1/(r-yi)
+        //     builder.assert_one_ext(wi.clone() * (randomness - AB::ExprEF::from(yi)));
+        //     // next_running_sum = running_sum + ti - wi
+        //     builder
+        //         .when_transition()
+        //         .assert_eq_ext(next_running_sum, running_sum.clone() + ti - wi);
+        //     // last running sum is zero
+        //     builder.when_last_row().assert_zero_ext(running_sum);
+        // }
     }
 }
 

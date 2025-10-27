@@ -205,11 +205,11 @@ mod tests {
 
     use p3_air::{BaseAir, BaseAirWithPublicValues, MultiPhaseBaseAir};
     use p3_baby_bear::BabyBear;
-    use p3_field::{BasedVectorSpace, extension::BinomialExtensionField};
-
-    use crate::{gen_logup_col, permute};
+    use p3_field::BasedVectorSpace;
+    use p3_field::extension::BinomialExtensionField;
 
     use super::*;
+    use crate::{gen_logup_col, permute};
 
     /// A test AIR that enforces a simple linear transition logic:
     /// - Each cell in the next row must equal the current cell plus 1 (i.e., `next = current + 1`)

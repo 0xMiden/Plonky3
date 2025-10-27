@@ -26,6 +26,7 @@ pub struct Proof<SC: StarkGenericConfig> {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Commitments<Com> {
     pub(crate) trace: Com,
+    pub(crate) aux: Com,
     pub(crate) quotient_chunks: Com,
     pub(crate) random: Option<Com>,
 }

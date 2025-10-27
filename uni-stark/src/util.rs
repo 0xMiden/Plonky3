@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+
 use p3_field::{ExtensionField, Field, batch_multiplicative_inverse};
 
 // A very simple permutation
