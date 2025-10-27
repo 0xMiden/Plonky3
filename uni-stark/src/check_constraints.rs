@@ -354,12 +354,12 @@ mod tests {
 
         // Each row = previous + 1, with 4 rows total, 2 columns.
         // Last row must match public values [4, 1]
-        // randomness = 5 + x + x^2 + x^3
-        // | m1 | m2 | a1          | a2          | a3 |
-        // | 1  | 4  | 1/(1,1,1,1) | 1/(4,1,1,1) | .. |
-        // | 2  | 3  | 1/(2,1,1,1) | 1/(3,1,1,1) | .. |
-        // | 3  | 2  | 1/(3,1,1,1) | 1/(2,1,1,1) | .. |
-        // | 4  | 1  | 1/(4,1,1,1) | 1/(1,1,1,1) | .. |
+        // randomness = 5 + 10x + 15x^2 + 20x^3
+        // | m1 | m2 | a1      | a2      | a3 |
+        // | 1  | 4  | 1/(r-1) | 1/(r-4) | .. |
+        // | 2  | 3  | 1/(r-2) | 1/(r-3) | .. |
+        // | 3  | 2  | 1/(r-3) | 1/(r-2) | .. |
+        // | 4  | 1  | 1/(r-4) | 1/(r-1) | .. |
         let air = RowLogicAir::<2>;
 
         let main_col = (1..=len).map(|i| BabyBear::new(i)).collect();
@@ -393,12 +393,12 @@ mod tests {
 
         // Each row = previous + 1, with 4 rows total, 2 columns.
         // Last row must match public values [4, 1]
-        // randomness = 5 + x + x^2 + x^3
-        // | m1 | m2 | a1          | a2          | a3 |
-        // | 1  | 4  | 1/(1,1,1,1) | 1/(4,1,1,1) | .. |
-        // | 2  | 3  | 1/(2,1,1,1) | 1/(3,1,1,1) | .. |
-        // | 3  | 2  | 1/(3,1,1,1) | 1/(2,1,1,1) | .. |
-        // | 4  | 1  | 1/(4,1,1,1) | 1/(1,1,1,1) | .. |
+        // randomness = 5 + 10x + 15x^2 + 20x^3
+        // | m1 | m2 | a1      | a2      | a3 |
+        // | 1  | 4  | 1/(r-1) | 1/(r-4) | .. |
+        // | 2  | 0  | 1/(r-2) | 1/(r-3) | .. |
+        // | 0  | 2  | 1/(r-3) | 1/(r-2) | .. | <- wrong value
+        // | 4  | 1  | 1/(r-4) | 1/(r-1) | .. |
         let air = RowLogicAir::<2>;
 
         let mut main_col: Vec<BabyBear> = (1..=len).map(|i| BabyBear::new(i)).collect();
@@ -433,12 +433,12 @@ mod tests {
 
         // Each row = previous + 1, with 4 rows total, 2 columns.
         // Last row must match public values [4, 1]
-        // randomness = 5 + x + x^2 + x^3
-        // | m1 | m2 | a1          | a2          | a3 |
-        // | 1  | 4  | 1/(1,1,1,1) | 1/(4,1,1,1) | .. |
-        // | 2  | 3  | 1/(2,1,1,1) | 1/(3,1,1,1) | .. |
-        // | 3  | 2  | 1/(3,1,1,1) | 1/(2,1,1,1) | .. |
-        // | 4  | 1  | 1/(4,1,1,1) | 1/(1,1,1,1) | .. |
+        // randomness = 5 + 10x + 15x^2 + 20x^3
+        // | m1 | m2 | a1      | a2      | a3 |
+        // | 1  | 4  | 1/(r-1) | 1/(r-4) | .. |
+        // | 2  | 3  | 1/(r-2) | 1/(r-3) | .. |
+        // | 3  | 2  | 1/(r-3) | 1/(r-2) | .. |
+        // | 4  | 1  | 1/(r-4) | 1/(r-1) | .. | <- wrong value
         let air = RowLogicAir::<2>;
 
         let main_col = (1..=len).map(|i| BabyBear::new(i)).collect();
@@ -472,12 +472,12 @@ mod tests {
 
         // Each row = previous + 1, with 4 rows total, 2 columns.
         // Last row must match public values [4, 1]
-        // randomness = 5 + x + x^2 + x^3
-        // | m1 | m2 | a1          | a2          | a3 |
-        // | 1  | 4  | 1/(1,1,1,1) | 1/(4,1,1,1) | .. |
-        // | 2  | 3  | 1/(2,1,1,1) | 1/(3,1,1,1) | .. |
-        // | 3  | 2  | 1/(3,1,1,1) | 1/(2,1,1,1) | .. |
-        // | 4  | 1  | 1/(4,1,1,1) | 1/(1,1,1,1) | .. |
+        // randomness = 5 + 10x + 15x^2 + 20x^3
+        // | m1 | m2 | a1      | a2      | a3 |
+        // | 1  | 4  | 0       | 1/(r-4) | .. |  <- wrong value
+        // | 2  | 3  | 1/(r-2) | 1/(r-3) | .. |
+        // | 3  | 2  | 1/(r-3) | 1/(r-2) | .. |
+        // | 4  | 1  | 1/(r-4) | 1/(r-1) | .. |
         let air = RowLogicAir::<2>;
 
         let main_col = (1..=len).map(|i| BabyBear::new(i)).collect();
@@ -514,12 +514,9 @@ mod tests {
 
         // Each row = previous + 1, with 4 rows total, 2 columns.
         // Last row must match public values [4, 1]
-        // randomness = 5 + x + x^2 + x^3
-        // | m1 | m2 | a1          | a2          | a3 |
-        // | 1  | 4  | 1/(1,1,1,1) | 1/(4,1,1,1) | .. |
-        // | 2  | 3  | 1/(2,1,1,1) | 1/(3,1,1,1) | .. |
-        // | 3  | 2  | 1/(3,1,1,1) | 1/(2,1,1,1) | .. |
-        // | 4  | 1  | 1/(4,1,1,1) | 1/(1,1,1,1) | .. |
+        // randomness = 5 + 10x + 15x^2 + 20x^3
+        // | m1 | m2 | a1      | a2      | a3 |
+        // | 1  | 1  | 1/(r-1) | 1/(r-1) | 0 |
         let air = RowLogicAir::<2>;
 
         let main_col: Vec<BabyBear> = (1..=len).map(|i| BabyBear::new(i)).collect();

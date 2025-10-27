@@ -1,7 +1,8 @@
 use core::borrow::Borrow;
 
 use p3_air::{
-    Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, MultiPhaseBaseAir, PermutationAirBuilder,
+    Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, ExtensionBuilder, MultiPhaseBaseAir,
+    PermutationAirBuilder,
 };
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::{DuplexChallenger, HashChallenger, SerializingChallenger32};
@@ -45,6 +46,13 @@ impl<F> MultiPhaseBaseAir<F> for TwoPhasePermAir {
 
 impl<AB: AirBuilderWithPublicValues + PermutationAirBuilder> Air<AB> for TwoPhasePermAir {
     fn eval(&self, builder: &mut AB) {
+        // | m1 | m2 | m3 | a1      | a2      | a3 |
+        // | 0  | 1  | 8  | 1/(r-1) | 1/(r-8) | .. |
+        // | 1  | 1  | 5  | 1/(r-1) | 1/(r-5) | .. |
+        // | 1  | 2  | 3  | 1/(r-2) | 1/(r-3) | .. |
+        // | 2  | 3  | 2  | 1/(r-3) | 1/(r-2) | .. |
+        // | 3  | 5  | 1  | 1/(r-5) | 1/(r-1) | .. |
+        // | 5  | 8  | 1  | 1/(r-8) | 1/(r-1) | .. |
         let main = builder.main();
 
         let pis = builder.public_values();
@@ -53,40 +61,61 @@ impl<AB: AirBuilderWithPublicValues + PermutationAirBuilder> Air<AB> for TwoPhas
         let b = pis[1];
         let x = pis[2];
 
+        let (local, next) = (
+            main.row_slice(0).expect("Matrix is empty?"),
+            main.row_slice(1).expect("Matrix only has 1 row?"),
+        );
+        let local: &FibonacciRow<AB::Var> = (*local).borrow();
+        let next: &FibonacciRow<AB::Var> = (*next).borrow();
+
         // Fibonacci sequence
         {
-            let (local, next) = (
-                main.row_slice(0).expect("Matrix is empty?"),
-                main.row_slice(1).expect("Matrix only has 1 row?"),
-            );
-            let local: &FibonacciRow<AB::Var> = (*local).borrow();
-            let next: &FibonacciRow<AB::Var> = (*next).borrow();
-
             let mut when_first_row = builder.when_first_row();
 
-            when_first_row.assert_eq(local.left.clone(), a);
-            when_first_row.assert_eq(local.right.clone(), b);
+            when_first_row.assert_eq(local.m1.clone(), a);
+            when_first_row.assert_eq(local.m2.clone(), b);
 
             let mut when_transition = builder.when_transition();
 
             // a' <- b
-            when_transition.assert_eq(local.right.clone(), next.left.clone());
+            when_transition.assert_eq(local.m2.clone(), next.m1.clone());
 
             // b' <- a + b
-            when_transition.assert_eq(local.left.clone() + local.right.clone(), next.right.clone());
+            when_transition.assert_eq(local.m1.clone() + local.m2.clone(), next.m2.clone());
 
-            builder.when_last_row().assert_eq(local.right.clone(), x);
+            builder.when_last_row().assert_eq(local.m2.clone(), x);
         }
 
         // Auxiliary permutation
         {
             let aux = builder.permutation();
-            let randomness = builder.permutation_randomness();
+            if builder.permutation_randomness().is_empty() {
+                panic!("randomness is missing for permutation")
+            }
+            let randomness: AB::ExprEF = builder.permutation_randomness()[0].into(); // safe unwrap
 
-            let (local, next) = (
+            let (aux_local, aux_next) = (
                 aux.row_slice(0).expect("Matrix is empty?"),
                 aux.row_slice(1).expect("Matrix only has 1 row?"),
             );
+
+            let xi = local.m2.clone().into();
+            let yi = local.m3.clone().into();
+            let ti = aux_local[0].into();
+            let wi = aux_local[1].into();
+            let running_sum = aux_local[2].into();
+            let next_running_sum = aux_next[2].into();
+
+            // ti = 1/(r-xi)
+            builder.assert_one_ext(ti.clone() * (randomness.clone() - AB::ExprEF::from(xi)));
+            // wi = 1/(r-yi)
+            builder.assert_one_ext(wi.clone() * (randomness - AB::ExprEF::from(yi)));
+            // next_running_sum = running_sum + ti - wi
+            builder
+                .when_transition()
+                .assert_eq_ext(next_running_sum, running_sum.clone() + ti - wi);
+            // last running sum is zero
+            builder.when_last_row().assert_zero_ext(running_sum);
         }
     }
 }
@@ -94,39 +123,42 @@ impl<AB: AirBuilderWithPublicValues + PermutationAirBuilder> Air<AB> for TwoPhas
 pub fn generate_trace_rows<F: PrimeField64>(a: u64, b: u64, n: usize) -> RowMajorMatrix<F> {
     assert!(n.is_power_of_two());
 
-    let mut trace = RowMajorMatrix::new(F::zero_vec(n * NUM_FIBONACCI_COLS), NUM_FIBONACCI_COLS);
+    let mut trace = RowMajorMatrix::new(F::zero_vec(n * 3), 3);
 
     let (prefix, rows, suffix) = unsafe { trace.values.align_to_mut::<FibonacciRow<F>>() };
     assert!(prefix.is_empty(), "Alignment should match");
     assert!(suffix.is_empty(), "Alignment should match");
     assert_eq!(rows.len(), n);
 
-    rows[0] = FibonacciRow::new(F::from_u64(a), F::from_u64(b));
+    rows[0] = FibonacciRow::new(F::from_u64(a), F::from_u64(b), F::ZERO);
 
     for i in 1..n {
-        rows[i].left = rows[i - 1].right;
-        rows[i].right = rows[i - 1].left + rows[i - 1].right;
+        rows[i].m1 = rows[i - 1].m2;
+        rows[i].m2 = rows[i - 1].m1 + rows[i - 1].m2;
+    }
+
+    for i in 0..n {
+        rows[i].m3 = rows[n - i - 1].m2
     }
 
     trace
 }
 
-const NUM_FIBONACCI_COLS: usize = 2;
-
 pub struct FibonacciRow<F> {
-    pub left: F,
-    pub right: F,
+    pub m1: F,
+    pub m2: F,
+    pub m3: F,
 }
 
 impl<F> FibonacciRow<F> {
-    const fn new(left: F, right: F) -> Self {
-        Self { left, right }
+    const fn new(m1: F, m2: F, m3: F) -> Self {
+        Self { m1, m2, m3 }
     }
 }
 
 impl<F> Borrow<FibonacciRow<F>> for [F] {
     fn borrow(&self) -> &FibonacciRow<F> {
-        debug_assert_eq!(self.len(), NUM_FIBONACCI_COLS);
+        debug_assert_eq!(self.len(), 2);
         let (prefix, shorts, suffix) = unsafe { self.align_to::<FibonacciRow<F>>() };
         debug_assert!(prefix.is_empty(), "Alignment should match");
         debug_assert!(suffix.is_empty(), "Alignment should match");
@@ -162,9 +194,12 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
     let pcs = Pcs::new(dft, val_mmcs, fri_params);
     let challenger = Challenger::new(perm);
 
+    ark_std::println!("main trace: {:?}", trace);
+
     let config = MyConfig::new(pcs, challenger);
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
+    ark_std::println!("start to prove");
     let proof = prove(&config, &TwoPhasePermAir {}, trace, &pis);
     verify(&config, &TwoPhasePermAir {}, &proof, &pis).expect("verification failed");
 }

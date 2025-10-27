@@ -10,6 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+ark-std = "0.5.0"
 p3-air.workspace = true
 p3-challenger.workspace = true
 p3-commit.workspace = true
@@ -24,7 +25,6 @@ serde = { workspace = true, features = ["derive", "alloc"] }
 tracing.workspace = true
 
 [dev-dependencies]
-ark-std = "0.5.0"
 p3-baby-bear.workspace = true
 p3-challenger.workspace = true
 p3-circle.workspace = true
