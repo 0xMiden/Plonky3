@@ -25,7 +25,7 @@ use p3_util::linear_map::LinearMap;
 use p3_util::{log2_strict_usize, reverse_slice_index_bits};
 
 use crate::verifier::{self, FriError};
-use crate::{FriParameters, FriProof, TwoAdicFriFolding, prover};
+use crate::{FriParameters, FriProof, TwoAdicFriFolding, TwoAdicFriFoldingForMmcs, prover};
 
 /// A simplified polynomial commitment scheme for single matrices using FRI.
 ///
@@ -237,8 +237,7 @@ where
         // Since we have only one matrix, we have only one height
         let fri_input = vec![reduced_opening];
 
-        let folding: crate::TwoAdicFriFoldingForMmcs<Val, InputMmcs> =
-            TwoAdicFriFolding(PhantomData);
+        let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding(PhantomData);
 
         let fri_proof = prover::prove_fri(
             &folding,
@@ -285,8 +284,7 @@ where
             }
         }
 
-        let folding: crate::TwoAdicFriFoldingForMmcs<Val, InputMmcs> =
-            TwoAdicFriFolding(PhantomData);
+        let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding(PhantomData);
 
         verifier::verify_fri(
             &folding,
