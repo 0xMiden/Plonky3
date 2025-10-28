@@ -334,7 +334,6 @@ where
                 .unzip()
         });
 
-        ark_std::println!("opened");
         let trace_idx = SC::Pcs::TRACE_IDX;
         let quotient_idx = SC::Pcs::QUOTIENT_IDX;
 
