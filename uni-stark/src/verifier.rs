@@ -133,7 +133,7 @@ where
         }
         None => 0,
     };
-    
+
     pcs.verify(
         vec![(
             commitments.trace.clone(),
@@ -147,7 +147,8 @@ where
         )],
         &opening_proofs[opening_proofs_index],
         &mut challenger,
-    ).map_err(VerificationError::InvalidOpeningArgument)?;
+    )
+    .map_err(VerificationError::InvalidOpeningArgument)?;
     opening_proofs_index += 1;
 
     pcs.verify(
@@ -164,7 +165,8 @@ where
         )],
         &opening_proofs[opening_proofs_index],
         &mut challenger,
-    ).map_err(VerificationError::InvalidOpeningArgument)?;
+    )
+    .map_err(VerificationError::InvalidOpeningArgument)?;
 
     let zps = quotient_chunks_domains
         .iter()

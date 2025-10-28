@@ -15,7 +15,7 @@ use p3_merkle_tree::{MerkleTreeHidingMmcs, MerkleTreeMmcs};
 use p3_symmetric::{
     CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher, TruncatedPermutation,
 };
-use p3_uni_stark::{StarkConfig, prove, verify};
+use p3_uni_stark::{StarkConfig, prove, prove_single_matrix_pcs, verify, verify_single_matrix_pcs};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
@@ -136,8 +136,11 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
     let config = MyConfig::new(pcs, challenger);
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
-    let proof = prove(&config, &FibonacciAir {}, trace, &pis);
+    let proof = prove(&config, &FibonacciAir {}, trace.clone(), &pis);
     verify(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");
+
+    let proof = prove_single_matrix_pcs(&config, &FibonacciAir {}, trace, &pis);
+    verify_single_matrix_pcs(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");
 }
 
 #[test]
