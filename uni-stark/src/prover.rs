@@ -293,13 +293,17 @@ where
     let zeta: SC::Challenge = challenger.sample_algebra_element();
     let zeta_next = trace_domain.next_point(zeta).unwrap();
 
+
+    ark_std::println!("prover zeta: {:?}", zeta);
+
     let is_random = opt_r_data.is_some();
     let (opened_values, opening_proof) = info_span!("open").in_scope(|| {
         let round0 = opt_r_data.as_ref().map(|r_data| (r_data, vec![vec![zeta]]));
         let round1 = (&trace_data, vec![vec![zeta, zeta_next]]);
         let round2 = (&quotient_data, vec![vec![zeta]; quotient_degree]); // open every chunk at zeta
+        let round3 = (&aux_trace_data, vec![vec![zeta, zeta_next]]);
 
-        let rounds = round0.into_iter().chain([round1, round2]).collect();
+        let rounds = round0.into_iter().chain([round1, round2, round3]).collect();
 
         pcs.open(rounds, &mut challenger)
     });
@@ -311,6 +315,9 @@ where
         .iter()
         .map(|v| v[0].clone())
         .collect_vec();
+    let aux_trace_local = opened_values[quotient_idx + 1][0][0].clone();
+    let aux_trace_next = opened_values[quotient_idx + 1][0][1].clone();
+
     let random = if is_random {
         Some(opened_values[0][0][0].clone())
     } else {
@@ -320,6 +327,8 @@ where
         trace_local,
         trace_next,
         quotient_chunks,
+        aux_trace_local,
+        aux_trace_next,
         random,
     };
     Proof {
@@ -416,7 +425,7 @@ where
                 constraint_index: 0,
             };
 
-            ark_std::println!("start to evaluate");
+            // ark_std::println!("start to evaluate");
             air.eval(&mut folder);
 
             // quotient(x) = constraints(x) / Z_H(x)

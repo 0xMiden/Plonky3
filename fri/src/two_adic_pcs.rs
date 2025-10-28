@@ -530,6 +530,8 @@ where
         proof: &Self::Proof,
         challenger: &mut Challenger,
     ) -> Result<(), Self::Error> {
+
+     ark_std::println!("Write all evaluations to challenger");
         // Write all evaluations to challenger.
         // Need to ensure to do this in the same order as the prover.
         for (_, round) in &commitments_with_opening_points {
@@ -543,7 +545,7 @@ where
         }
 
         let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding(PhantomData);
-
+        ark_std::println!("start to verify fri");
         verifier::verify_fri(
             &folding,
             &self.fri,

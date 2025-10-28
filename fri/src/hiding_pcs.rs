@@ -298,7 +298,15 @@ where
         proof: &Self::Proof,
         challenger: &mut Challenger,
     ) -> Result<(), Self::Error> {
+        ark_std::println!("start hiding fri");
+        
         let (opened_values_for_rand_cws, inner_proof) = proof;
+
+
+        ark_std::println!("rounds len: {}", rounds.len());
+
+ark_std::println!("opened_values_for_rand_cws len: {}", opened_values_for_rand_cws.len());
+
         // Now we merge `opened_values_for_rand_cws` into the opened values in `rounds`, undoing
         // the split that we did in `open`, to get a complete set of opened values for the inner PCS
         // to check.
@@ -317,6 +325,9 @@ where
                 }
             }
         }
+
+
+        ark_std::println!("start fri verification");
         self.inner.verify(rounds, inner_proof, challenger)
     }
 

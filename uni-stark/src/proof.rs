@@ -36,5 +36,7 @@ pub struct OpenedValues<Challenge> {
     pub(crate) trace_local: Vec<Challenge>,
     pub(crate) trace_next: Vec<Challenge>,
     pub(crate) quotient_chunks: Vec<Vec<Challenge>>,
+    pub(crate) aux_trace_local: Vec<Challenge>,
+    pub(crate) aux_trace_next: Vec<Challenge>,
     pub(crate) random: Option<Vec<Challenge>>,
 }

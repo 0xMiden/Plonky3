@@ -77,6 +77,8 @@ where
         } else {
             true
         };
+    ark_std::println!("valid shape: {}", valid_shape);
+
     if !valid_shape {
         return Err(VerificationError::InvalidProofShape);
     }
@@ -95,13 +97,16 @@ where
 
     // begin processing aux trace
     let num_randomness = air.num_randomness();
-    if num_randomness != 0 {
+    let randomness = if num_randomness != 0 {
         let randomness: Vec<SC::Challenge> = (0..num_randomness)
             .map(|_| challenger.sample_algebra_element())
             .collect();
 
         challenger.observe(commitments.aux.clone());
-    }
+        randomness
+    } else {
+        vec![]
+    };
 
     // Get the first Fiat Shamir challenge which will be used to combine all constraint polynomials
     // into a single polynomial.
@@ -137,6 +142,10 @@ where
     } else {
         vec![]
     };
+
+    
+    ark_std::println!("prepare com for pcs");
+
     coms_to_verify.extend(vec![
         (
             commitments.trace.clone(),
@@ -159,11 +168,24 @@ where
             .map(|(domain, values)| (*domain, vec![(zeta, values.clone())]))
             .collect_vec(),
         ),
+                (
+            commitments.aux.clone(),
+            vec![(
+                trace_domain,
+                vec![
+                    (zeta, opened_values.aux_trace_local.clone()),
+                    (zeta_next, opened_values.aux_trace_next.clone()),
+                ],
+            )],
+        ),
     ]);
 
+    ark_std::println!("start to verify pcs");
+    ark_std::println!("verifier zeta: {}", zeta);
     pcs.verify(coms_to_verify, opening_proof, &mut challenger)
         .map_err(VerificationError::InvalidOpeningArgument)?;
 
+    ark_std::println!("pcs verified");
     let zps = quotient_chunks_domains
         .iter()
         .enumerate()
@@ -182,6 +204,9 @@ where
         })
         .collect_vec();
 
+
+
+    ark_std::println!("start to compute quotient");
     let quotient = opened_values
         .quotient_chunks
         .iter()
@@ -205,10 +230,16 @@ where
         RowMajorMatrixView::new_row(&opened_values.trace_next),
     );
 
+    let aux = VerticalPair::new(
+        RowMajorMatrixView::new_row(&opened_values.aux_trace_local),
+        RowMajorMatrixView::new_row(&opened_values.aux_trace_next),
+    );
+
+    ark_std::println!("start eval");
     let mut folder = VerifierConstraintFolder {
         main,
-        // aux: None,
-        // randomness: None,
+        aux,
+        randomness: &randomness,
         public_values,
         is_first_row: sels.is_first_row,
         is_last_row: sels.is_last_row,
@@ -219,6 +250,8 @@ where
     air.eval(&mut folder);
     let folded_constraints = folder.accumulator;
 
+
+    ark_std::println!("prod: {:?}\nquotient: {:?}",folded_constraints * sels.inv_vanishing, quotient);
     // Finally, check that
     //     folded_constraints(zeta) / Z_H(zeta) = quotient(zeta)
     if folded_constraints * sels.inv_vanishing != quotient {

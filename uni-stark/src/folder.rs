@@ -47,10 +47,10 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
 pub struct VerifierConstraintFolder<'a, SC: StarkGenericConfig> {
     /// Pair of consecutive rows from the committed polynomial evaluations
     pub main: ViewPair<'a, SC::Challenge>,
-    // /// Optional: pair of consecutive rows from the committed polynomial evaluations
-    // pub aux: ViewPair<'a, SC::Challenge>,
-    // /// Optional: the randomness used to compute the aux tract
-    // pub randomness: &'a [SC::Challenge],
+    /// Optional: pair of consecutive rows from the committed polynomial evaluations
+    pub aux: ViewPair<'a, SC::Challenge>,
+    /// Optional: the randomness used to compute the aux tract
+    pub randomness: &'a [SC::Challenge],
     /// Public values that are inputs to the computation
     pub public_values: &'a Vec<Val<SC>>,
     /// Evaluations of the Selector polynomial for the first row of the trace
@@ -150,7 +150,7 @@ impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for ProverConstraintFolde
     type RandomVar = SC::Challenge;
     /// Return the matrix representing permutation registers.
     fn permutation(&self) -> Self::MP {
-        ark_std::println!("permutation {:?}", self.aux);
+        // ark_std::println!("permutation {:?}", self.aux);
 
         // First, we need to unpack all the PackedVal<SC> values to get individual Val<SC> elements.
         // Each PackedVal<SC> contains multiple Val<SC> values packed together.
@@ -171,7 +171,7 @@ impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for ProverConstraintFolde
             })
             .collect();
 
-        ark_std::println!("permutation challenges {:?}", challenges);
+        // ark_std::println!("permutation challenges {:?}", challenges);
 
         // Now pack the challenges. PackedChallenge has a WIDTH which determines how many
         // challenges are packed together.
@@ -183,15 +183,15 @@ impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for ProverConstraintFolde
         // Determine the number of extension columns
         let num_cols = self.aux.width / SC::Challenge::DIMENSION;
 
-        ark_std::println!(
-            "permutation challenges width {:?} {}",
-            self.aux.width,
-            num_cols
-        );
+        // ark_std::println!(
+        //     "permutation challenges width {:?} {}",
+        //     self.aux.width,
+        //     num_cols
+        // );
 
         let res = DenseMatrix::new(packed_challenges, num_cols);
 
-        ark_std::println!("permutation res {:?}", res);
+        // ark_std::println!("permutation res {:?}", res);
 
         res
     }
@@ -271,13 +271,13 @@ impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for VerifierConstraintFol
 
     /// Return the matrix representing permutation registers.
     fn permutation(&self) -> Self::MP {
-        // self.aux
-        todo!()
+        self.aux
+        // todo!()
     }
 
     /// Return the list of randomness values for permutation argument.
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
-        // self.randomness
-        todo!()
+        self.randomness
+        // todo!()
     }
 }
