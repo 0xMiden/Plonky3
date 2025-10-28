@@ -12,7 +12,6 @@ categories.workspace = true
 
 [dependencies]
 p3-air.workspace = true
-p3-baby-bear.workspace = true
 p3-blake3-air.workspace = true
 p3-challenger.workspace = true
 p3-circle.workspace = true
@@ -34,9 +33,6 @@ p3-uni-stark.workspace = true
 bincode = { workspace = true, features = ["serde", "alloc"] }
 clap.workspace = true
 rand.workspace = true
-tracing.workspace = true
-tracing-forest = { workspace = true, features = ["ansi", "smallvec"] }
-tracing-subscriber = { workspace = true, features = ["std", "env-filter"] }
 
 [dev-dependencies]
 p3-baby-bear.workspace = true
