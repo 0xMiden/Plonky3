@@ -21,6 +21,7 @@ use p3_util::reconstitute_from_base;
 use rand::Rng;
 use rand::distr::{Distribution, StandardUniform};
 
+use super::utils::halve_neon;
 use crate::{
     BinomialExtensionData, FieldParameters, MontyField31, PackedMontyParameters,
     RelativelyPrimePower,
@@ -33,6 +34,27 @@ pub trait MontyParametersNeon {
     const PACKED_MU: int32x4_t;
 }
 
+/// A trait to allow functions to be generic over scalar `MontyField31` and packed `PackedMontyField31Neon`.
+trait IntoVec<P: PackedMontyParameters>: Copy {
+    /// Convert the value to a NEON vector, broadcasting if it's a scalar.
+    fn into_vec(self) -> uint32x4_t;
+}
+
+impl<P: PackedMontyParameters> IntoVec<P> for PackedMontyField31Neon<P> {
+    #[inline(always)]
+    fn into_vec(self) -> uint32x4_t {
+        self.to_vector()
+    }
+}
+
+impl<P: PackedMontyParameters> IntoVec<P> for MontyField31<P> {
+    #[inline(always)]
+    fn into_vec(self) -> uint32x4_t {
+        // Broadcast the scalar value to all lanes of the vector.
+        unsafe { aarch64::vdupq_n_u32(self.value) }
+    }
+}
+
 /// Vectorized NEON implementation of `MontyField31` arithmetic.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(transparent)] // Needed to make `transmute`s safe.
@@ -40,10 +62,10 @@ pub trait MontyParametersNeon {
 pub struct PackedMontyField31Neon<PMP: PackedMontyParameters>(pub [MontyField31<PMP>; WIDTH]);
 
 impl<PMP: PackedMontyParameters> PackedMontyField31Neon<PMP> {
+    /// Get an arch-specific vector representing the packed values.
     #[inline]
     #[must_use]
-    /// Get an arch-specific vector representing the packed values.
-    fn to_vector(self) -> uint32x4_t {
+    pub(crate) fn to_vector(self) -> uint32x4_t {
         unsafe {
             // Safety: `MontyField31` is `repr(transparent)` so it can be transmuted to `u32`. It
             // follows that `[MontyField31; WIDTH]` can be transmuted to `[u32; WIDTH]`, which can be
@@ -54,12 +76,27 @@ impl<PMP: PackedMontyParameters> PackedMontyField31Neon<PMP> {
         }
     }
 
+    /// Get an arch-specific vector representing the packed values.
     #[inline]
+    #[must_use]
+    pub(crate) fn to_signed_vector(self) -> int32x4_t {
+        unsafe {
+            // Safety: `MontyField31` is `repr(transparent)` so it can be transmuted to `u32` furthermore
+            // the u32 is guaranteed to be less than `2^31` so it can be safely reinterpreted as an `i32`. It
+            // follows that `[MontyField31; WIDTH]` can be transmuted to `[i32; WIDTH]`, which can be
+            // transmuted to `int32x4_t`, since arrays are guaranteed to be contiguous in memory.
+            // Finally `PackedMontyField31Neon` is `repr(transparent)` so it can be transmuted to
+            // `[MontyField31; WIDTH]`.
+            transmute(self)
+        }
+    }
+
     /// Make a packed field vector from an arch-specific vector.
     ///
     /// SAFETY: The caller must ensure that each element of `vector` represents a valid `MontyField31`.
     /// In particular, each element of vector must be in `0..P` (canonical form).
-    unsafe fn from_vector(vector: uint32x4_t) -> Self {
+    #[inline]
+    pub(crate) unsafe fn from_vector(vector: uint32x4_t) -> Self {
         unsafe {
             // Safety: It is up to the user to ensure that elements of `vector` represent valid
             // `MontyField31` values. We must only reason about memory representations. `uint32x4_t` can be
@@ -131,8 +168,8 @@ impl<PMP: PackedMontyParameters> Mul for PackedMontyField31Neon<PMP> {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: Self) -> Self {
-        let lhs = self.to_vector();
-        let rhs = rhs.to_vector();
+        let lhs = self.to_signed_vector();
+        let rhs = rhs.to_signed_vector();
         let res = mul::<PMP>(lhs, rhs);
         unsafe {
             // Safety: `mul` returns values in canonical form when given values in canonical form.
@@ -160,12 +197,19 @@ impl<FP: FieldParameters> PrimeCharacteristicRing for PackedMontyField31Neon<FP>
         f.into()
     }
 
-    // TODO: Add a custom implementation of `halve` that uses NEON intrinsics
-    // and avoids the multiplication.
+    #[inline]
+    fn halve(&self) -> Self {
+        let val = self.to_vector();
+        let halved = halve_neon::<FP>(val);
+        unsafe {
+            // Safety: `halve_neon` returns values in canonical form when given values in canonical form.
+            Self::from_vector(halved)
+        }
+    }
 
     #[inline]
     fn cube(&self) -> Self {
-        let val = self.to_vector();
+        let val = self.to_signed_vector();
         let res = cube::<FP>(val);
         unsafe {
             // Safety: `cube` returns values in canonical form when given values in canonical form.
@@ -174,9 +218,45 @@ impl<FP: FieldParameters> PrimeCharacteristicRing for PackedMontyField31Neon<FP>
     }
 
     #[inline(always)]
+    fn dot_product<const N: usize>(u: &[Self; N], v: &[Self; N]) -> Self {
+        general_dot_product::<_, _, _, N>(u, v)
+    }
+
+    #[inline(always)]
     fn zero_vec(len: usize) -> Vec<Self> {
         // SAFETY: this is a repr(transparent) wrapper around an array.
         unsafe { reconstitute_from_base(MontyField31::<FP>::zero_vec(len * WIDTH)) }
+    }
+
+    #[inline(always)]
+    fn exp_const_u64<const POWER: u64>(&self) -> Self {
+        // We provide specialised code for the powers 3, 5, 7 as these turn up regularly.
+        // The other powers could be specialised similarly but we ignore this for now.
+        match POWER {
+            0 => Self::ONE,
+            1 => *self,
+            2 => self.square(),
+            3 => self.cube(),
+            4 => self.square().square(),
+            5 => {
+                let val = self.to_signed_vector();
+                unsafe {
+                    // Safety: `exp_5` returns values in canonical form when given values in canonical form.
+                    let res = exp_5::<FP>(val);
+                    Self::from_vector(res)
+                }
+            }
+            6 => self.square().cube(),
+            7 => {
+                let val = self.to_signed_vector();
+                unsafe {
+                    // Safety: `exp_7` returns values in canonical form when given values in canonical form.
+                    let res = exp_7::<FP>(val);
+                    Self::from_vector(res)
+                }
+            }
+            _ => self.exp_u64(POWER),
+        }
     }
 }
 
@@ -312,46 +392,14 @@ fn get_qp_hi<MPNeon: MontyParametersNeon>(lhs: int32x4_t, mu_rhs: int32x4_t) -> 
     }
 }
 
+/// Multiply MontyField31 field elements.
+///
+/// # Safety
+/// Inputs must be signed 32-bit integers in the range [-P, P].
+/// Outputs will be a unsigned 32-bit integers in canonical form [0, ..., P).
 #[inline]
 #[must_use]
-fn get_d(c_hi: int32x4_t, qp_hi: int32x4_t) -> int32x4_t {
-    // We want this to compile to:
-    //      shsub    res.4s, c_hi.4s, qp_hi.4s
-    // throughput: .25 cyc/vec (16 els/cyc)
-    // latency: 2 cyc
-
-    unsafe {
-        // Form D. Note that `c_hi` is C >> 31 and `qp_hi` is (Q P) >> 31, whereas we want
-        // (C - Q P) >> 32, so we need to subtract and divide by 2. Luckily NEON has an instruction
-        // for that! The lowest bit of `c_hi` and `qp_hi` is the same, so the division is exact.
-        aarch64::vhsubq_s32(c_hi, qp_hi)
-    }
-}
-
-#[inline]
-#[must_use]
-fn get_reduced_d<MPNeon: MontyParametersNeon>(c_hi: int32x4_t, qp_hi: int32x4_t) -> uint32x4_t {
-    // We want this to compile to:
-    //      shsub    res.4s, c_hi.4s, qp_hi.4s
-    //      cmgt     underflow.4s, qp_hi.4s, c_hi.4s
-    //      mls      res.4s, underflow.4s, P.4s
-    // throughput: .75 cyc/vec (5.33 els/cyc)
-    // latency: 5 cyc
-
-    unsafe {
-        let d = aarch64::vreinterpretq_u32_s32(get_d(c_hi, qp_hi));
-
-        // Finally, we reduce D to canonical form. D is negative iff `c_hi > qp_hi`, so if that's the
-        // case then we add P. Note that if `c_hi > qp_hi` then `underflow` is -1, so we must
-        // _subtract_ `underflow` * P.
-        let underflow = aarch64::vcltq_s32(c_hi, qp_hi);
-        aarch64::vmlsq_u32(d, confuse_compiler(underflow), MPNeon::PACKED_P)
-    }
-}
-
-#[inline]
-#[must_use]
-fn mul<MPNeon: MontyParametersNeon>(lhs: uint32x4_t, rhs: uint32x4_t) -> uint32x4_t {
+fn mul<MPNeon: MontyParametersNeon>(lhs: int32x4_t, rhs: int32x4_t) -> uint32x4_t {
     // We want this to compile to:
     //      sqdmulh  c_hi.4s, lhs.4s, rhs.4s
     //      mul      mu_rhs.4s, rhs.4s, MU.4s
@@ -364,34 +412,157 @@ fn mul<MPNeon: MontyParametersNeon>(lhs: uint32x4_t, rhs: uint32x4_t) -> uint32x
     // latency: (lhs->) 11 cyc, (rhs->) 14 cyc
 
     unsafe {
-        // No-op. The inputs are non-negative so we're free to interpret them as signed numbers.
-        let lhs = aarch64::vreinterpretq_s32_u32(lhs);
-        let rhs = aarch64::vreinterpretq_s32_u32(rhs);
-
         let mu_rhs = mulby_mu::<MPNeon>(rhs);
-        let c_hi = get_c_hi(lhs, rhs);
-        let qp_hi = get_qp_hi::<MPNeon>(lhs, mu_rhs);
-        get_reduced_d::<MPNeon>(c_hi, qp_hi)
+        let d = mul_with_precomp::<MPNeon, true>(lhs, rhs, mu_rhs);
+
+        // Safe as mul_with_precomp::<MPNeon, true> returns integers in [0, P)
+        aarch64::vreinterpretq_u32_s32(d)
     }
 }
 
+/// Multiply MontyField31 field elements using precomputation.
+///
+/// Allows us to reuse `mu_rhs`.
+///
+/// # Safety
+/// Both `lhs` and `rhs` must be signed 32-bit integers in the range [-P, P].
+/// `mu_rhs` must be equal to `MPNeon::PACKED_MU * rhs mod 2^32`
+///
+/// Output will be signed 32-bit integers either in (-P, P) if CANONICAL is set to false
+/// or in [0, P) if CANONICAL is set to true.
 #[inline]
 #[must_use]
-fn cube<MPNeon: MontyParametersNeon>(val: uint32x4_t) -> uint32x4_t {
+fn mul_with_precomp<MPNeon: MontyParametersNeon, const CANONICAL: bool>(
+    lhs: int32x4_t,
+    rhs: int32x4_t,
+    mu_rhs: int32x4_t,
+) -> int32x4_t {
+    // If CANONICAL:
+    //  We want this to compile to:
+    //      sqdmulh  c_hi.4s, lhs.4s, rhs.4s
+    //      mul      q.4s, lhs.4s, mu_rhs.4s
+    //      sqdmulh  qp_hi.4s, q.4s, P.4s
+    //      shsub    res.4s, c_hi.4s, qp_hi.4s
+    //      cmgt     underflow.4s, qp_hi.4s, c_hi.4s
+    //      mls      res.4s, underflow.4s, P.4s
+    //
+    //      throughput: 1.5 cyc/vec (2.66 els/cyc)
+    //      latency: 11 cyc
+    //
+    // If !CANONICAL:
+    //  We want this to compile to:
+    //      sqdmulh  c_hi.4s, lhs.4s, rhs.4s
+    //      mul      q.4s, lhs.4s, mu_rhs.4s
+    //      sqdmulh  qp_hi.4s, q.4s, P.4s
+    //      shsub    res.4s, c_hi.4s, qp_hi.4s
+    //
+    //      throughput: 1 cyc/vec (4 els/cyc)
+    //      latency: 8 cyc
+    //
+    unsafe {
+        let c_hi = get_c_hi(lhs, rhs);
+        let qp_hi = get_qp_hi::<MPNeon>(lhs, mu_rhs);
+        let d = aarch64::vhsubq_s32(c_hi, qp_hi);
+
+        // This branch will be removed by the compiler.
+        if CANONICAL {
+            // We reduce d to canonical form. d is negative iff `c_hi > qp_hi`, so if that's the
+            // case then we add P. Note that if `c_hi > qp_hi` then `underflow` is -1, so we must
+            // _subtract_ `underflow` * P.
+            let underflow = aarch64::vcltq_s32(c_hi, qp_hi);
+
+            // As underflow and MPNeon::PACKED_P are unsigned we use the unsigned version of multiply
+            // and subtract. Note that on bits, the signed and unsigned versions are literally identical.
+            let reduced = aarch64::vmlsq_u32(
+                aarch64::vreinterpretq_u32_s32(d),
+                confuse_compiler(underflow),
+                MPNeon::PACKED_P,
+            );
+
+            // We convert back to int32x4_t to match the function output.
+            aarch64::vreinterpretq_s32_u32(reduced)
+        } else {
+            d
+        }
+    }
+}
+
+/// Take cube of MontyField31 field elements.
+///
+/// # Safety
+/// Inputs must be signed 32-bit integers in the range [-P, P].
+/// Outputs will be a unsigned 32-bit integers in canonical form [0, ..., P).
+#[inline]
+#[must_use]
+fn cube<MPNeon: MontyParametersNeon>(val: int32x4_t) -> uint32x4_t {
     // throughput: 2.75 cyc/vec (1.45 els/cyc)
     // latency: 22 cyc
 
     unsafe {
-        let val = aarch64::vreinterpretq_s32_u32(val);
         let mu_val = mulby_mu::<MPNeon>(val);
 
-        let c_hi_2 = get_c_hi(val, val);
-        let qp_hi_2 = get_qp_hi::<MPNeon>(val, mu_val);
-        let val_2 = get_d(c_hi_2, qp_hi_2);
+        let val_2 = mul_with_precomp::<MPNeon, false>(val, val, mu_val);
+        let val_3 = mul_with_precomp::<MPNeon, true>(val_2, val, mu_val);
 
-        let c_hi_3 = get_c_hi(val_2, val);
-        let qp_hi_3 = get_qp_hi::<MPNeon>(val_2, mu_val);
-        get_reduced_d::<MPNeon>(c_hi_3, qp_hi_3)
+        // Safe as mul_with_precomp::<MPNeon, true> returns integers in [0, P)
+        aarch64::vreinterpretq_u32_s32(val_3)
+    }
+}
+
+/// Take the fifth power of the MontyField31 field elements.
+///
+/// # Safety
+/// Inputs must be signed 32-bit integers in the range [-P, P].
+/// Outputs will be a unsigned 32-bit integers in canonical form [0, ..., P).
+#[inline]
+#[must_use]
+fn exp_5<MPNeon: MontyParametersNeon>(val: int32x4_t) -> uint32x4_t {
+    // throughput: 4 cyc/vec (1 els/cyc)
+    // latency: 30 cyc
+
+    unsafe {
+        let mu_val = mulby_mu::<MPNeon>(val);
+
+        let val_2 = mul_with_precomp::<MPNeon, false>(val, val, mu_val);
+
+        // mu_val_2 and val_3 can be computed in parallel.
+        let mu_val_2 = mulby_mu::<MPNeon>(val_2);
+        let val_3 = mul_with_precomp::<MPNeon, false>(val_2, val, mu_val);
+
+        let val_5 = mul_with_precomp::<MPNeon, true>(val_3, val_2, mu_val_2);
+
+        // Safe as mul_with_precomp::<MPNeon, true> returns integers in [0, P)
+        aarch64::vreinterpretq_u32_s32(val_5)
+    }
+}
+
+/// Take the seventh power of the MontyField31 field elements.
+///
+/// # Safety
+/// Inputs must be signed 32-bit integers in the range [-P, P].
+/// Outputs will be a unsigned 32-bit integers in canonical form [0, ..., P).
+#[inline]
+#[must_use]
+fn exp_7<MPNeon: MontyParametersNeon>(val: int32x4_t) -> uint32x4_t {
+    // throughput: 5.25 cyc/vec (0.76 els/cyc)
+    // latency: 33 cyc
+
+    unsafe {
+        let mu_val = mulby_mu::<MPNeon>(val);
+
+        let val_2 = mul_with_precomp::<MPNeon, false>(val, val, mu_val);
+
+        // mu_val_2, val_4 and val_3, mu_val_3 can be computed in parallel.
+        let mu_val_2 = mulby_mu::<MPNeon>(val_2);
+        let val_3 = mul_with_precomp::<MPNeon, false>(val_2, val, mu_val);
+
+        let mu_val_3 = mulby_mu::<MPNeon>(val_3);
+        let val_4 = mul_with_precomp::<MPNeon, false>(val_2, val_2, mu_val_2);
+
+        let val_7 = mul_with_precomp::<MPNeon, true>(val_4, val_3, mu_val_3);
+
+        // Safe as mul_with_precomp::<MPNeon, true> returns integers in [0, P)
+        aarch64::vreinterpretq_u32_s32(val_7)
     }
 }
 
@@ -430,6 +601,11 @@ impl_packed_value!(
 
 unsafe impl<FP: FieldParameters> PackedField for PackedMontyField31Neon<FP> {
     type Scalar = MontyField31<FP>;
+
+    #[inline]
+    fn packed_linear_combination<const N: usize>(coeffs: &[Self::Scalar], vecs: &[Self]) -> Self {
+        general_dot_product::<_, _, _, N>(coeffs, vecs)
+    }
 }
 
 impl_packed_field_pow_2!(
@@ -441,6 +617,181 @@ impl_packed_field_pow_2!(
     WIDTH
 );
 
+/// A general fast dot product implementation using NEON.
+#[inline(always)]
+fn general_dot_product<P, LHS, RHS, const N: usize>(
+    lhs: &[LHS],
+    rhs: &[RHS],
+) -> PackedMontyField31Neon<P>
+where
+    P: FieldParameters + MontyParametersNeon,
+    LHS: IntoVec<P> + Into<PackedMontyField31Neon<P>>,
+    RHS: IntoVec<P> + Into<PackedMontyField31Neon<P>>,
+{
+    assert_eq!(lhs.len(), N);
+    assert_eq!(rhs.len(), N);
+    match N {
+        0 => PackedMontyField31Neon::<P>::ZERO,
+        1 => lhs[0].into() * rhs[0].into(),
+        2 => {
+            // TODO: Implement an optimized `dot_product_2` helper.
+            (lhs[0].into() * rhs[0].into()) + (lhs[1].into() * rhs[1].into())
+        }
+        3 => {
+            // TODO: Implement an optimized `dot_product_3` helper.
+            let dot2 = (lhs[0].into() * rhs[0].into()) + (lhs[1].into() * rhs[1].into());
+            dot2 + (lhs[2].into() * rhs[2].into())
+        }
+        4 => unsafe {
+            dot_product_4(
+                &[lhs[0], lhs[1], lhs[2], lhs[3]],
+                &[rhs[0], rhs[1], rhs[2], rhs[3]],
+            )
+        },
+        64 => {
+            let sum_4s: [PackedMontyField31Neon<P>; 16] = core::array::from_fn(|i| {
+                let start = i * 4;
+                unsafe {
+                    dot_product_4(
+                        &[lhs[start], lhs[start + 1], lhs[start + 2], lhs[start + 3]],
+                        &[rhs[start], rhs[start + 1], rhs[start + 2], rhs[start + 3]],
+                    )
+                }
+            });
+            PackedMontyField31Neon::<P>::sum_array::<16>(&sum_4s)
+        }
+        _ => {
+            // Initialize accumulator with the first chunk of 4.
+            let mut acc = unsafe {
+                dot_product_4(
+                    &[lhs[0], lhs[1], lhs[2], lhs[3]],
+                    &[rhs[0], rhs[1], rhs[2], rhs[3]],
+                )
+            };
+
+            // Loop over the rest of the full chunks of 4.
+            for i in (4..N).step_by(4) {
+                if i + 3 < N {
+                    acc += unsafe {
+                        dot_product_4(
+                            &[lhs[i], lhs[i + 1], lhs[i + 2], lhs[i + 3]],
+                            &[rhs[i], rhs[i + 1], rhs[i + 2], rhs[i + 3]],
+                        )
+                    };
+                }
+            }
+
+            // Handle the remainder recursively by creating new arrays and calling self.
+            match N % 4 {
+                0 => acc,
+                1 => {
+                    let rem_start = N - 1;
+                    let lhs_rem: [_; 1] = core::array::from_fn(|i| lhs[rem_start + i]);
+                    let rhs_rem: [_; 1] = core::array::from_fn(|i| rhs[rem_start + i]);
+                    acc + general_dot_product::<_, _, _, 1>(&lhs_rem, &rhs_rem)
+                }
+                2 => {
+                    let rem_start = N - 2;
+                    let lhs_rem: [_; 2] = core::array::from_fn(|i| lhs[rem_start + i]);
+                    let rhs_rem: [_; 2] = core::array::from_fn(|i| rhs[rem_start + i]);
+                    acc + general_dot_product::<_, _, _, 2>(&lhs_rem, &rhs_rem)
+                }
+                3 => {
+                    let rem_start = N - 3;
+                    let lhs_rem: [_; 3] = core::array::from_fn(|i| lhs[rem_start + i]);
+                    let rhs_rem: [_; 3] = core::array::from_fn(|i| rhs[rem_start + i]);
+                    acc + general_dot_product::<_, _, _, 3>(&lhs_rem, &rhs_rem)
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
+/// Compute the elementary function `l0*r0 + l1*r1 + l2*r2 + l3*r3` given eight inputs
+/// in canonical form.
+///
+/// If the inputs are not in canonical form, the result is undefined.
+#[inline]
+unsafe fn dot_product_4<P, LHS, RHS>(lhs: &[LHS; 4], rhs: &[RHS; 4]) -> PackedMontyField31Neon<P>
+where
+    P: FieldParameters + MontyParametersNeon,
+    LHS: IntoVec<P>,
+    RHS: IntoVec<P>,
+{
+    unsafe {
+        // Accumulate the full 64-bit sum C = Σ lhs_i ⋅ rhs_i.
+
+        // Low half (Lanes 0 & 1)
+        let mut sum_l = aarch64::vmull_u32(
+            aarch64::vget_low_u32(lhs[0].into_vec()),
+            aarch64::vget_low_u32(rhs[0].into_vec()),
+        );
+        sum_l = aarch64::vmlal_u32(
+            sum_l,
+            aarch64::vget_low_u32(lhs[1].into_vec()),
+            aarch64::vget_low_u32(rhs[1].into_vec()),
+        );
+        sum_l = aarch64::vmlal_u32(
+            sum_l,
+            aarch64::vget_low_u32(lhs[2].into_vec()),
+            aarch64::vget_low_u32(rhs[2].into_vec()),
+        );
+        sum_l = aarch64::vmlal_u32(
+            sum_l,
+            aarch64::vget_low_u32(lhs[3].into_vec()),
+            aarch64::vget_low_u32(rhs[3].into_vec()),
+        );
+
+        // High half (Lanes 2 & 3)
+        let mut sum_h = aarch64::vmull_high_u32(lhs[0].into_vec(), rhs[0].into_vec());
+        sum_h = aarch64::vmlal_high_u32(sum_h, lhs[1].into_vec(), rhs[1].into_vec());
+        sum_h = aarch64::vmlal_high_u32(sum_h, lhs[2].into_vec(), rhs[2].into_vec());
+        sum_h = aarch64::vmlal_high_u32(sum_h, lhs[3].into_vec(), rhs[3].into_vec());
+
+        // Split C into 32-bit halves per lane:
+        // - c_lo = C mod 2^{32},
+        // - c_hi = C >> 32.
+        let c_lo = aarch64::vuzp1q_u32(
+            aarch64::vreinterpretq_u32_u64(sum_l),
+            aarch64::vreinterpretq_u32_u64(sum_h),
+        );
+        let c_hi = aarch64::vuzp2q_u32(
+            aarch64::vreinterpretq_u32_u64(sum_l),
+            aarch64::vreinterpretq_u32_u64(sum_h),
+        );
+
+        // Since C < 4P^2 and P < 2^{31}, we have c_hi < 2P.
+        // We want to compute: c_hi' ∈ [0,P) satisfying c_hi' = c_hi mod P.
+        let c_hi_sub = aarch64::vsubq_u32(c_hi, P::PACKED_P);
+        let c_hi_prime = aarch64::vminq_u32(c_hi, c_hi_sub);
+
+        // q ≡ c_lo ⋅ μ (mod 2^{32}), with μ = −P^{-1} (mod 2^{32}).
+        let q = aarch64::vmulq_u32(c_lo, aarch64::vreinterpretq_u32_s32(P::PACKED_MU));
+
+        // Compute (q⋅P)_hi = high 32 bits of q⋅P per lane (exact unsigned widening multiply).
+        let qp_l = aarch64::vmull_u32(aarch64::vget_low_u32(q), aarch64::vget_low_u32(P::PACKED_P));
+        let qp_h = aarch64::vmull_high_u32(q, P::PACKED_P);
+        let qp_hi = aarch64::vuzp2q_u32(
+            aarch64::vreinterpretq_u32_u64(qp_l),
+            aarch64::vreinterpretq_u32_u64(qp_h),
+        );
+
+        let d = aarch64::vsubq_u32(c_hi_prime, qp_hi);
+
+        // Canonicalize d from (-P, P) to [0, P) branchlessly.
+        //
+        // The `vmlsq_u32` instruction computes `a - (b * c)`.
+        // - If `d` is negative, the mask is `-1` (all 1s), so we compute `d - (-1 * P) = d + P`.
+        // - If `d` is non-negative, the mask is `0`, so we compute `d - (0 * P) = d`.
+        let underflow = aarch64::vcltq_u32(c_hi_prime, qp_hi);
+        let canonical_res = aarch64::vmlsq_u32(d, underflow, P::PACKED_P);
+
+        // Safety: The result is now in canonical form [0, P).
+        PackedMontyField31Neon::from_vector(canonical_res)
+    }
+}
+
 /// Multiplication in a quartic binomial extension field.
 #[inline]
 pub(crate) fn quartic_mul_packed<FP, const WIDTH: usize>(
@@ -448,31 +799,31 @@ pub(crate) fn quartic_mul_packed<FP, const WIDTH: usize>(
     b: &[MontyField31<FP>; WIDTH],
     res: &mut [MontyField31<FP>; WIDTH],
 ) where
-    FP: FieldParameters + BinomialExtensionData<WIDTH>,
+    FP: FieldParameters + BinomialExtensionData<WIDTH> + MontyParametersNeon,
 {
-    // TODO: This could be optimised further with a custom NEON implementation.
     assert_eq!(WIDTH, 4);
+
+    // Precompute w⋅b once (base-field multiply by the binomial constant).
     let packed_b = PackedMontyField31Neon([b[0], b[1], b[2], b[3]]);
     let w_b = FP::mul_w(packed_b).0;
-    let w_b1 = w_b[1];
-    let w_b2 = w_b[2];
-    let w_b3 = w_b[3];
 
     // Constant term = a0*b0 + w(a1*b3 + a2*b2 + a3*b1)
     // Linear term = a0*b1 + a1*b0 + w(a2*b3 + a3*b2)
     // Square term = a0*b2 + a1*b1 + a2*b0 + w(a3*b3)
     // Cubic term = a0*b3 + a1*b2 + a2*b1 + a3*b0
-    let lhs: [PackedMontyField31Neon<FP>; 4] = [a[0].into(), a[1].into(), a[2].into(), a[3].into()];
-    let rhs = [
+    let cols = [
         PackedMontyField31Neon([b[0], b[1], b[2], b[3]]),
-        PackedMontyField31Neon([w_b3, b[0], b[1], b[2]]),
-        PackedMontyField31Neon([w_b2, w_b3, b[0], b[1]]),
-        PackedMontyField31Neon([w_b1, w_b2, w_b3, b[0]]),
+        PackedMontyField31Neon([w_b[3], b[0], b[1], b[2]]),
+        PackedMontyField31Neon([w_b[2], w_b[3], b[0], b[1]]),
+        PackedMontyField31Neon([w_b[1], w_b[2], w_b[3], b[0]]),
     ];
 
-    let dot = PackedMontyField31Neon::dot_product(&lhs, &rhs).0;
+    // Arrange a’s coefficients for the dot product.
+    let a_coeffs = [a[0], a[1], a[2], a[3]];
 
-    res[..].copy_from_slice(&dot);
+    let result = unsafe { dot_product_4(&a_coeffs, &cols) };
+
+    res.copy_from_slice(&result.0);
 }
 
 /// Multiplication in a quintic binomial extension field.
@@ -619,5 +970,26 @@ pub(crate) fn base_mul_packed<FP, const WIDTH: usize>(
             res[4..].copy_from_slice(&out_hi.0);
         }
         _ => panic!("Unsupported binomial extension degree: {}", WIDTH),
+    }
+}
+
+/// Raise MontyField31 field elements to a small constant power `D`.
+///
+/// Currently, `D` must be one of 3, 5, or 7, if other powers are needed we can easily add them.
+///
+/// # Safety
+/// Inputs must be signed 32-bit integers in the range `[-P, P]`.
+/// Outputs will be unsigned 32-bit integers in canonical form `[0, P)`.
+#[inline(always)]
+#[must_use]
+pub(crate) fn exp_small<PMP, const D: u64>(val: int32x4_t) -> uint32x4_t
+where
+    PMP: PackedMontyParameters + FieldParameters,
+{
+    match D {
+        3 => cube::<PMP>(val),
+        5 => exp_5::<PMP>(val),
+        7 => exp_7::<PMP>(val),
+        _ => panic!("No exp function for given D"),
     }
 }
