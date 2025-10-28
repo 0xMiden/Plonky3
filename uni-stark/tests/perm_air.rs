@@ -46,6 +46,8 @@ impl<F> MultiPhaseBaseAir<F> for TwoPhasePermAir {
 
 impl<AB: AirBuilderWithPublicValues + PermutationAirBuilder> Air<AB> for TwoPhasePermAir {
     fn eval(&self, builder: &mut AB) {
+        ark_std::println!("perm air eval");        
+
         // | m1 | m2 | m3 | a1      | a2      | a3 |
         // | 0  | 1  | 8  | 1/(r-1) | 1/(r-8) | .. |
         // | 1  | 1  | 5  | 1/(r-1) | 1/(r-5) | .. |
@@ -241,6 +243,11 @@ fn test_zk() {
     let challenge_mmcs = ChallengeHidingMmcs::new(val_mmcs.clone());
     let dft = Dft::default();
     let trace = generate_trace_rows::<Val>(0, 1, n);
+    
+    ark_std::       println!("main trace: {:?}", trace);
+
+
+
     let fri_params = create_test_fri_params(challenge_mmcs, 2);
     type HidingPcs = HidingFriPcs<Val, Dft, ValHidingMmcs, ChallengeHidingMmcs, SmallRng>;
     type MyHidingConfig = StarkConfig<HidingPcs, Challenge, Challenger>;

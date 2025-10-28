@@ -272,12 +272,10 @@ impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for VerifierConstraintFol
     /// Return the matrix representing permutation registers.
     fn permutation(&self) -> Self::MP {
         self.aux
-        // todo!()
     }
 
     /// Return the list of randomness values for permutation argument.
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         self.randomness
-        // todo!()
     }
 }

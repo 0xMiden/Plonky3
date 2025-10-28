@@ -31,7 +31,9 @@ pub(crate) fn check_constraints<EF, F, A>(
     F: Field,
     A: for<'a> Air<DebugConstraintBuilder<'a, EF, F>>,
 {
+    ark_std::println!("check constraints");
     let height = main.height();
+    ark_std::println!("height: {}", height);
 
     (0..height).for_each(|row_index| {
         let row_index_next = (row_index + 1) % height;
@@ -245,6 +247,8 @@ mod tests {
         F: Field,
     {
         fn eval(&self, builder: &mut DebugConstraintBuilder<'_, EF, F>) {
+
+            ark_std::println!("debug constraint builder check");
             let main = builder.main();
             let aux = builder.aux;
 
@@ -286,6 +290,7 @@ mod tests {
             let a3_top = aux.top.get(0, 2).unwrap();
             let a3_bot = aux.bottom.get(0, 2).unwrap();
 
+            ark_std::println!("randomness: {:?}", r);
             builder.assert_eq_ext::<EF, EF>(EF::ONE, ti * (r - EF::from(xi)));
             builder.assert_eq_ext::<EF, EF>(EF::ONE, wi * (r - EF::from(yi)));
 

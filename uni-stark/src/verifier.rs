@@ -143,7 +143,6 @@ where
         vec![]
     };
 
-    
     ark_std::println!("prepare com for pcs");
 
     coms_to_verify.extend(vec![
@@ -168,7 +167,7 @@ where
             .map(|(domain, values)| (*domain, vec![(zeta, values.clone())]))
             .collect_vec(),
         ),
-                (
+        (
             commitments.aux.clone(),
             vec![(
                 trace_domain,
@@ -203,8 +202,6 @@ where
                 .product::<SC::Challenge>()
         })
         .collect_vec();
-
-
 
     ark_std::println!("start to compute quotient");
     let quotient = opened_values
@@ -250,8 +247,11 @@ where
     air.eval(&mut folder);
     let folded_constraints = folder.accumulator;
 
-
-    ark_std::println!("prod: {:?}\nquotient: {:?}",folded_constraints * sels.inv_vanishing, quotient);
+    ark_std::println!(
+        "prod: {:?}\nquotient: {:?}",
+        folded_constraints * sels.inv_vanishing,
+        quotient
+    );
     // Finally, check that
     //     folded_constraints(zeta) / Z_H(zeta) = quotient(zeta)
     if folded_constraints * sels.inv_vanishing != quotient {

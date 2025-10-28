@@ -22,7 +22,8 @@ use crate::{
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, SC::Challenge, Val<SC>>>,
+    #[cfg(debug_assertions)] 
+    A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, SC::Challenge, Val<SC>>>,
     #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
@@ -34,20 +35,6 @@ where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
 {
-    #[cfg(debug_assertions)]
-    {
-        // TODO: FIXME
-        // Create empty aux trace for debug constraint checking
-        let aux = RowMajorMatrix::new(vec![SC::Challenge::ZERO; trace.height()], 0);
-        let aux_randomness = vec![];
-        crate::check_constraints::check_constraints(
-            air,
-            &trace,
-            &aux,
-            &aux_randomness,
-            public_values,
-        );
-    }
 
     // ark_std::println!("cs count {}", air.)
 
@@ -147,8 +134,8 @@ where
         .map(|_| challenger.sample_algebra_element())
         .collect();
     let (aux_trace_commit, aux_trace, aux_trace_data) = {
-        // let aux_trace = generate_logup_trace(&trace, &randomness[0]);
-        let aux_trace = generate_logup_trace(&trace, &-SC::Challenge::ONE); // TODO -- remove
+        let aux_trace = generate_logup_trace(&trace, &randomness[0]);
+        // let aux_trace = generate_logup_trace(&trace, &-SC::Challenge::ONE); // TODO -- remove
         let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
             .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
 
@@ -161,6 +148,19 @@ where
     };
 
     ark_std::println!("aux trace: {:?}", aux_trace);
+
+    #[cfg(debug_assertions)]
+    {
+        // Create empty aux trace for debug constraint checking
+        crate::check_constraints::check_constraints(
+            air,
+            &trace,
+            &aux_trace,
+            &randomness,
+            public_values,
+        );
+    }
+
 
     // Get the first Fiat Shamir challenge which will be used to combine all constraint polynomials
     // into a single polynomial.
@@ -200,7 +200,7 @@ where
     let aux_trace_on_quotient_domain =
         pcs.get_evaluations_on_domain(&aux_trace_data, 0, quotient_domain);
 
-    ark_std::println!("max constraint_count: {:?}", max_constraint_count);
+    ark_std::println!("max constraint count: {:?}", max_constraint_count);
 
     // Compute the quotient polynomial `Q(x)` by evaluating
     //          `C(T_1(x), ..., T_w(x), T_1(hx), ..., T_w(hx), selectors(x)) / Z_H(x)`
@@ -293,7 +293,6 @@ where
     let zeta: SC::Challenge = challenger.sample_algebra_element();
     let zeta_next = trace_domain.next_point(zeta).unwrap();
 
-
     ark_std::println!("prover zeta: {:?}", zeta);
 
     let is_random = opt_r_data.is_some();
@@ -307,6 +306,9 @@ where
 
         pcs.open(rounds, &mut challenger)
     });
+
+    ark_std::println!("opened values len: {}", opened_values.len());
+
     let trace_idx = SC::Pcs::TRACE_IDX;
     let quotient_idx = SC::Pcs::QUOTIENT_IDX;
     let trace_local = opened_values[trace_idx][0][0].clone();
@@ -331,6 +333,9 @@ where
         aux_trace_next,
         random,
     };
+
+    ark_std::println!("opened values: {:?}", opened_values);
+
     Proof {
         commitments,
         opened_values,
@@ -428,6 +433,7 @@ where
             // ark_std::println!("start to evaluate");
             air.eval(&mut folder);
 
+            // ark_std::println!("finished evaluate");
             // quotient(x) = constraints(x) / Z_H(x)
             let quotient = folder.accumulator * inv_vanishing;
 
