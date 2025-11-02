@@ -98,11 +98,17 @@ fn do_test_fri_pcs<Val, Challenge, Challenger, P>(
 // Set it up so we create tests inside a module for each pcs, so we get nice error reports
 // specific to a failing PCS.
 macro_rules! make_tests_for_pcs {
-    ($p:expr) => {
+    ($p:expr, $log_folding_factor:expr) => {
         #[test]
         fn single() {
             let p = $p;
-            for i in 3..6 {
+            // Adjust polynomial sizes to align with folding factor
+            // For folding factor 2^k, we want polynomial sizes that are multiples of k
+            // Ensure minimum of 3 for CirclePcs (needs at least 4 rows)
+            let step = $log_folding_factor;
+            // Round up to nearest multiple of step that's >= 3
+            let start = ((3 + step - 1) / step) * step;
+            for i in (start..=(start + 2 * step)).step_by(step) {
                 $crate::do_test_fri_pcs(&p, &[&[i]]);
             }
         }
@@ -110,7 +116,10 @@ macro_rules! make_tests_for_pcs {
         #[test]
         fn many_equal() {
             let p = $p;
-            for i in 2..6 {
+            let step = $log_folding_factor;
+            // Round up to nearest multiple of step that's >= 3
+            let start = ((3 + step - 1) / step) * step;
+            for i in (start..=(start + 2 * step)).step_by(step) {
                 $crate::do_test_fri_pcs(&p, &[&[i; 5]]);
                 println!("{i} ok");
             }
@@ -119,8 +128,11 @@ macro_rules! make_tests_for_pcs {
         #[test]
         fn many_different() {
             let p = $p;
-            for i in 2..5 {
-                let degrees = (3..3 + i).collect::<Vec<_>>();
+            let step = $log_folding_factor;
+            // Limit count for larger folding factors to avoid very large polynomials
+            let max_count = if step >= 3 { 3 } else { 4 };
+            for count in 2..=max_count {
+                let degrees = (0..count).map(|j| step * (2 + j)).collect::<Vec<_>>();
                 $crate::do_test_fri_pcs(&p, &[&degrees]);
             }
         }
@@ -128,8 +140,11 @@ macro_rules! make_tests_for_pcs {
         #[test]
         fn many_different_rev() {
             let p = $p;
-            for i in 2..5 {
-                let degrees = (3..3 + i).rev().collect::<Vec<_>>();
+            let step = $log_folding_factor;
+            // Limit count for larger folding factors to avoid very large polynomials
+            let max_count = if step >= 3 { 3 } else { 4 };
+            for count in 2..=max_count {
+                let degrees = (0..count).map(|j| step * (2 + j)).rev().collect::<Vec<_>>();
                 $crate::do_test_fri_pcs(&p, &[&degrees]);
             }
         }
@@ -137,15 +152,17 @@ macro_rules! make_tests_for_pcs {
         #[test]
         fn multiple_rounds() {
             let p = $p;
-            $crate::do_test_fri_pcs(&p, &[&[3]]);
-            $crate::do_test_fri_pcs(&p, &[&[3], &[3]]);
-            $crate::do_test_fri_pcs(&p, &[&[3], &[2]]);
-            $crate::do_test_fri_pcs(&p, &[&[2], &[3]]);
-            $crate::do_test_fri_pcs(&p, &[&[3, 4], &[3, 4]]);
-            $crate::do_test_fri_pcs(&p, &[&[4, 2], &[4, 2]]);
-            $crate::do_test_fri_pcs(&p, &[&[2, 2], &[3, 3]]);
-            $crate::do_test_fri_pcs(&p, &[&[3, 3], &[2, 2]]);
-            $crate::do_test_fri_pcs(&p, &[&[2], &[3, 3]]);
+            let step = $log_folding_factor;
+            let base = step.max(2);
+            $crate::do_test_fri_pcs(&p, &[&[3 * base]]);
+            $crate::do_test_fri_pcs(&p, &[&[3 * base], &[3 * base]]);
+            $crate::do_test_fri_pcs(&p, &[&[3 * base], &[2 * base]]);
+            $crate::do_test_fri_pcs(&p, &[&[2 * base], &[3 * base]]);
+            $crate::do_test_fri_pcs(&p, &[&[3 * base, 4 * base], &[3 * base, 4 * base]]);
+            $crate::do_test_fri_pcs(&p, &[&[4 * base, 2 * base], &[4 * base, 2 * base]]);
+            $crate::do_test_fri_pcs(&p, &[&[2 * base, 2 * base], &[3 * base, 3 * base]]);
+            $crate::do_test_fri_pcs(&p, &[&[3 * base, 3 * base], &[2 * base, 2 * base]]);
+            $crate::do_test_fri_pcs(&p, &[&[2 * base], &[3 * base, 3 * base]]);
         }
     };
 }
@@ -168,7 +185,7 @@ mod babybear_fri_pcs {
     type Challenger = DuplexChallenger<Val, Perm, 16, 8>;
     type MyPcs = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;
 
-    fn get_pcs(log_blowup: usize) -> (MyPcs, Challenger) {
+    fn get_pcs(log_blowup: usize, log_folding_factor: usize) -> (MyPcs, Challenger) {
         let perm = Perm::new_from_rng_128(&mut seeded_rng());
         let hash = MyHash::new(perm.clone());
         let compress = MyCompress::new(perm.clone());
@@ -182,7 +199,7 @@ mod babybear_fri_pcs {
             num_queries: 10,
             proof_of_work_bits: 8,
             mmcs: challenge_mmcs,
-            log_folding_factor: 1, // Default folding factor of 2
+            log_folding_factor,
         };
 
         let pcs = MyPcs::new(Dft::default(), val_mmcs, fri_params);
@@ -190,10 +207,26 @@ mod babybear_fri_pcs {
     }
 
     mod blowup_1 {
-        make_tests_for_pcs!(super::get_pcs(1));
+        mod folding_2 {
+            make_tests_for_pcs!(super::super::get_pcs(1, 1), 1);
+        }
+        mod folding_4 {
+            make_tests_for_pcs!(super::super::get_pcs(1, 2), 2);
+        }
+        mod folding_8 {
+            make_tests_for_pcs!(super::super::get_pcs(1, 3), 3);
+        }
     }
     mod blowup_2 {
-        make_tests_for_pcs!(super::get_pcs(2));
+        mod folding_2 {
+            make_tests_for_pcs!(super::super::get_pcs(2, 1), 1);
+        }
+        mod folding_4 {
+            make_tests_for_pcs!(super::super::get_pcs(2, 2), 2);
+        }
+        mod folding_8 {
+            make_tests_for_pcs!(super::super::get_pcs(2, 3), 3);
+        }
     }
 }
 
@@ -224,7 +257,7 @@ mod m31_fri_pcs {
 
     type Pcs = CirclePcs<Val, ValMmcs, ChallengeMmcs>;
 
-    fn get_pcs(log_blowup: usize) -> (Pcs, Challenger) {
+    fn get_pcs(log_blowup: usize, log_folding_factor: usize) -> (Pcs, Challenger) {
         let byte_hash = ByteHash {};
         let field_hash = FieldHash::new(byte_hash);
         let compress = MyCompress::new(byte_hash);
@@ -236,7 +269,7 @@ mod m31_fri_pcs {
             num_queries: 10,
             proof_of_work_bits: 8,
             mmcs: challenge_mmcs,
-            log_folding_factor: 1, // Default folding factor of 2
+            log_folding_factor,
         };
         let pcs = Pcs {
             mmcs: val_mmcs,
@@ -247,9 +280,25 @@ mod m31_fri_pcs {
     }
 
     mod blowup_1 {
-        make_tests_for_pcs!(super::get_pcs(1));
+        mod folding_2 {
+            make_tests_for_pcs!(super::super::get_pcs(1, 1), 1);
+        }
+        mod folding_4 {
+            make_tests_for_pcs!(super::super::get_pcs(1, 2), 2);
+        }
+        mod folding_8 {
+            make_tests_for_pcs!(super::super::get_pcs(1, 3), 3);
+        }
     }
     mod blowup_2 {
-        make_tests_for_pcs!(super::get_pcs(2));
+        mod folding_2 {
+            make_tests_for_pcs!(super::super::get_pcs(2, 1), 1);
+        }
+        mod folding_4 {
+            make_tests_for_pcs!(super::super::get_pcs(2, 2), 2);
+        }
+        mod folding_8 {
+            make_tests_for_pcs!(super::super::get_pcs(2, 3), 3);
+        }
     }
 }
