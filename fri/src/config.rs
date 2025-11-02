@@ -34,7 +34,6 @@ impl<M> FriParameters<M> {
     }
 
     /// Creates new FRI parameters with validation.
-    /// Returns an error if the parameters are invalid.
     pub fn new(
         log_blowup: usize,
         log_final_poly_len: usize,
@@ -97,7 +96,7 @@ pub trait FriFoldingStrategy<F: Field, EF: ExtensionField<F>> {
         if folding_factor == 2 {
             self.fold_row(index, log_height, beta, evals)
         } else {
-            panic!("folding for parameters != 2 is not supported")
+            panic!("folding for parameters != 2 is not implemented")
         }
     }
 
@@ -114,7 +113,7 @@ pub trait FriFoldingStrategy<F: Field, EF: ExtensionField<F>> {
         if folding_factor == 2 {
             self.fold_matrix(beta, m)
         } else {
-            panic!("folding for parameters != 2 is not supported")
+            panic!("folding for parameters != 2 is not implemented")
         }
     }
 }

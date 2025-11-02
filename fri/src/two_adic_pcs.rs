@@ -246,7 +246,7 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
                 // Lagrange interpolation at beta, using precomputed denominators
                 let mut result = EF::ZERO;
                 for i in 0..folding_factor {
-                    // Compute Lagrange basis numerator: ∏(beta - xs[j]) for j ≠ i
+                    // Compute Lagrange basis numerator: \prod(beta - xs[j]) for j \neq i
                     let mut numerator = EF::ONE;
                     for j in 0..folding_factor {
                         if i != j {
@@ -272,8 +272,6 @@ where
     EF: ExtensionField<F>,
 {
     let n = xs.len();
-
-    // Compute all numerators and denominators
     let mut numerators = Vec::with_capacity(n);
     let mut denominators = Vec::with_capacity(n);
 
@@ -283,10 +281,8 @@ where
 
         for j in 0..n {
             if i != j {
-                // Numerator: (x - xs[j]) in EF
-                numerator *= x - xs[j];
-                // Denominator: (xs[i] - xs[j]) in F
-                denominator *= xs[i] - xs[j];
+                numerator *= x - xs[j]; // Numerator: (x - xs[j]) in EF
+                denominator *= xs[i] - xs[j]; // Denominator: (xs[i] - xs[j]) in F
             }
         }
 
@@ -294,7 +290,7 @@ where
         denominators.push(denominator);
     }
 
-    // Batch invert all denominators at once
+    // Batch invert all denominators
     let inv_denominators = batch_multiplicative_inverse(&denominators);
 
     // Compute the final result: sum of ys[i] * numerator[i] / denominator[i]
@@ -308,9 +304,6 @@ where
 
 /// Precompute denominators for Lagrange interpolation using batch inversion.
 /// Returns 1 / \prod(xs[i] - xs[j]) for each i.
-///
-/// Batch inversion is significantly more efficient than computing individual inverses,
-/// reducing the number of field inversions from O(n) to O(1) at the cost of O(n) multiplications.
 fn precompute_lagrange_denominators<F: TwoAdicField>(xs: &[F]) -> Vec<F> {
     let n = xs.len();
 
@@ -327,7 +320,7 @@ fn precompute_lagrange_denominators<F: TwoAdicField>(xs: &[F]) -> Vec<F> {
         })
         .collect();
 
-    // Batch invert all denominators at once
+    // Batch invert all denominators
     batch_multiplicative_inverse(&denominators)
 }
 

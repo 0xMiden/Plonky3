@@ -179,21 +179,21 @@ fn test_fri_ldt() {
         let test_configs: Vec<(Vec<u8>, Vec<usize>)> = match log_folding_factor {
             1 => vec![
                 // Folding factor 2: all sizes work
-                (vec![5, 8, 10, 7, 5, 5, 7], (0..=3).collect()),
+                (vec![5, 8, 10, 7, 5, 5, 7], (0..=4).collect()),
             ],
             2 => vec![
                 // Folding factor 4: aligned case (all even)
-                (vec![4, 6, 8, 10, 6, 4], vec![0, 2]),
+                (vec![4, 6, 8, 10, 6, 4], vec![0, 2, 4]),
                 // Non-aligned case: all odd (remainder 1)
-                (vec![5, 7, 9, 11, 7, 5], vec![1, 3]),
+                (vec![5, 7, 9, 11, 7, 5], vec![1, 3, 5]),
             ],
             3 => vec![
                 // Folding factor 8: aligned case (all multiples of 3)
-                (vec![6, 9, 12, 6, 9], vec![0, 3]),
+                (vec![6, 9, 12, 6, 9], vec![0, 3, 6]),
                 // Non-aligned case: remainder 1 when divided by 3
-                (vec![7, 10, 13, 7, 10], vec![1, 4]),
+                (vec![7, 10, 13, 7, 10], vec![1, 4, 7]),
                 // Non-aligned case: remainder 2 when divided by 3
-                (vec![8, 11, 14, 8, 11], vec![2]),
+                (vec![8, 11, 14, 8, 11], vec![2, 5, 8]),
             ],
             _ => unreachable!(),
         };
