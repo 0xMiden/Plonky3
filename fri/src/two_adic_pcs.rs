@@ -131,6 +131,45 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
         // Note we do not want to do an EF division as that is far more expensive.
     }
 
+    fn fold_row_arbitrary(
+        &self,
+        index: usize,
+        log_height: usize,
+        beta: EF,
+        evals: impl ParallelIterator<Item = EF>,
+        folding_factor: usize, // todo: move to folding param
+    ) -> EF {
+        if folding_factor == 2 {
+            return self.fold_row(index, log_height, beta, evals);
+        }
+
+        let arity = folding_factor;
+        let log_arity = log2_strict_usize(arity); // panics if arity is not a power of 2
+
+        let evals: Vec<EF> = evals.collect();
+        assert_eq!(
+            evals.len(),
+            folding_factor,
+            "Expected {} evaluations, got {}",
+            folding_factor,
+            evals.len()
+        );
+
+        // If performance critical, make this API stateful to avoid this
+        // This is a bit more math than is necessary, but leaving it here
+        // in case we want higher arity in the future.
+        let subgroup_start = F::two_adic_generator(log_height + log_arity)
+            .exp_u64(reverse_bits_len(index, log_height) as u64);
+        let mut xs = F::two_adic_generator(log_arity)
+            .shifted_powers(subgroup_start)
+            .collect_n(arity);
+        reverse_slice_index_bits(&mut xs);
+
+        // Perform Lagrange interpolation at beta
+        // We optimize by keeping denominators in base field F
+        lagrange_interpolate_at_point(&xs, &evals, beta)
+    }
+
     fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, m: M) -> Vec<EF> {
         // We use the fact that
         //     p_e(x^2) = (p(x) + p(-x)) / 2
@@ -160,6 +199,116 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
             })
             .collect()
     }
+
+    /// Same as applying fold_row to every row, possibly faster.
+    fn fold_matrix_arbitrary<M: Matrix<EF>>(
+        &self,
+        beta: EF,
+        m: M,
+        folding_factor: usize,
+    ) -> Vec<EF> {
+        let log_arity = log2_strict_usize(folding_factor);
+        let log_height = log2_strict_usize(m.height());
+
+        // Precompute domain points for each row
+        // We do this upfront to amortize the cost
+        let g = F::two_adic_generator(log_height + log_arity);
+
+        // For each row index, compute its domain points
+        let domain_points: Vec<Vec<F>> = (0..m.height())
+            .map(|index| {
+                let subgroup_start = g.exp_u64(reverse_bits_len(index, log_height) as u64);
+                let mut xs = F::two_adic_generator(log_arity)
+                    .shifted_powers(subgroup_start)
+                    .collect_n(folding_factor);
+                reverse_slice_index_bits(&mut xs);
+                xs
+            })
+            .collect();
+
+        // Precompute Lagrange denominators for each row
+        // These are in base field F - much cheaper to invert!
+        let lagrange_denoms: Vec<Vec<F>> = domain_points
+            .iter()
+            .map(|xs| precompute_lagrange_denominators(xs))
+            .collect();
+
+        // Process each row in parallel
+        m.par_rows()
+            .zip(domain_points)
+            .zip(lagrange_denoms)
+            .map(|((row, xs), denoms)| {
+                let evals: Vec<EF> = row.collect();
+                assert_eq!(evals.len(), folding_factor);
+
+                // Lagrange interpolation at beta, using precomputed denominators
+                let mut result = EF::ZERO;
+                for i in 0..folding_factor {
+                    // Compute Lagrange basis numerator: ∏(beta - xs[j]) for j ≠ i
+                    let mut numerator = EF::ONE;
+                    for j in 0..folding_factor {
+                        if i != j {
+                            numerator *= beta - xs[j];
+                        }
+                    }
+
+                    // Combine: evals[i] * numerator * (precomputed denominator)
+                    result += evals[i] * numerator * denoms[i];
+                }
+
+                result
+            })
+            .collect()
+    }
+}
+
+/// Lagrange interpolation evaluated at a point
+/// xs are in base field F, ys and result are in extension field EF
+fn lagrange_interpolate_at_point<F, EF>(xs: &[F], ys: &[EF], x: EF) -> EF
+where
+    F: TwoAdicField,
+    EF: ExtensionField<F>,
+{
+    let n = xs.len();
+    let mut result = EF::ZERO;
+
+    for i in 0..n {
+        // Compute Lagrange basis L_i(x)
+        let mut numerator = EF::ONE;
+        let mut denominator = F::ONE;
+
+        for j in 0..n {
+            if i != j {
+                // Numerator: (x - xs[j]) in EF
+                numerator *= x - xs[j];
+                // Denominator: (xs[i] - xs[j]) in F (cheaper!)
+                denominator *= xs[i] - xs[j];
+            }
+        }
+
+        // Combine: ys[i] * numerator / denominator
+        // We do F inversion to keep it cheap
+        result += ys[i] * numerator * denominator.inverse();
+    }
+
+    result
+}
+
+/// Precompute denominators for Lagrange interpolation
+/// Returns 1 / \prod(xs[i] - xs[j]) for each i
+fn precompute_lagrange_denominators<F: TwoAdicField>(xs: &[F]) -> Vec<F> {
+    let n = xs.len();
+    (0..n)
+        .map(|i| {
+            let mut denom = F::ONE;
+            for j in 0..n {
+                if i != j {
+                    denom *= xs[i] - xs[j];
+                }
+            }
+            denom.inverse()
+        })
+        .collect()
 }
 
 impl<Val, Dft, InputMmcs, FriMmcs, Challenge, Challenger> Pcs<Challenge, Challenger>
@@ -507,6 +656,7 @@ where
 
         let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding(PhantomData);
 
+        ark_std::println!("start to prove fri");
         // Produce the FRI proof.
         let fri_proof = prover::prove_fri(
             &folding,

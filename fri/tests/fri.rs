@@ -37,6 +37,7 @@ fn get_ldt_for_testing<R: Rng>(rng: &mut R, log_final_poly_len: usize) -> (Perm,
         num_queries: 10,
         proof_of_work_bits: 8,
         mmcs: fri_mmcs,
+        log_folding_factor: 1, // Default folding factor of 2
     };
     let dft = Radix2Dit::default();
     let pcs = MyPcs::new(dft, input_mmcs, fri_params);
@@ -92,6 +93,8 @@ fn do_test_fri_ldt<R: Rng>(rng: &mut R, log_final_poly_len: usize, polynomial_lo
         // Observe the commitment.
         challenger.observe(commitment);
 
+        ark_std::println!("committed ");
+
         // Sample the challenge point zeta which all polynomials
         // will be opened at.
         let zeta: Challenge = challenger.sample_algebra_element();
@@ -99,8 +102,11 @@ fn do_test_fri_ldt<R: Rng>(rng: &mut R, log_final_poly_len: usize, polynomial_lo
         // Prepare the data into the form expected by `pcs.open`.
         let open_data = vec![(&prover_data, vec![vec![zeta]; num_evaluations])]; // open every chunk at zeta
 
+        ark_std::println!("open: {}, num evals: {}", open_data.len(), num_evaluations);
         // Open all polynomials at zeta and produce the opening proof.
         let (opened_values, opening_proof) = pcs.open(open_data, &mut challenger);
+
+        ark_std::println!("opened ");
 
         // Return the commitment, opened values, opening proof and challenger.
         // The first three of these are always passed to the verifier. The
@@ -181,4 +187,116 @@ fn test_fri_ldt_should_panic() {
     let polynomial_log_sizes = [5, 8, 10, 7, 5, 5, 7];
     let mut rng = SmallRng::seed_from_u64(5);
     do_test_fri_ldt(&mut rng, 5, &polynomial_log_sizes);
+}
+
+/// Test FRI with folding factor 4 instead of the default 2.
+/// This tests the arbitrary folding factor implementation.
+#[test]
+fn test_fri_ldt_folding_factor_4() {
+    let mut rng = SmallRng::seed_from_u64(42);
+
+    // Create a custom PCS with folding factor 4
+    let perm = Perm::new_from_rng_128(&mut rng);
+    let hash = MyHash::new(perm.clone());
+    let compress = MyCompress::new(perm.clone());
+    let input_mmcs = ValMmcs::new(hash.clone(), compress.clone());
+    let fri_mmcs = ChallengeMmcs::new(ValMmcs::new(hash, compress));
+    let fri_params = FriParameters {
+        log_blowup: 1,
+        log_final_poly_len: 4,
+        num_queries: 10,
+        proof_of_work_bits: 8,
+        mmcs: fri_mmcs,
+        log_folding_factor: 2, // Folding factor of 4 = 2^2
+    };
+    let dft = Radix2Dit::default();
+    let pcs = MyPcs::new(dft, input_mmcs, fri_params);
+
+    // With folding factor 4 and log_blowup=1, heights go: start → start-2 → start-4 → ...
+    // So we need polynomial sizes that align. With log_blowup=1, polynomial of size 2^k
+    // becomes LDE of height 2^(k+1). So for heights 9, 7, 5 we need polynomials of size 2^8, 2^6, 2^4.
+    // But for better testing let's use 2^8, which becomes height 9.
+    let polynomial_log_sizes = [8u8];
+
+    // Convert to Val for challenger observation
+    let val_sizes: Vec<Val> = polynomial_log_sizes
+        .iter()
+        .map(|&i| Val::from_u8(i))
+        .collect();
+
+    // --- Prover World ---
+    let (commitment, opened_values, opening_proof, mut p_challenger) = {
+        let mut challenger = Challenger::new(perm.clone());
+        challenger.observe_slice(&val_sizes);
+
+        // Generate random evaluation matrices
+        let evaluations: Vec<(TwoAdicMultiplicativeCoset<Val>, RowMajorMatrix<Val>)> =
+            polynomial_log_sizes
+                .iter()
+                .map(|deg_bits| {
+                    let deg = 1 << deg_bits;
+                    (
+                        <MyPcs as Pcs<Challenge, Challenger>>::natural_domain_for_degree(&pcs, deg),
+                        RowMajorMatrix::<Val>::rand_nonzero(&mut rng, deg, 16),
+                    )
+                })
+                .collect();
+
+        let num_evaluations = evaluations.len();
+
+        // Commit
+        let (commitment, prover_data) =
+            <TwoAdicFriPcs<BabyBear, Radix2Dit<BabyBear>, ValMmcs, ChallengeMmcs> as Pcs<
+                Challenge,
+                Challenger,
+            >>::commit(&pcs, evaluations);
+
+        challenger.observe(commitment);
+
+        // Sample opening point
+        let zeta: Challenge = challenger.sample_algebra_element();
+
+        // Open
+        let open_data = vec![(&prover_data, vec![vec![zeta]; num_evaluations])];
+        let (opened_values, opening_proof) = pcs.open(open_data, &mut challenger);
+
+        (commitment, opened_values, opening_proof, challenger)
+    };
+
+    // --- Verifier World ---
+    let mut v_challenger = {
+        let mut challenger = Challenger::new(perm.clone());
+        challenger.observe_slice(&val_sizes);
+        challenger.observe(commitment);
+
+        let zeta = challenger.sample_algebra_element();
+
+        let domains = polynomial_log_sizes.iter().map(|&size| {
+            <MyPcs as Pcs<Challenge, Challenger>>::natural_domain_for_degree(&pcs, 1 << size)
+        });
+
+        let commitments_with_opening_points = vec![(
+            commitment,
+            domains
+                .into_iter()
+                .zip(opened_values.into_iter().flatten().flatten())
+                .map(|(domain, value)| (domain, vec![(zeta, value)]))
+                .collect(),
+        )];
+
+        let verification = pcs.verify(
+            commitments_with_opening_points,
+            &opening_proof,
+            &mut challenger,
+        );
+        assert!(verification.is_ok());
+        challenger
+    };
+
+    // Check that the prover and verifier challengers agree
+    assert_eq!(
+        p_challenger.sample_bits(8),
+        v_challenger.sample_bits(8),
+        "prover and verifier transcript have same state after FRI with folding factor 4"
+    );
 }

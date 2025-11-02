@@ -182,6 +182,7 @@ mod babybear_fri_pcs {
             num_queries: 10,
             proof_of_work_bits: 8,
             mmcs: challenge_mmcs,
+            log_folding_factor: 1, // Default folding factor of 2
         };
 
         let pcs = MyPcs::new(Dft::default(), val_mmcs, fri_params);
@@ -235,6 +236,7 @@ mod m31_fri_pcs {
             num_queries: 10,
             proof_of_work_bits: 8,
             mmcs: challenge_mmcs,
+            log_folding_factor: 1, // Default folding factor of 2
         };
         let pcs = Pcs {
             mmcs: val_mmcs,

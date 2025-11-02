@@ -13,6 +13,10 @@ pub struct FriParameters<M> {
     pub num_queries: usize,
     pub proof_of_work_bits: usize,
     pub mmcs: M,
+    /// Log of the folding factor (arity). Must be >= 1.
+    /// A value of 1 means folding factor of 2 (the default).
+    /// A value of 2 means folding factor of 4, etc.
+    pub log_folding_factor: usize,
 }
 
 impl<M> FriParameters<M> {
@@ -22,6 +26,10 @@ impl<M> FriParameters<M> {
 
     pub const fn final_poly_len(&self) -> usize {
         1 << self.log_final_poly_len
+    }
+
+    pub const fn folding_factor(&self) -> usize {
+        1 << self.log_folding_factor
     }
 
     /// Returns the soundness bits of this FRI instance based on the
@@ -55,8 +63,39 @@ pub trait FriFoldingStrategy<F: Field, EF: ExtensionField<F>> {
         evals: impl Iterator<Item = EF>,
     ) -> EF;
 
+    /// Fold a row, returning a single column.
+    /// Supporting arbitrary folding width that is a power of 2.
+    fn fold_row_arbitrary(
+        &self,
+        index: usize,
+        log_height: usize,
+        beta: EF,
+        evals: impl Iterator<Item = EF>,
+        folding_factor: usize, // todo: move to folding param
+    ) -> EF {
+        if folding_factor == 2 {
+            self.fold_row(index, log_height, beta, evals)
+        } else {
+            panic!("folding for parameters != 2 is not supported")
+        }
+    }
+
     /// Same as applying fold_row to every row, possibly faster.
     fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, m: M) -> Vec<EF>;
+
+    /// Same as applying fold_row to every row, possibly faster.
+    fn fold_matrix_arbitrary<M: Matrix<EF>>(
+        &self,
+        beta: EF,
+        m: M,
+        folding_factor: usize,
+    ) -> Vec<EF> {
+        if folding_factor == 2 {
+            self.fold_matrix(beta, m)
+        } else {
+            panic!("folding for parameters != 2 is not supported")
+        }
+    }
 }
 
 /// Creates a minimal set of `FriParameters` for testing purposes.
@@ -71,6 +110,7 @@ pub const fn create_test_fri_params<Mmcs>(
         num_queries: 2,
         proof_of_work_bits: 1,
         mmcs,
+        log_folding_factor: 1, // Default folding factor of 2
     }
 }
 
@@ -83,6 +123,7 @@ pub const fn create_test_fri_params_zk<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> 
         num_queries: 2,
         proof_of_work_bits: 1,
         mmcs,
+        log_folding_factor: 1, // Default folding factor of 2
     }
 }
 
@@ -95,6 +136,7 @@ pub const fn create_benchmark_fri_params<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs
         num_queries: 100,
         proof_of_work_bits: 16,
         mmcs,
+        log_folding_factor: 1, // Default folding factor of 2
     }
 }
 
@@ -107,5 +149,6 @@ pub fn create_benchmark_fri_params_zk<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> {
         num_queries: 100,
         proof_of_work_bits: 16,
         mmcs,
+        log_folding_factor: 1, // Default folding factor of 2
     }
 }
