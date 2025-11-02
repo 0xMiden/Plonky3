@@ -116,7 +116,7 @@ pub trait FriFoldingStrategy<F: Field, EF: ExtensionField<F>> {
         log_height: usize,
         beta: EF,
         evals: impl Iterator<Item = EF>,
-        folding_factor: usize, // todo: move to folding param
+        folding_factor: usize,
     ) -> EF {
         if folding_factor == 2 {
             self.fold_row(index, log_height, beta, evals)
@@ -155,7 +155,7 @@ pub const fn create_test_fri_params<Mmcs>(
         num_queries: 2,
         proof_of_work_bits: 1,
         mmcs,
-        log_folding_factor: 1, // Default folding factor of 2
+        log_folding_factor: 1,
     }
 }
 
@@ -168,7 +168,7 @@ pub const fn create_test_fri_params_zk<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> 
         num_queries: 2,
         proof_of_work_bits: 1,
         mmcs,
-        log_folding_factor: 1, // Default folding factor of 2
+        log_folding_factor: 1,
     }
 }
 
@@ -181,7 +181,7 @@ pub const fn create_benchmark_fri_params<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs
         num_queries: 100,
         proof_of_work_bits: 16,
         mmcs,
-        log_folding_factor: 1, // Default folding factor of 2
+        log_folding_factor: 1,
     }
 }
 
@@ -194,7 +194,7 @@ pub fn create_benchmark_fri_params_zk<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> {
         num_queries: 100,
         proof_of_work_bits: 16,
         mmcs,
-        log_folding_factor: 1, // Default folding factor of 2
+        log_folding_factor: 1,
     }
 }
 

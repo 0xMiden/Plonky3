@@ -137,7 +137,7 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
         log_height: usize,
         beta: EF,
         evals: impl ParallelIterator<Item = EF>,
-        folding_factor: usize, // todo: move to folding param
+        folding_factor: usize,
     ) -> EF {
         if folding_factor == 2 {
             return self.fold_row(index, log_height, beta, evals);
@@ -207,11 +207,14 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
         m: M,
         folding_factor: usize,
     ) -> Vec<EF> {
+        if folding_factor == 2 {
+            return self.fold_matrix(beta, m);
+        }
+
         let log_arity = log2_strict_usize(folding_factor);
         let log_height = log2_strict_usize(m.height());
 
         // Precompute domain points for each row
-        // We do this upfront to amortize the cost
         let g = F::two_adic_generator(log_height + log_arity);
 
         // For each row index, compute its domain points
@@ -227,7 +230,6 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
             .collect();
 
         // Precompute Lagrange denominators for each row
-        // These are in base field F - much cheaper to invert!
         let lagrange_denoms: Vec<Vec<F>> = domain_points
             .iter()
             .map(|xs| precompute_lagrange_denominators(xs))
@@ -262,18 +264,20 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
     }
 }
 
-/// Lagrange interpolation evaluated at a point
-/// xs are in base field F, ys and result are in extension field EF
+/// Lagrange interpolation evaluated at a point using batch inversion.
+/// xs are in base field F, ys and result are in extension field EF.
 fn lagrange_interpolate_at_point<F, EF>(xs: &[F], ys: &[EF], x: EF) -> EF
 where
     F: TwoAdicField,
     EF: ExtensionField<F>,
 {
     let n = xs.len();
-    let mut result = EF::ZERO;
+
+    // Compute all numerators and denominators
+    let mut numerators = Vec::with_capacity(n);
+    let mut denominators = Vec::with_capacity(n);
 
     for i in 0..n {
-        // Compute Lagrange basis L_i(x)
         let mut numerator = EF::ONE;
         let mut denominator = F::ONE;
 
@@ -281,24 +285,37 @@ where
             if i != j {
                 // Numerator: (x - xs[j]) in EF
                 numerator *= x - xs[j];
-                // Denominator: (xs[i] - xs[j]) in F (cheaper!)
+                // Denominator: (xs[i] - xs[j]) in F
                 denominator *= xs[i] - xs[j];
             }
         }
 
-        // Combine: ys[i] * numerator / denominator
-        // We do F inversion to keep it cheap
-        result += ys[i] * numerator * denominator.inverse();
+        numerators.push(numerator);
+        denominators.push(denominator);
+    }
+
+    // Batch invert all denominators at once
+    let inv_denominators = batch_multiplicative_inverse(&denominators);
+
+    // Compute the final result: sum of ys[i] * numerator[i] / denominator[i]
+    let mut result = EF::ZERO;
+    for i in 0..n {
+        result += ys[i] * numerators[i] * inv_denominators[i];
     }
 
     result
 }
 
-/// Precompute denominators for Lagrange interpolation
-/// Returns 1 / \prod(xs[i] - xs[j]) for each i
+/// Precompute denominators for Lagrange interpolation using batch inversion.
+/// Returns 1 / \prod(xs[i] - xs[j]) for each i.
+///
+/// Batch inversion is significantly more efficient than computing individual inverses,
+/// reducing the number of field inversions from O(n) to O(1) at the cost of O(n) multiplications.
 fn precompute_lagrange_denominators<F: TwoAdicField>(xs: &[F]) -> Vec<F> {
     let n = xs.len();
-    (0..n)
+
+    // Compute all products: denominators[i] = \prod_{j != i}(xs[i] - xs[j])
+    let denominators: Vec<F> = (0..n)
         .map(|i| {
             let mut denom = F::ONE;
             for j in 0..n {
@@ -306,9 +323,12 @@ fn precompute_lagrange_denominators<F: TwoAdicField>(xs: &[F]) -> Vec<F> {
                     denom *= xs[i] - xs[j];
                 }
             }
-            denom.inverse()
+            denom
         })
-        .collect()
+        .collect();
+
+    // Batch invert all denominators at once
+    batch_multiplicative_inverse(&denominators)
 }
 
 impl<Val, Dft, InputMmcs, FriMmcs, Challenge, Challenger> Pcs<Challenge, Challenger>
