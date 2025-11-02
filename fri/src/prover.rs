@@ -69,14 +69,15 @@ where
         "Inputs are not sorted in descending order of length."
     );
 
+    // Validate FRI parameters
+    params.validate().expect("Invalid FRI parameters");
+
     let log_max_height = log2_strict_usize(inputs[0].len());
     let log_min_height = log2_strict_usize(inputs.last().unwrap().len());
     if params.log_final_poly_len > 0 {
         // Final_poly_degree must be less than or equal to the degree of the smallest polynomial.
         assert!(log_min_height > params.log_final_poly_len + params.log_blowup);
     }
-
-    ark_std::println!("commit phase");
 
     // Continually fold the inputs down until the polynomial degree reaches final_poly_degree.
     // Returns a vector of commitments to the intermediate stage polynomials, the intermediate stage polynomials
@@ -88,8 +89,6 @@ where
     // Produce a proof of work witness before receiving any query challenges.
     // This helps to prevent grinding attacks.
     let pow_witness = challenger.grind(params.proof_of_work_bits);
-
-    ark_std::println!("query phase");
 
     let query_proofs = info_span!("query phase").in_scope(|| {
         // Sample num_queries indexes to check.

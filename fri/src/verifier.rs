@@ -64,6 +64,9 @@ where
             InputProof = Vec<BatchOpening<Val, InputMmcs>>,
         >,
 {
+    // Validate FRI parameters
+    params.validate().map_err(|_| FriError::InvalidProofShape)?;
+
     // Generate the Batch combination challenge
     // Soundness Error: `|f|/|EF|` where `|f|` is the number of different functions of the form
     // `(f(zeta) - fi(x))/(zeta - x)` which need to be checked.

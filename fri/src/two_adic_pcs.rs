@@ -656,7 +656,6 @@ where
 
         let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding(PhantomData);
 
-        ark_std::println!("start to prove fri");
         // Produce the FRI proof.
         let fri_proof = prover::prove_fri(
             &folding,
