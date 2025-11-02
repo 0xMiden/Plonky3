@@ -69,9 +69,6 @@ where
         "Inputs are not sorted in descending order of length."
     );
 
-    // Validate FRI parameters
-    params.validate().expect("Invalid FRI parameters");
-
     let log_max_height = log2_strict_usize(inputs[0].len());
     let log_min_height = log2_strict_usize(inputs.last().unwrap().len());
     if params.log_final_poly_len > 0 {

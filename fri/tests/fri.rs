@@ -173,39 +173,58 @@ fn do_test_fri_ldt<R: Rng>(
 #[test]
 fn test_fri_ldt() {
     // Test with different folding factors: 2, 4, and 8
+    // Each configuration tests different polynomial sizes with different remainders
     for log_folding_factor in [1, 2, 3] {
-        // Adjust polynomial sizes to align with folding factor
-        // For folding factor 2^k, polynomial sizes should be multiples of k
-        // to ensure LDE heights align properly with the folding scheme
-        let polynomial_log_sizes: Vec<u8> = match log_folding_factor {
-            1 => vec![5, 8, 10, 7, 5, 5, 7], // Original sizes work for folding factor 2
-            2 => vec![4, 6, 8, 10, 6, 4],    // Multiples of 2 for folding factor 4
-            3 => vec![6, 9, 12, 6, 9],       // Multiples of 3 for folding factor 8
+        // Test multiple configurations: aligned and non-aligned cases
+        let test_configs: Vec<(Vec<u8>, Vec<usize>)> = match log_folding_factor {
+            1 => vec![
+                // Folding factor 2: all sizes work
+                (vec![5, 8, 10, 7, 5, 5, 7], (0..=3).collect()),
+            ],
+            2 => vec![
+                // Folding factor 4: aligned case (all even)
+                (vec![4, 6, 8, 10, 6, 4], vec![0, 2]),
+                // Non-aligned case: all odd (remainder 1)
+                (vec![5, 7, 9, 11, 7, 5], vec![1, 3]),
+            ],
+            3 => vec![
+                // Folding factor 8: aligned case (all multiples of 3)
+                (vec![6, 9, 12, 6, 9], vec![0, 3]),
+                // Non-aligned case: remainder 1 when divided by 3
+                (vec![7, 10, 13, 7, 10], vec![1, 4]),
+                // Non-aligned case: remainder 2 when divided by 3
+                (vec![8, 11, 14, 8, 11], vec![2]),
+            ],
             _ => unreachable!(),
         };
 
-        // Test different log_final_poly_len values that are compatible with the folding factor
-        // log_final_poly_len should be a multiple of log_folding_factor for proper alignment
-        // Also need to ensure: min_polynomial_size + log_blowup > log_final_poly_len + log_blowup
-        let min_poly_size = *polynomial_log_sizes.iter().min().unwrap() as usize;
-        let max_final_len = min_poly_size.saturating_sub(1);
+        for (polynomial_log_sizes, log_final_poly_len_candidates) in test_configs {
+            // Test different log_final_poly_len values
+            // Key constraint: (log_poly_size - log_final_poly_len) must be divisible by log_folding_factor
+            // for all polynomials. This ensures we can fold an integer number of times.
+            //
+            // Also need to ensure: min_polynomial_size > log_final_poly_len + log_blowup
+            // With log_blowup = 1, we need min_polynomial_size > log_final_poly_len + 1
+            let min_poly_size = *polynomial_log_sizes.iter().min().unwrap() as usize;
+            let log_blowup = 1;
+            let max_final_len = min_poly_size.saturating_sub(log_blowup + 1);
 
-        let test_cases: Vec<usize> = match log_folding_factor {
-            1 => (0..=max_final_len.min(4)).collect(),
-            2 => (0..=max_final_len.min(4)).step_by(2).collect(),
-            3 => (0..=max_final_len.min(6)).step_by(3).collect(),
-            _ => unreachable!(),
-        };
+            // Filter test cases to only include those within the valid range
+            let test_cases: Vec<usize> = log_final_poly_len_candidates
+                .into_iter()
+                .filter(|&x| x <= max_final_len)
+                .collect();
 
-        for &log_final_poly_len in &test_cases {
-            let mut rng =
-                SmallRng::seed_from_u64((log_final_poly_len + log_folding_factor * 10) as u64);
-            do_test_fri_ldt(
-                &mut rng,
-                log_final_poly_len,
-                &polynomial_log_sizes,
-                log_folding_factor,
-            );
+            for &log_final_poly_len in &test_cases {
+                let mut rng =
+                    SmallRng::seed_from_u64((log_final_poly_len + log_folding_factor * 10) as u64);
+                do_test_fri_ldt(
+                    &mut rng,
+                    log_final_poly_len,
+                    &polynomial_log_sizes,
+                    log_folding_factor,
+                );
+            }
         }
     }
 }
