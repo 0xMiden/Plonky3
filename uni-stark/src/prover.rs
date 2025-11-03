@@ -43,6 +43,8 @@ where
     let log_degree = log2_strict_usize(degree);
     let log_ext_degree = log_degree + config.is_zk();
 
+    ark_std::println!("degree={}, log_degree={}, log_ext_degree={}", degree, log_degree, log_ext_degree);
+
     // Compute the constraint polynomials as vectors of symbolic expressions.
     let symbolic_constraints = get_symbolic_constraints(air, 0, public_values.len());
     ark_std::println!("symbolic constraints count {}", symbolic_constraints.len());
@@ -148,6 +150,7 @@ where
     };
 
     ark_std::println!("aux trace: {:?}", aux_trace);
+    ark_std::println!("randomness: {:?}", randomness);
 
     #[cfg(debug_assertions)]
     {
@@ -294,6 +297,7 @@ where
     let zeta_next = trace_domain.next_point(zeta).unwrap();
 
     ark_std::println!("prover zeta: {:?}", zeta);
+    ark_std::println!("prover zeta_next: {:?}", zeta_next);
 
     let is_random = opt_r_data.is_some();
     let (opened_values, opening_proof) = info_span!("open").in_scope(|| {
@@ -317,8 +321,33 @@ where
         .iter()
         .map(|v| v[0].clone())
         .collect_vec();
-    let aux_trace_local = opened_values[quotient_idx + 1][0][0].clone();
-    let aux_trace_next = opened_values[quotient_idx + 1][0][1].clone();
+
+    // The aux trace was committed as flattened base field values (12 base field columns for 3 EF columns).
+    // When opened, the PCS returns one extension field element per base field column, with only the
+    // first coefficient populated. We need to reconstruct the actual extension field values by
+    // collecting DIMENSION consecutive opened values and combining their first coefficients.
+    let aux_opened_local = &opened_values[quotient_idx + 1][0][0];
+    let aux_opened_next = &opened_values[quotient_idx + 1][0][1];
+
+    let aux_trace_local = aux_opened_local
+        .chunks_exact(SC::Challenge::DIMENSION)
+        .map(|chunk| {
+            // Each chunk contains DIMENSION extension field elements, each with only coeff[0] populated
+            // Combine them into one extension field element
+            SC::Challenge::from_basis_coefficients_fn(|i| {
+                chunk[i].as_basis_coefficients_slice()[0]
+            })
+        })
+        .collect_vec();
+
+    let aux_trace_next = aux_opened_next
+        .chunks_exact(SC::Challenge::DIMENSION)
+        .map(|chunk| {
+            SC::Challenge::from_basis_coefficients_fn(|i| {
+                chunk[i].as_basis_coefficients_slice()[0]
+            })
+        })
+        .collect_vec();
 
     let random = if is_random {
         Some(opened_values[0][0][0].clone())
@@ -334,7 +363,25 @@ where
         random,
     };
 
-    ark_std::println!("opened values: {:?}", opened_values);
+    ark_std::println!("\n========== PROVER: Polynomial Evaluations ==========");
+    ark_std::println!("Evaluation points:");
+    ark_std::println!("  zeta: {:?}", zeta);
+    ark_std::println!("  zeta_next: {:?}", zeta_next);
+    ark_std::println!("\nTrace evaluations:");
+    ark_std::println!("  trace_local: {:?}", opened_values.trace_local);
+    ark_std::println!("  trace_next: {:?}", opened_values.trace_next);
+    ark_std::println!("\nAux trace evaluations:");
+    ark_std::println!("  aux_trace_local: {:?}", opened_values.aux_trace_local);
+    ark_std::println!("  aux_trace_next: {:?}", opened_values.aux_trace_next);
+    ark_std::println!("\nQuotient polynomial evaluations:");
+    for (i, chunk) in opened_values.quotient_chunks.iter().enumerate() {
+        ark_std::println!("  quotient_chunk[{}]: {:?}", i, chunk);
+    }
+    if let Some(ref r) = opened_values.random {
+        ark_std::println!("\nRandom polynomial evaluation:");
+        ark_std::println!("  random: {:?}", r);
+    }
+    ark_std::println!("====================================================\n");
 
     Proof {
         commitments,
@@ -364,11 +411,21 @@ where
     Mat: Matrix<Val<SC>> + Sync,
 {
     ark_std::println!("start quotient values");
+    ark_std::println!("trace_domain size: {}, quotient_domain size: {}", trace_domain.size(), quotient_domain.size());
 
     let quotient_size = quotient_domain.size();
     let width = trace_on_quotient_domain.width();
+    ark_std::println!("prover quotient: trace_domain size={}, shift={:?}, quotient_domain size={}, shift={:?}",
+        trace_domain.size(), trace_domain.first_point(), quotient_domain.size(), quotient_domain.first_point());
+
     let mut sels = debug_span!("Compute Selectors")
         .in_scope(|| trace_domain.selectors_on_coset(quotient_domain));
+
+    // Debug: print first selector values
+    if quotient_size > 0 {
+        ark_std::println!("First quotient point selectors: is_first={:?}, is_last={:?}, is_transition={:?}, inv_vanishing={:?}",
+            sels.is_first_row[0], sels.is_last_row[0], sels.is_transition[0], sels.inv_vanishing[0]);
+    }
 
     let qdb = log2_strict_usize(quotient_domain.size()) - log2_strict_usize(trace_domain.size());
     let next_step = 1 << qdb;
@@ -436,6 +493,11 @@ where
             // ark_std::println!("finished evaluate");
             // quotient(x) = constraints(x) / Z_H(x)
             let quotient = folder.accumulator * inv_vanishing;
+
+            if i_start == 0 || i_start == PackedVal::<SC>::WIDTH {
+                ark_std::println!("prover quotient calc at i={}: folder.accumulator={:?}, inv_vanishing={:?}, quotient={:?}",
+                    i_start, folder.accumulator, inv_vanishing, quotient);
+            }
 
             // "Transpose" D packed base coefficients into WIDTH scalar extension coefficients.
             (0..core::cmp::min(quotient_size, PackedVal::<SC>::WIDTH)).map(move |idx_in_packing| {

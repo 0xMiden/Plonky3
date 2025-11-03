@@ -8,6 +8,7 @@ use p3_air::Air;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing};
+use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::VerticalPair;
 use p3_util::zip_eq::zip_eq;
@@ -41,6 +42,8 @@ where
         get_log_quotient_degree::<Val<SC>, A>(air, 0, public_values.len(), config.is_zk());
     let quotient_degree = 1 << (log_quotient_degree + config.is_zk());
 
+    ark_std::println!("verifier: degree_bits={}, degree={}, log_quotient_degree={}", degree_bits, degree, log_quotient_degree);
+
     let mut challenger = config.initialise_challenger();
     let trace_domain = pcs.natural_domain_for_degree(degree);
     let init_trace_domain = pcs.natural_domain_for_degree(degree >> (config.is_zk()));
@@ -49,10 +52,19 @@ where
         trace_domain.create_disjoint_domain(1 << (degree_bits + log_quotient_degree));
     let quotient_chunks_domains = quotient_domain.split_domains(quotient_degree);
 
+    ark_std::println!("quotient_domain: size={}, shift={:?}", quotient_domain.size(), quotient_domain.first_point());
+    for (i, d) in quotient_chunks_domains.iter().enumerate() {
+        ark_std::println!("quotient_chunks_domains[{}]: size={}, shift={:?}", i, d.size(), d.first_point());
+    }
+
     let randomized_quotient_chunks_domains = quotient_chunks_domains
         .iter()
         .map(|domain| pcs.natural_domain_for_degree(domain.size() << (config.is_zk())))
         .collect_vec();
+
+    for (i, d) in randomized_quotient_chunks_domains.iter().enumerate() {
+        ark_std::println!("randomized_quotient_chunks_domains[{}]: size={}, shift={:?}", i, d.size(), d.first_point());
+    }
 
     // Check that the random commitments are/are not present depending on the ZK setting.
     // - If ZK is enabled, the prover should have random commitments.
@@ -129,6 +141,9 @@ where
     let zeta = challenger.sample_algebra_element();
     let zeta_next = init_trace_domain.next_point(zeta).unwrap();
 
+    ark_std::println!("verifier zeta: {:?}", zeta);
+    ark_std::println!("verifier zeta_next: {:?}", zeta_next);
+
     // We've already checked that commitments.random and opened_values.random are present if and only if ZK is enabled.
     let mut coms_to_verify = if let Some(random_commit) = &commitments.random {
         let random_values = opened_values
@@ -144,6 +159,28 @@ where
     };
 
     ark_std::println!("prepare com for pcs");
+
+    // The aux trace was committed as flattened base field values, so we need to
+    // flatten the extension field opened values back to base field for PCS verification
+    let aux_local_base: Vec<SC::Challenge> = opened_values
+        .aux_trace_local
+        .iter()
+        .flat_map(|ef| {
+            ef.as_basis_coefficients_slice()
+                .iter()
+                .map(|&coef| SC::Challenge::from(coef))
+        })
+        .collect();
+
+    let aux_next_base: Vec<SC::Challenge> = opened_values
+        .aux_trace_next
+        .iter()
+        .flat_map(|ef| {
+            ef.as_basis_coefficients_slice()
+                .iter()
+                .map(|&coef| SC::Challenge::from(coef))
+        })
+        .collect();
 
     coms_to_verify.extend(vec![
         (
@@ -172,15 +209,34 @@ where
             vec![(
                 trace_domain,
                 vec![
-                    (zeta, opened_values.aux_trace_local.clone()),
-                    (zeta_next, opened_values.aux_trace_next.clone()),
+                    (zeta, aux_local_base),
+                    (zeta_next, aux_next_base),
                 ],
             )],
         ),
     ]);
 
+    ark_std::println!("\n========== VERIFIER: Polynomial Evaluations ==========");
+    ark_std::println!("Evaluation points:");
+    ark_std::println!("  zeta: {:?}", zeta);
+    ark_std::println!("  zeta_next: {:?}", zeta_next);
+    ark_std::println!("\nTrace evaluations:");
+    ark_std::println!("  trace_local: {:?}", opened_values.trace_local);
+    ark_std::println!("  trace_next: {:?}", opened_values.trace_next);
+    ark_std::println!("\nAux trace evaluations:");
+    ark_std::println!("  aux_trace_local: {:?}", opened_values.aux_trace_local);
+    ark_std::println!("  aux_trace_next: {:?}", opened_values.aux_trace_next);
+    ark_std::println!("\nQuotient polynomial evaluations:");
+    for (i, chunk) in opened_values.quotient_chunks.iter().enumerate() {
+        ark_std::println!("  quotient_chunk[{}]: {:?}", i, chunk);
+    }
+    if let Some(ref r) = opened_values.random {
+        ark_std::println!("\nRandom polynomial evaluation:");
+        ark_std::println!("  random: {:?}", r);
+    }
+    ark_std::println!("====================================================\n");
+
     ark_std::println!("start to verify pcs");
-    ark_std::println!("verifier zeta: {}", zeta);
     pcs.verify(coms_to_verify, opening_proof, &mut challenger)
         .map_err(VerificationError::InvalidOpeningArgument)?;
 
@@ -204,6 +260,10 @@ where
         .collect_vec();
 
     ark_std::println!("start to compute quotient");
+    ark_std::println!("zps: {:?}", zps);
+    let zps_sum: SC::Challenge = zps.iter().copied().sum();
+    ark_std::println!("zps sum: {:?}", zps_sum);
+    ark_std::println!("quotient_chunks: {:?}", opened_values.quotient_chunks);
     let quotient = opened_values
         .quotient_chunks
         .iter()
@@ -212,13 +272,18 @@ where
             // We checked in valid_shape the length of "ch" is equal to
             // <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION. Hence
             // the unwrap() will never panic.
-            zps[ch_i]
-                * ch.iter()
-                    .enumerate()
-                    .map(|(e_i, &c)| SC::Challenge::ith_basis_element(e_i).unwrap() * c)
-                    .sum::<SC::Challenge>()
+            let chunk_val = ch.iter()
+                .enumerate()
+                .map(|(e_i, &c)| SC::Challenge::ith_basis_element(e_i).unwrap() * c)
+                .sum::<SC::Challenge>();
+            ark_std::println!("chunk {}: value={:?}, zps={:?}, contribution={:?}",
+                ch_i, chunk_val, zps[ch_i], zps[ch_i] * chunk_val);
+            zps[ch_i] * chunk_val
         })
         .sum::<SC::Challenge>();
+
+    ark_std::println!("verifier: trace_domain size={}, shift={:?}, init_trace_domain size={}, shift={:?}",
+        trace_domain.size(), trace_domain.first_point(), init_trace_domain.size(), init_trace_domain.first_point());
 
     let sels = init_trace_domain.selectors_at_point(zeta);
 
@@ -232,7 +297,15 @@ where
         RowMajorMatrixView::new_row(&opened_values.aux_trace_next),
     );
 
-    ark_std::println!("start eval");
+    ark_std::println!("\n========== VERIFIER: Constraint Evaluation ==========");
+    ark_std::println!("Selectors at zeta:");
+    ark_std::println!("  is_first_row: {:?}", sels.is_first_row);
+    ark_std::println!("  is_last_row: {:?}", sels.is_last_row);
+    ark_std::println!("  is_transition: {:?}", sels.is_transition);
+    ark_std::println!("  inv_vanishing: {:?}", sels.inv_vanishing);
+    ark_std::println!("\nRandomness:");
+    ark_std::println!("  {:?}", randomness);
+
     let mut folder = VerifierConstraintFolder {
         main,
         aux,
@@ -247,6 +320,9 @@ where
     air.eval(&mut folder);
     let folded_constraints = folder.accumulator;
 
+    ark_std::println!("folded_constraints: {:?}", folded_constraints);
+    let expected_constraints = quotient * sels.is_transition;  // Z_H(zeta) = zeta - 1 = is_transition for size-1 domain
+    ark_std::println!("expected_constraints (quotient * Z_H): {:?}", expected_constraints);
     ark_std::println!(
         "prod: {:?}\nquotient: {:?}",
         folded_constraints * sels.inv_vanishing,
