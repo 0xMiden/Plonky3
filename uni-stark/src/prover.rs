@@ -13,15 +13,18 @@ use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{
-    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder, StarkGenericConfig, SymbolicAirBuilder, Val, generate_logup_trace, get_log_quotient_degree, get_symbolic_constraints
+    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
+    StarkGenericConfig, SymbolicAirBuilder, Val, generate_logup_trace, get_log_quotient_degree,
+    get_symbolic_constraints,
 };
 
 #[instrument(skip_all)]
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove_single_matrix_pcs<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
-    #[cfg(not(debug_assertions))] A,
+    // #[cfg(debug_assertions)]
+    A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    // #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
     air: &A,
@@ -39,8 +42,9 @@ where
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
-    #[cfg(not(debug_assertions))] A,
+    // #[cfg(debug_assertions)]
+    A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    // #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
     air: &A,
@@ -58,8 +62,9 @@ where
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 fn prove_internal<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
-    #[cfg(not(debug_assertions))] A,
+    // #[cfg(debug_assertions)]
+    A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    // #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
     air: &A,
@@ -144,8 +149,8 @@ where
     //      trace_commit contains the root of the tree
     //      trace_data contains the entire tree.
     //          - trace_data.leaves is the matrix containing `ET`.
-    let (trace_commit, trace_data) =
-        info_span!("commit to trace data").in_scope(|| pcs.commit([(ext_trace_domain, trace)]));
+    let (trace_commit, trace_data) = info_span!("commit to trace data")
+        .in_scope(|| pcs.commit([(ext_trace_domain, trace.clone())]));
 
     // Observe the instance.
     // degree < 2^255 so we can safely cast log_degree to a u8.
@@ -168,6 +173,10 @@ where
 
     let (aux_trace_commit, aux_trace, aux_trace_data) = {
         let aux_trace = generate_logup_trace(&trace, &randomness[0]);
+         ark_std::println!("\nprover randomness: {:?}\n", randomness[0]);
+        ark_std::println!("\nprover main trace: {:?}\n", trace);
+        ark_std::println!("\nprover aux trace: {:?}\n", aux_trace);
+
         // let aux_trace = generate_logup_trace(&trace, &-SC::Challenge::ONE); // TODO -- remove
         let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
             .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
@@ -177,12 +186,16 @@ where
         // ark_std::println!("aux trace: {:?}", aux_trace);
         //    ark_std::println!("aux trace data: {:?}", aux_trace_data);
 
-
         (aux_trace_commit, aux_trace, aux_trace_data)
     };
 
-
-        crate::check_constraints::check_constraints(air, &trace, &aux_trace, &randomness,  public_values);
+    crate::check_constraints::check_constraints(
+        air,
+        &trace,
+        &aux_trace,
+        &randomness,
+        public_values,
+    );
 
     // Get the first Fiat Shamir challenge which will be used to combine all constraint polynomials
     // into a single polynomial.
@@ -231,6 +244,8 @@ where
         trace_domain,
         quotient_domain,
         trace_on_quotient_domain,
+        aux_trace_on_quotient_domain,
+        &randomness,
         alpha,
         constraint_count,
     );
@@ -310,6 +325,9 @@ where
     let zeta: SC::Challenge = challenger.sample_algebra_element();
     let zeta_next = trace_domain.next_point(zeta).unwrap();
 
+    ark_std::println!("prover alpha: {:?}", alpha);
+    ark_std::println!("prover zeta: {:?}", zeta);
+
     let is_random = opt_r_data.is_some();
 
     if !with_single_matrix_pcs {
@@ -317,7 +335,7 @@ where
             let round0 = opt_r_data.as_ref().map(|r_data| (r_data, vec![vec![zeta]]));
             let round1 = (&trace_data, vec![vec![zeta, zeta_next]]);
             let round2 = (&quotient_data, vec![vec![zeta]; quotient_degree]); // open every chunk at zeta
-let round3 = (&aux_trace_data, vec![vec![zeta, zeta_next]]);
+            let round3 = (&aux_trace_data, vec![vec![zeta, zeta_next]]);
 
             let rounds = round0.into_iter().chain([round1, round2, round3]).collect();
 
@@ -332,8 +350,8 @@ let round3 = (&aux_trace_data, vec![vec![zeta, zeta_next]]);
             .map(|v| v[0].clone())
             .collect_vec();
 
-           let aux_trace_local = opened_values[quotient_idx + 1][0][0].clone();
-    let aux_trace_next = opened_values[quotient_idx + 1][0][1].clone();
+        let aux_trace_local = opened_values[quotient_idx + 1][0][0].clone();
+        let aux_trace_next = opened_values[quotient_idx + 1][0][1].clone();
         let random = if is_random {
             Some(opened_values[0][0][0].clone())
         } else {
@@ -343,8 +361,8 @@ let round3 = (&aux_trace_data, vec![vec![zeta, zeta_next]]);
             trace_local,
             trace_next,
             quotient_chunks,
-             aux_trace_local,
-        aux_trace_next,
+            aux_trace_local,
+            aux_trace_next,
             random,
         };
         Proof {
@@ -359,10 +377,11 @@ let round3 = (&aux_trace_data, vec![vec![zeta, zeta_next]]);
             let round0 = opt_r_data.as_ref().map(|r_data| (r_data, vec![vec![zeta]]));
             let round1 = (&trace_data, vec![vec![zeta, zeta_next]]);
             let round2 = (&quotient_data, vec![vec![zeta]; quotient_degree]); // open every chunk at zeta
+            let round3 = (&aux_trace_data, vec![vec![zeta, zeta_next]]);
 
             round0
                 .into_iter()
-                .chain([round1, round2])
+                .chain([round1, round2, round3])
                 .map(|round| pcs.open(vec![round], &mut challenger))
                 .unzip()
         });
@@ -383,6 +402,8 @@ let round3 = (&aux_trace_data, vec![vec![zeta, zeta_next]]);
             .iter()
             .map(|v| v[0].clone())
             .collect_vec();
+        let aux_trace_local = opened_values[quotient_idx + 1][0][0][0].clone();
+        let aux_trace_next = opened_values[quotient_idx + 1][0][0][1].clone();
 
         let random = if is_random {
             // Some(opened_values[0][0][0].clone())
@@ -394,8 +415,8 @@ let round3 = (&aux_trace_data, vec![vec![zeta, zeta_next]]);
             trace_local,
             trace_next,
             quotient_chunks,
-             aux_trace_local,
-        aux_trace_next,
+            aux_trace_local,
+            aux_trace_next,
             random,
         };
         Proof {
@@ -416,6 +437,8 @@ fn quotient_values<SC, A, Mat>(
     trace_domain: Domain<SC>,
     quotient_domain: Domain<SC>,
     trace_on_quotient_domain: Mat,
+    aux_trace_on_quotient_domain: Mat,
+    randomness: &[Val<SC>],
     alpha: SC::Challenge,
     constraint_count: usize,
 ) -> Vec<SC::Challenge>
@@ -468,10 +491,16 @@ where
                 trace_on_quotient_domain.vertically_packed_row_pair(i_start, next_step),
                 width,
             );
+            let aux = RowMajorMatrix::new(
+                aux_trace_on_quotient_domain.vertically_packed_row_pair(i_start, next_step),
+                aux_trace_on_quotient_domain.width(), // fix
+            );
 
             let accumulator = PackedChallenge::<SC>::ZERO;
             let mut folder = ProverConstraintFolder {
                 main: main.as_view(),
+                aux: aux.as_view(),
+                // randomness,
                 public_values,
                 is_first_row,
                 is_last_row,

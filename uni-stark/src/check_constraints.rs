@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues};
+use p3_air::{Air, AirBuilder, AirBuilderWithLogUp, AirBuilderWithPublicValues};
 use p3_field::Field;
 use p3_matrix::Matrix;
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
@@ -145,6 +145,17 @@ impl<F: Field> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F> {
     fn public_values(&self) -> &[Self::F] {
         self.public_values
     }
+}
+
+impl<F: Field> AirBuilderWithLogUp for DebugConstraintBuilder<'_, F> {
+    fn permutation(&self) -> Self::M {
+        ark_std::println!("debug aux: {:?}", self.aux);
+        self.aux
+    }
+
+    // fn permutation_randomness(&self) -> &[Self::Var] {
+    //     self.aux_randomness
+    // }
 }
 
 #[cfg(test)]

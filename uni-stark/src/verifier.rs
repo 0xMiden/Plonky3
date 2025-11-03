@@ -122,6 +122,19 @@ where
     challenger.observe(commitments.trace.clone());
     challenger.observe_slice(public_values);
 
+    // begin processing aux trace
+    let num_randomness = air.num_randomness();
+    let randomness = if num_randomness != 0 {
+        let randomness: Vec<Val<SC>> = (0..num_randomness)
+            .map(|_| challenger.sample_algebra_element())
+            .collect();
+
+        challenger.observe(commitments.aux.clone());
+        randomness
+    } else {
+        vec![]
+    };
+
     // Get the first Fiat Shamir challenge which will be used to combine all constraint polynomials
     // into a single polynomial.
     //
@@ -140,6 +153,9 @@ where
     // Soundness Error: dN/|EF| where `N` is the trace length and our constraint polynomial has degree `d`.
     let zeta = challenger.sample_algebra_element();
     let zeta_next = init_trace_domain.next_point(zeta).unwrap();
+
+    ark_std::println!("verifier alpha: {:?}", alpha);
+    ark_std::println!("verifier zeta: {:?}", zeta);
 
     if !with_single_matrix_pcs {
         // We've already checked that commitments.random and opened_values.random are present if and only if ZK is enabled.
@@ -177,6 +193,16 @@ where
                 .map(|(domain, values)| (*domain, vec![(zeta, values.clone())]))
                 .collect_vec(),
             ),
+            (
+                commitments.aux.clone(),
+                vec![(
+                    trace_domain,
+                    vec![
+                        (zeta, opened_values.aux_trace_local.clone()),
+                        (zeta_next, opened_values.aux_trace_next.clone()),
+                    ],
+                )],
+            ),
         ]);
 
         pcs.verify(coms_to_verify, &opening_proofs[0], &mut challenger)
@@ -199,6 +225,7 @@ where
                     &mut challenger,
                 )
                 .map_err(VerificationError::InvalidOpeningArgument)?;
+                ark_std::println!("zk opening is fine");
                 1
             }
             None => 0,
@@ -219,6 +246,7 @@ where
             &mut challenger,
         )
         .map_err(VerificationError::InvalidOpeningArgument)?;
+        ark_std::println!("main opening is fine");
         opening_proofs_index += 1;
 
         pcs.verify(
@@ -237,6 +265,27 @@ where
             &mut challenger,
         )
         .map_err(VerificationError::InvalidOpeningArgument)?;
+
+        ark_std::println!("aux opening is fine");
+        opening_proofs_index += 1;
+
+        pcs.verify(
+            vec![(
+                commitments.aux.clone(),
+                vec![(
+                    trace_domain,
+                    vec![
+                        (zeta, opened_values.aux_trace_local.clone()),
+                        (zeta_next, opened_values.aux_trace_next.clone()),
+                    ],
+                )],
+            )],
+            &opening_proofs[opening_proofs_index],
+            &mut challenger,
+        )
+        .map_err(VerificationError::InvalidOpeningArgument)?;
+        ark_std::println!("aux opening is fine");
+        // opening_proofs_index += 1;
     }
 
     let zps = quotient_chunks_domains
@@ -279,9 +328,15 @@ where
         RowMajorMatrixView::new_row(&opened_values.trace_local),
         RowMajorMatrixView::new_row(&opened_values.trace_next),
     );
+    let aux = VerticalPair::new(
+        RowMajorMatrixView::new_row(&opened_values.aux_trace_local),
+        RowMajorMatrixView::new_row(&opened_values.aux_trace_next),
+    );
 
     let mut folder = VerifierConstraintFolder {
         main,
+        aux,
+        // randomness: &randomness,
         public_values,
         is_first_row: sels.is_first_row,
         is_last_row: sels.is_last_row,

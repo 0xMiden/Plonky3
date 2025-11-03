@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use p3_air::{AirBuilder, AirBuilderWithPublicValues};
+use p3_air::{AirBuilder, AirBuilderWithLogUp, AirBuilderWithPublicValues};
 use p3_field::{BasedVectorSpace, PackedField};
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::ViewPair;
@@ -18,8 +18,8 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     pub main: RowMajorMatrixView<'a, PackedVal<SC>>,
     /// Optional: the matrix containing rows on which the aux constraint polynomial is to be evaluated
     pub aux: RowMajorMatrixView<'a, PackedVal<SC>>,
-    /// Optional: the randomness used to compute the aux tract
-    pub randomness: &'a [SC::Challenge],
+    // /// Optional: the randomness used to compute the aux tract
+    // pub randomness:&'a [SC::Challenge],
     /// Public inputs to the AIR
     pub public_values: &'a Vec<Val<SC>>,
     /// Evaluations of the Selector polynomial for the first row of the trace
@@ -49,8 +49,8 @@ pub struct VerifierConstraintFolder<'a, SC: StarkGenericConfig> {
     pub main: ViewPair<'a, SC::Challenge>,
     /// Optional: pair of consecutive rows from the committed polynomial evaluations
     pub aux: ViewPair<'a, SC::Challenge>,
-    /// Optional: the randomness used to compute the aux tract
-    pub randomness: &'a [SC::Challenge],
+    // /// Optional: the randomness used to compute the aux tract
+    // pub randomness: &'a [SC::Challenge],
     /// Public values that are inputs to the computation
     pub public_values: &'a Vec<Val<SC>>,
     /// Evaluations of the Selector polynomial for the first row of the trace
@@ -127,6 +127,16 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverConstraintFold
     }
 }
 
+impl<SC: StarkGenericConfig> AirBuilderWithLogUp for ProverConstraintFolder<'_, SC> {
+    fn permutation(&self) -> Self::M {
+        ark_std::println!("prover aux: {:?}", self.aux);
+        self.aux
+    }
+    // fn permutation_randomness(&self) -> &[Self::Var] {
+    //     self.randomness
+    // }
+}
+
 impl<'a, SC: StarkGenericConfig> AirBuilder for VerifierConstraintFolder<'a, SC> {
     type F = Val<SC>;
     type Expr = SC::Challenge;
@@ -169,4 +179,14 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for VerifierConstraintFo
     fn public_values(&self) -> &[Self::F] {
         self.public_values
     }
+}
+
+impl<SC: StarkGenericConfig> AirBuilderWithLogUp for VerifierConstraintFolder<'_, SC> {
+    fn permutation(&self) -> Self::M {
+        ark_std::println!("verifier aux: {:?}", self.aux);
+        self.aux
+    }
+    // fn permutation_randomness(&self) -> &[Self::Var] {
+    //     self.randomness
+    // }
 }
