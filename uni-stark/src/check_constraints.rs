@@ -148,14 +148,14 @@ impl<F: Field> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F> {
 }
 
 impl<F: Field> AirBuilderWithLogUp for DebugConstraintBuilder<'_, F> {
-    fn permutation(&self) -> <Self as AirBuilder>::M  {
+    fn permutation(&self) -> <Self as AirBuilder>::M {
         ark_std::println!("debug aux: {:?}", self.aux);
         self.aux
     }
 
-    // fn permutation_randomness(&self) -> &[Self::Var] {
-    //     self.aux_randomness
-    // }
+    fn permutation_randomness(&self) -> Vec<Self::Expr> {
+        self.aux_randomness.to_vec()
+    }
 }
 
 #[cfg(test)]

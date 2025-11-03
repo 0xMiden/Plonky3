@@ -1,3 +1,4 @@
+use alloc::borrow::ToOwned;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -64,7 +65,7 @@ where
         preprocessed_width,
         air.width(),
         air.aux_width(),
-        // air.num_randomness(),
+        air.num_randomness(),
         num_public_values,
     );
     air.eval(&mut builder);
@@ -77,7 +78,7 @@ pub struct SymbolicAirBuilder<F: Field> {
     preprocessed: RowMajorMatrix<SymbolicVariable<F>>,
     main: RowMajorMatrix<SymbolicVariable<F>>,
     aux: RowMajorMatrix<SymbolicVariable<F>>,
-    // aux_randomness: Vec<SymbolicVariable<F>>,
+    aux_randomness: Vec<SymbolicVariable<F>>,
     public_values: Vec<SymbolicVariable<F>>,
     constraints: Vec<SymbolicExpression<F>>,
 }
@@ -87,7 +88,7 @@ impl<F: Field> SymbolicAirBuilder<F> {
         preprocessed_width: usize,
         width: usize,
         aux_width: usize,
-        // num_randomness: usize,
+        num_randomness: usize,
         num_public_values: usize,
     ) -> Self {
         let prep_values = [0, 1]
@@ -109,7 +110,7 @@ impl<F: Field> SymbolicAirBuilder<F> {
                 (0..aux_width).map(move |index| SymbolicVariable::new(Entry::Aux { offset }, index))
             })
             .collect();
-        // let randomness = Self::sample_randomness(num_randomness);
+        let randomness = Self::sample_randomness(num_randomness);
         let public_values = (0..num_public_values)
             .map(move |index| SymbolicVariable::new(Entry::Public, index))
             .collect();
@@ -117,7 +118,7 @@ impl<F: Field> SymbolicAirBuilder<F> {
             preprocessed: RowMajorMatrix::new(prep_values, preprocessed_width),
             main: RowMajorMatrix::new(main_values, width),
             aux: RowMajorMatrix::new(aux_values, aux_width),
-            // aux_randomness: randomness,
+            aux_randomness: randomness,
             public_values,
             constraints: vec![],
         }
@@ -179,9 +180,12 @@ impl<F: Field> AirBuilderWithLogUp for SymbolicAirBuilder<F> {
         ark_std::println!("symbolic aux: {:?}", self.aux);
         self.aux.clone()
     }
-    // fn permutation_randomness(&self) -> &[Self::Var] {
-    //     self.aux_randomness.as_ref()
-    // }
+    fn permutation_randomness(&self) -> Vec<Self::Expr> {
+        self.aux_randomness
+            .iter()
+            .map(|v| (*v).into())
+            .collect()
+    }
 }
 
 impl<F: Field> PairBuilder for SymbolicAirBuilder<F> {
@@ -318,7 +322,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_air_builder_initialization() {
-        let builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 0, 3);
+        let builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 0, 0, 3);
 
         let expected_main = [
             SymbolicVariable::<BabyBear>::new(Entry::Main { offset: 0 }, 0),
@@ -347,7 +351,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_air_builder_is_first_last_row() {
-        let builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 0, 3);
+        let builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 0, 0, 3);
 
         assert!(
             matches!(builder.is_first_row(), SymbolicExpression::IsFirstRow),
@@ -362,7 +366,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_air_builder_assert_zero() {
-        let mut builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 0, 3);
+        let mut builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 0, 0, 3);
         let expr = SymbolicExpression::Constant(BabyBear::new(5));
         builder.assert_zero(expr.clone());
 

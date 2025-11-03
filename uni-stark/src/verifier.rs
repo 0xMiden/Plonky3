@@ -125,7 +125,7 @@ where
     // begin processing aux trace
     let num_randomness = air.num_randomness();
     let randomness = if num_randomness != 0 {
-        let randomness: Vec<Val<SC>> = (0..num_randomness)
+        let randomness: Vec<SC::Challenge> = (0..num_randomness)
             .map(|_| challenger.sample_algebra_element())
             .collect();
 
@@ -336,7 +336,7 @@ where
     let mut folder = VerifierConstraintFolder {
         main,
         aux,
-        // randomness: &randomness,
+        randomness: &randomness,
         public_values,
         is_first_row: sels.is_first_row,
         is_last_row: sels.is_last_row,

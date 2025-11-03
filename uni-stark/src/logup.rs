@@ -105,8 +105,8 @@ where
         aux_first_col[0] - aux_second_col[0],
     ];
     for row_idx in 1..len {
-        let tmp = *aux_trace_values.last().unwrap()+ aux_first_col[row_idx] - aux_second_col[row_idx];
-
+        let tmp =
+            *aux_trace_values.last().unwrap() + aux_first_col[row_idx] - aux_second_col[row_idx];
 
         aux_trace_values.extend_from_slice(&[aux_first_col[row_idx], aux_second_col[row_idx], tmp]);
     }

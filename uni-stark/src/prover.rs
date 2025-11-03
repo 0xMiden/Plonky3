@@ -167,13 +167,19 @@ where
     // begin aux trace generation
     let num_randomness = air.num_randomness();
     // TODO: randomness to ext domain
-    let randomness: Vec<Val<SC>> = (0..num_randomness)
+    let randomness: Vec<SC::Challenge> = (0..num_randomness)
         .map(|_| challenger.sample_algebra_element())
         .collect();
 
+    let randomness_bases = randomness
+        .iter()
+        .flat_map(|r| r.as_basis_coefficients_slice())
+        .cloned()
+        .collect_vec();
+
     let (aux_trace_commit, aux_trace, aux_trace_data) = {
-        let aux_trace = generate_logup_trace(&trace, &randomness[0]);
-         ark_std::println!("\nprover randomness: {:?}\n", randomness[0]);
+        let aux_trace = generate_logup_trace(&trace, &randomness_bases[0]);
+        ark_std::println!("\nprover randomness: {:?}\n", randomness[0]);
         ark_std::println!("\nprover main trace: {:?}\n", trace);
         ark_std::println!("\nprover aux trace: {:?}\n", aux_trace);
 
@@ -189,11 +195,16 @@ where
         (aux_trace_commit, aux_trace, aux_trace_data)
     };
 
+    let randomness_base = randomness
+        .iter()
+        .flat_map(|r| r.as_basis_coefficients_slice())
+        .cloned()
+        .collect_vec();
     crate::check_constraints::check_constraints(
         air,
         &trace,
         &aux_trace,
-        &randomness,
+        &randomness_base,
         public_values,
     );
 
@@ -438,7 +449,7 @@ fn quotient_values<SC, A, Mat>(
     quotient_domain: Domain<SC>,
     trace_on_quotient_domain: Mat,
     aux_trace_on_quotient_domain: Mat,
-    randomness: &[Val<SC>],
+    randomness: &[SC::Challenge],
     alpha: SC::Challenge,
     constraint_count: usize,
 ) -> Vec<SC::Challenge>
@@ -500,7 +511,7 @@ where
             let mut folder = ProverConstraintFolder {
                 main: main.as_view(),
                 aux: aux.as_view(),
-                // randomness,
+                randomness,
                 public_values,
                 is_first_row,
                 is_last_row,

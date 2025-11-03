@@ -1,5 +1,6 @@
 use core::ops::{Add, Mul, Sub};
 
+use alloc::vec::Vec;
 use p3_field::{Algebra, ExtensionField, Field, PrimeCharacteristicRing};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -188,8 +189,8 @@ pub trait AirBuilderWithLogUp: AirBuilder {
     /// Return the matrix representing permutation registers.
     fn permutation(&self) -> Self::M;
 
-    // /// Return the list of randomness values for permutation argument.
-    // fn permutation_randomness(&self) -> &[Self::Var];
+    /// Return the list of randomness values for permutation argument.
+    fn permutation_randomness(&self) -> Vec<Self::Expr>;
 }
 
 /// Trait for `AirBuilder` variants that include preprocessed data columns.
