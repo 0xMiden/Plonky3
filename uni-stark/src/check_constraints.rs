@@ -225,21 +225,22 @@ mod tests {
             // - Potentially even less: the extension fields for aux1 and aux2 are identical. So we should be able to save another 3 base columns.
             // - It is better than checking \prod(r-xi) == \prod(r-yi) which requires 4 extension columns (the last two store the running product)
 
+            // aux row computation is correct
             let r = builder.aux_randomness[0];
             let xi = main.top.get(0, 0).unwrap();
             let yi = main.top.get(0, 1).unwrap();
             let ti = aux.top.get(0, 0).unwrap();
             let wi = aux.top.get(0, 1).unwrap();
 
-            ark_std::println!("randomness: {:?}", r);
+            // ark_std::println!("randomness: {:?}", r);
             builder.assert_eq::<F, F>(F::ONE, ti * (r - F::from(xi)));
             builder.assert_eq::<F, F>(F::ONE, wi * (r - F::from(yi)));
-            
-            ark_std::println!("ti: {:?}", ti);
-            ark_std::println!("wi: {:?}", wi);
+
+            // ark_std::println!("ti: {:?}", ti);
+            // ark_std::println!("wi: {:?}", wi);
             // ark_std::println!("a3_top + ti - wi: {:?}", a3_top + ti - wi);
 
-
+            // transition is correct
             let a1_bot = aux.bottom.get(0, 0).unwrap();
             let a2_bot = aux.bottom.get(0, 1).unwrap();
             let a3_top = aux.top.get(0, 2).unwrap();
@@ -247,8 +248,9 @@ mod tests {
             builder
                 .when_transition()
                 .assert_eq::<F, F>(a3_bot, a3_top + a1_bot - a2_bot);
+
             // a3[last] = \sum ti - \sim w_i
-            // it is 0 is {ti} is a permutation of {wi}
+            // it is 0 if {ti} is a permutation of {wi}
             builder.when_last_row().assert_zero::<F>(a3_top);
 
             // ======================

@@ -13,8 +13,7 @@ use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{
-    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
-    StarkGenericConfig, SymbolicAirBuilder, Val, get_log_quotient_degree, get_symbolic_constraints,
+    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder, StarkGenericConfig, SymbolicAirBuilder, Val, generate_logup_trace, get_log_quotient_degree, get_symbolic_constraints
 };
 
 #[instrument(skip_all)]
@@ -72,8 +71,8 @@ where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
 {
-    #[cfg(debug_assertions)]
-    crate::check_constraints::check_constraints(air, &trace, public_values);
+    // #[cfg(debug_assertions)]
+    // crate::check_constraints::check_constraints(air, &trace, public_values);
 
     // Compute the height `N = 2^n` and `log_2(height)`, `n`, of the trace.
     let degree = trace.height();
@@ -160,6 +159,31 @@ where
     // Observe the public input values.
     challenger.observe_slice(public_values);
 
+    // begin aux trace generation
+    let num_randomness = air.num_randomness();
+    // TODO: randomness to ext domain
+    let randomness: Vec<Val<SC>> = (0..num_randomness)
+        .map(|_| challenger.sample_algebra_element())
+        .collect();
+
+    let (aux_trace_commit, aux_trace, aux_trace_data) = {
+        let aux_trace = generate_logup_trace(&trace, &randomness[0]);
+        // let aux_trace = generate_logup_trace(&trace, &-SC::Challenge::ONE); // TODO -- remove
+        let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
+            .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
+
+        challenger.observe(aux_trace_commit.clone());
+
+        // ark_std::println!("aux trace: {:?}", aux_trace);
+        //    ark_std::println!("aux trace data: {:?}", aux_trace_data);
+
+
+        (aux_trace_commit, aux_trace, aux_trace_data)
+    };
+
+
+        crate::check_constraints::check_constraints(air, &trace, &aux_trace, &randomness,  public_values);
+
     // Get the first Fiat Shamir challenge which will be used to combine all constraint polynomials
     // into a single polynomial.
     //
@@ -194,6 +218,8 @@ where
     // This only works if the trace domain is `gH'` and the quotient domain is `gK` for some subgroup `K` contained in `H'`.
     // TODO: Make this explicit in `get_evaluations_on_domain` or otherwise fix this.
     let trace_on_quotient_domain = pcs.get_evaluations_on_domain(&trace_data, 0, quotient_domain);
+    let aux_trace_on_quotient_domain =
+        pcs.get_evaluations_on_domain(&aux_trace_data, 0, quotient_domain);
 
     // Compute the quotient polynomial `Q(x)` by evaluating
     //          `C(T_1(x), ..., T_w(x), T_1(hx), ..., T_w(hx), selectors(x)) / Z_H(x)`
@@ -261,6 +287,7 @@ where
     // will be passed to the verifier.
     let commitments = Commitments {
         trace: trace_commit,
+        aux: aux_trace_commit,
         quotient_chunks: quotient_commit,
         random: opt_r_commit.clone(),
     };
@@ -290,8 +317,9 @@ where
             let round0 = opt_r_data.as_ref().map(|r_data| (r_data, vec![vec![zeta]]));
             let round1 = (&trace_data, vec![vec![zeta, zeta_next]]);
             let round2 = (&quotient_data, vec![vec![zeta]; quotient_degree]); // open every chunk at zeta
+let round3 = (&aux_trace_data, vec![vec![zeta, zeta_next]]);
 
-            let rounds = round0.into_iter().chain([round1, round2]).collect();
+            let rounds = round0.into_iter().chain([round1, round2, round3]).collect();
 
             pcs.open(rounds, &mut challenger)
         });
@@ -303,6 +331,9 @@ where
             .iter()
             .map(|v| v[0].clone())
             .collect_vec();
+
+           let aux_trace_local = opened_values[quotient_idx + 1][0][0].clone();
+    let aux_trace_next = opened_values[quotient_idx + 1][0][1].clone();
         let random = if is_random {
             Some(opened_values[0][0][0].clone())
         } else {
@@ -312,6 +343,8 @@ where
             trace_local,
             trace_next,
             quotient_chunks,
+             aux_trace_local,
+        aux_trace_next,
             random,
         };
         Proof {
@@ -361,6 +394,8 @@ where
             trace_local,
             trace_next,
             quotient_chunks,
+             aux_trace_local,
+        aux_trace_next,
             random,
         };
         Proof {

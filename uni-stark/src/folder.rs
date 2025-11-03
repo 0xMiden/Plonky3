@@ -16,6 +16,10 @@ use crate::{PackedChallenge, PackedVal, StarkGenericConfig, Val};
 pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     /// The matrix containing rows on which the constraint polynomial is to be evaluated
     pub main: RowMajorMatrixView<'a, PackedVal<SC>>,
+    /// Optional: the matrix containing rows on which the aux constraint polynomial is to be evaluated
+    pub aux: RowMajorMatrixView<'a, PackedVal<SC>>,
+    /// Optional: the randomness used to compute the aux tract
+    pub randomness: &'a [SC::Challenge],
     /// Public inputs to the AIR
     pub public_values: &'a Vec<Val<SC>>,
     /// Evaluations of the Selector polynomial for the first row of the trace
@@ -43,6 +47,10 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
 pub struct VerifierConstraintFolder<'a, SC: StarkGenericConfig> {
     /// Pair of consecutive rows from the committed polynomial evaluations
     pub main: ViewPair<'a, SC::Challenge>,
+    /// Optional: pair of consecutive rows from the committed polynomial evaluations
+    pub aux: ViewPair<'a, SC::Challenge>,
+    /// Optional: the randomness used to compute the aux tract
+    pub randomness: &'a [SC::Challenge],
     /// Public values that are inputs to the computation
     pub public_values: &'a Vec<Val<SC>>,
     /// Evaluations of the Selector polynomial for the first row of the trace
