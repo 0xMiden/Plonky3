@@ -175,7 +175,7 @@ impl<F: Field> AirBuilderWithPublicValues for SymbolicAirBuilder<F> {
 }
 
 impl<F: Field> AirBuilderWithLogUp for SymbolicAirBuilder<F> {
-    fn permutation(&self) -> Self::M {
+    fn permutation(&self) -> <Self as AirBuilder>::M {
         ark_std::println!("symbolic aux: {:?}", self.aux);
         self.aux.clone()
     }

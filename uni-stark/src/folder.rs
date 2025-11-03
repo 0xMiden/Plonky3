@@ -128,7 +128,7 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverConstraintFold
 }
 
 impl<SC: StarkGenericConfig> AirBuilderWithLogUp for ProverConstraintFolder<'_, SC> {
-    fn permutation(&self) -> Self::M {
+    fn permutation(&self) -> <Self as AirBuilder>::M  {
         ark_std::println!("prover aux: {:?}", self.aux);
         self.aux
     }
@@ -182,7 +182,7 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for VerifierConstraintFo
 }
 
 impl<SC: StarkGenericConfig> AirBuilderWithLogUp for VerifierConstraintFolder<'_, SC> {
-    fn permutation(&self) -> Self::M {
+    fn permutation(&self) -> <Self as AirBuilder>::M {
         ark_std::println!("verifier aux: {:?}", self.aux);
         self.aux
     }

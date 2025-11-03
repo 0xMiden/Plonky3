@@ -184,6 +184,14 @@ pub trait AirBuilderWithPublicValues: AirBuilder {
     fn public_values(&self) -> &[Self::PublicVar];
 }
 
+pub trait AirBuilderWithLogUp: AirBuilder {
+    /// Return the matrix representing permutation registers.
+    fn permutation(&self) -> Self::M;
+
+    // /// Return the list of randomness values for permutation argument.
+    // fn permutation_randomness(&self) -> &[Self::Var];
+}
+
 /// Trait for `AirBuilder` variants that include preprocessed data columns.
 pub trait PairBuilder: AirBuilder {
     /// Return a matrix of preprocessed registers.

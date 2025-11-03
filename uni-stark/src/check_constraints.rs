@@ -148,7 +148,7 @@ impl<F: Field> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F> {
 }
 
 impl<F: Field> AirBuilderWithLogUp for DebugConstraintBuilder<'_, F> {
-    fn permutation(&self) -> Self::M {
+    fn permutation(&self) -> <Self as AirBuilder>::M  {
         ark_std::println!("debug aux: {:?}", self.aux);
         self.aux
     }
