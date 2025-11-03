@@ -156,7 +156,7 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    use p3_air::BaseAir;
+    use p3_air::{BaseAir, MultiPhaseBaseAir};
     use p3_baby_bear::BabyBear;
 
     use super::*;
@@ -170,6 +170,16 @@ mod tests {
     impl BaseAir<BabyBear> for MockAir {
         fn width(&self) -> usize {
             self.width
+        }
+    }
+
+    impl MultiPhaseBaseAir<BabyBear> for MockAir {
+        fn aux_width(&self) -> usize {
+            0
+        }
+
+        fn num_randomness(&self) -> usize {
+            0
         }
     }
 

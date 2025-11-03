@@ -1,6 +1,6 @@
 use core::borrow::Borrow;
 
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir};
+use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, MultiPhaseBaseAir};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::{DuplexChallenger, HashChallenger, SerializingChallenger32};
 use p3_commit::ExtensionMmcs;
@@ -25,6 +25,16 @@ pub struct FibonacciAir {}
 impl<F> BaseAir<F> for FibonacciAir {
     fn width(&self) -> usize {
         NUM_FIBONACCI_COLS
+    }
+}
+
+impl<F> MultiPhaseBaseAir<F> for FibonacciAir {
+    fn aux_width(&self) -> usize {
+        0
+    }
+
+    fn num_randomness(&self) -> usize {
+        0
     }
 }
 

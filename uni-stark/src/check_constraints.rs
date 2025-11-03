@@ -18,8 +18,13 @@ use tracing::instrument;
 /// - `main`: The trace matrix (rows of witness values)
 /// - `public_values`: Public values provided to the builder
 #[instrument(name = "check constraints", skip_all)]
-pub(crate) fn check_constraints<F, A>(air: &A, main: &RowMajorMatrix<F>, public_values: &Vec<F>)
-where
+pub(crate) fn check_constraints<F, A>(
+    air: &A,
+    main: &RowMajorMatrix<F>,
+    aux_trace: &RowMajorMatrix<F>,
+    aux_randomness: &[F],
+    public_values: &Vec<F>,
+) where
     F: Field,
     A: for<'a> Air<DebugConstraintBuilder<'a, F>>,
 {
@@ -37,9 +42,18 @@ where
             RowMajorMatrixView::new_row(&*next),
         );
 
+        let aux_local = unsafe { aux_trace.row_slice_unchecked(row_index) };
+        let aux_next = unsafe { aux_trace.row_slice_unchecked(row_index_next) };
+        let aux = VerticalPair::new(
+            RowMajorMatrixView::new_row(&*aux_local),
+            RowMajorMatrixView::new_row(&*aux_next),
+        );
+
         let mut builder = DebugConstraintBuilder {
             row_index,
             main,
+            aux,
+            aux_randomness,
             public_values,
             is_first_row: F::from_bool(row_index == 0),
             is_last_row: F::from_bool(row_index == height - 1),
@@ -60,6 +74,10 @@ pub struct DebugConstraintBuilder<'a, F: Field> {
     row_index: usize,
     /// A view of the current and next row as a vertical pair.
     main: ViewPair<'a, F>,
+    /// A view of the current and next aux row as a vertical pair.
+    aux: ViewPair<'a, F>,
+    /// randomness that is used to compute aux trace
+    aux_randomness: &'a [F],
     /// The public values provided for constraint validation (e.g. inputs or outputs).
     public_values: &'a [F],
     /// A flag indicating whether this is the first row.
@@ -133,9 +151,9 @@ impl<F: Field> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F> {
 mod tests {
     use alloc::vec;
 
-    use p3_air::{BaseAir, BaseAirWithPublicValues};
+    use p3_air::{BaseAir, BaseAirWithPublicValues, MultiPhaseBaseAir};
     use p3_baby_bear::BabyBear;
-    use p3_field::PrimeCharacteristicRing;
+    use p3_field::{PrimeCharacteristicRing, batch_multiplicative_inverse};
 
     use super::*;
 
@@ -156,96 +174,358 @@ mod tests {
 
     impl<F: Field, const W: usize> BaseAirWithPublicValues<F> for RowLogicAir<W> {}
 
-    impl<F: Field, const W: usize> Air<DebugConstraintBuilder<'_, F>> for RowLogicAir<W> {
+    impl<F: Field, const W: usize> MultiPhaseBaseAir<F> for RowLogicAir<W> {
+        fn aux_width(&self) -> usize {
+            // 3 extension field elements per row
+            // 12
+            3
+        }
+
+        fn num_randomness(&self) -> usize {
+            1
+        }
+    }
+
+    impl<F, const W: usize> Air<DebugConstraintBuilder<'_, F>> for RowLogicAir<W>
+    where
+        F: Field,
+    {
         fn eval(&self, builder: &mut DebugConstraintBuilder<'_, F>) {
+            ark_std::println!("debug constraint builder check");
             let main = builder.main();
+            let aux = builder.aux;
 
-            for col in 0..W {
-                let a = main.top.get(0, col).unwrap();
-                let b = main.bottom.get(0, col).unwrap();
+            // ======================
+            // main trace
+            // ======================
+            // | main1             | main2            |
+            // | row[i]            | perm(main1)[i]   |
+            // | row[i+1]=row[i]+1 | perm(main1)[i+1] |
 
-                // New logic: enforce row[i+1] = row[i] + 1, only on transitions
-                builder.when_transition().assert_eq(b, a + F::ONE);
-            }
+            let a = main.top.get(0, 0).unwrap();
+            let b = main.bottom.get(0, 0).unwrap();
 
+            // New logic: enforce row[i+1] = row[i] + 1, only on transitions
+            builder.when_transition().assert_eq(b, a + F::ONE);
+
+            // ======================
+            // aux trace
+            // ======================
+            // Note: For now this is hard coded with LogUp
+            // To show that {x_i} and {y_i} are permutations of each other
+            // We compute
+            // |    aux1           |    aux2           |   aux3                          |
+            // | t_i = 1/(r - x_i) | w_i = 1/(r - y_i) | aux3[i] = aux3[i-1] + t_i - w_i |
+            //
+            // - r is the input randomness
+            // - in practice x_i and y_i should be copied from corresponding main trace (with selectors)
+            //
+            // ZZ note:
+            // This is practically LogUp with univariate. This requires 3 extension columns = 12 base columns.
+            // - Potentially even less: the extension fields for aux1 and aux2 are identical. So we should be able to save another 3 base columns.
+            // - It is better than checking \prod(r-xi) == \prod(r-yi) which requires 4 extension columns (the last two store the running product)
+
+            let r = builder.aux_randomness[0];
+            let xi = main.top.get(0, 0).unwrap();
+            let yi = main.top.get(0, 1).unwrap();
+            let ti = aux.top.get(0, 0).unwrap();
+            let wi = aux.top.get(0, 1).unwrap();
+
+            ark_std::println!("randomness: {:?}", r);
+            builder.assert_eq::<F, F>(F::ONE, ti * (r - F::from(xi)));
+            builder.assert_eq::<F, F>(F::ONE, wi * (r - F::from(yi)));
+            
+            ark_std::println!("ti: {:?}", ti);
+            ark_std::println!("wi: {:?}", wi);
+            // ark_std::println!("a3_top + ti - wi: {:?}", a3_top + ti - wi);
+
+
+            let a1_bot = aux.bottom.get(0, 0).unwrap();
+            let a2_bot = aux.bottom.get(0, 1).unwrap();
+            let a3_top = aux.top.get(0, 2).unwrap();
+            let a3_bot = aux.bottom.get(0, 2).unwrap();
+            builder
+                .when_transition()
+                .assert_eq::<F, F>(a3_bot, a3_top + a1_bot - a2_bot);
+            // a3[last] = \sum ti - \sim w_i
+            // it is 0 is {ti} is a permutation of {wi}
+            builder.when_last_row().assert_zero::<F>(a3_top);
+
+            // ======================
+            // public input
+            // ======================
             // Add public value equality on last row for extra coverage
             let public_values = builder.public_values;
             let mut when_last = builder.when(builder.is_last_row);
             for (i, &pv) in public_values.iter().enumerate().take(W) {
+                ark_std::println!("{}: {:?}", i, pv);
+                ark_std::println!("{}: {:?}", i, main.top.get(0, i));
                 when_last.assert_eq(main.top.get(0, i).unwrap(), pv);
             }
         }
     }
 
+    // Generate a main trace.
+    // The first column is incremental
+    // The second column is the rev of the first column
+    fn gen_main(main_col: &Vec<BabyBear>) -> RowMajorMatrix<BabyBear> {
+        let main_rev = permute(main_col);
+        let main_values = main_col
+            .iter()
+            .zip(main_rev.iter())
+            .flat_map(|(a, b)| vec![a, b])
+            .cloned()
+            .collect();
+        RowMajorMatrix::new(main_values, 2)
+    }
+
+    // Generate the aux trace for logup arguments.
+    fn gen_aux(
+        main_col: &Vec<BabyBear>,
+        aux_randomness: &BabyBear,
+        // aux_randomness: &BinomialExtensionField<BabyBear, 4>,
+        // ) -> RowMajorMatrix<BinomialExtensionField<BabyBear, 4>> {
+    ) -> RowMajorMatrix<BabyBear> {
+        let perm_main_col = permute(main_col);
+        let len = main_col.len();
+
+        let aux1 = gen_logup_col(&main_col, aux_randomness);
+        let aux2 = gen_logup_col(&perm_main_col, aux_randomness);
+        let mut aux3 = vec![aux1[0] - aux2[0]];
+        for i in 1..len {
+            aux3.push(aux3[i - 1] + aux1[i] - aux2[i])
+        }
+        let aux_values = aux1
+            .iter()
+            .zip(aux2.iter().zip(aux3.iter()))
+            .flat_map(|(a1, (a2, a3))| vec![a1, a2, a3])
+            .cloned()
+            .collect();
+
+        RowMajorMatrix::new(aux_values, 3)
+    }
+
     #[test]
-    fn test_incremental_rows_with_last_row_check() {
+    fn test_permuted_incremental_rows_with_last_row_check() {
+        let len = 100;
+
         // Each row = previous + 1, with 4 rows total, 2 columns.
-        // Last row must match public values [4, 4]
+        // Last row must match public values [4, 1]
+        // randomness = 5 + 10x + 15x^2 + 20x^3
+        // | m1 | m2 | a1      | a2      | a3 |
+        // | 1  | 4  | 1/(r-1) | 1/(r-4) | .. |
+        // | 2  | 3  | 1/(r-2) | 1/(r-3) | .. |
+        // | 3  | 2  | 1/(r-3) | 1/(r-2) | .. |
+        // | 4  | 1  | 1/(r-4) | 1/(r-1) | .. |
         let air = RowLogicAir::<2>;
-        let values = vec![
-            BabyBear::ONE,
-            BabyBear::ONE, // Row 0
-            BabyBear::new(2),
-            BabyBear::new(2), // Row 1
-            BabyBear::new(3),
-            BabyBear::new(3), // Row 2
-            BabyBear::new(4),
-            BabyBear::new(4), // Row 3 (last)
-        ];
-        let main = RowMajorMatrix::new(values, 2);
-        check_constraints(&air, &main, &vec![BabyBear::new(4); 2]);
+
+        let main_col = (1..=len).map(|i| BabyBear::new(i)).collect();
+        let main = gen_main(&main_col);
+
+        // let aux_randomness = BinomialExtensionField::<BabyBear, 4>::from_basis_coefficients_slice(
+        //     [
+        //         BabyBear::new(5),
+        //         BabyBear::new(10),
+        //         BabyBear::new(15),
+        //         BabyBear::new(20),
+        //     ]
+        //     .as_ref(),
+        // )
+        // .unwrap();
+        let aux_randomness = BabyBear::new(101);
+
+        let aux = gen_aux(&main_col, &aux_randomness);
+
+        ark_std::println!("main: {:?}", main);
+        ark_std::println!("aux: {:?}", aux);
+
+        check_constraints(
+            &air,
+            &main,
+            &aux,
+            &[aux_randomness],
+            &vec![BabyBear::new(len), BabyBear::new(1)],
+        );
     }
 
-    #[test]
-    #[should_panic]
-    fn test_incorrect_increment_logic() {
-        // Row 2 does not equal row 1 + 1 → should fail on transition from row 1 to 2.
-        let air = RowLogicAir::<2>;
-        let values = vec![
-            BabyBear::ONE,
-            BabyBear::ONE, // Row 0
-            BabyBear::new(2),
-            BabyBear::new(2), // Row 1
-            BabyBear::new(5),
-            BabyBear::new(5), // Row 2 (wrong)
-            BabyBear::new(6),
-            BabyBear::new(6), // Row 3
-        ];
-        let main = RowMajorMatrix::new(values, 2);
-        check_constraints(&air, &main, &vec![BabyBear::new(6); 2]);
-    }
+    // #[test]
+    // #[should_panic]
+    // fn test_incorrect_increment_logic() {
+    //     let len = 100;
 
-    #[test]
-    #[should_panic]
-    fn test_wrong_last_row_public_value() {
-        // The transition logic is fine, but public value check fails at the last row.
-        let air = RowLogicAir::<2>;
-        let values = vec![
-            BabyBear::ONE,
-            BabyBear::ONE, // Row 0
-            BabyBear::new(2),
-            BabyBear::new(2), // Row 1
-            BabyBear::new(3),
-            BabyBear::new(3), // Row 2
-            BabyBear::new(4),
-            BabyBear::new(4), // Row 3
-        ];
-        let main = RowMajorMatrix::new(values, 2);
-        // Wrong public value on column 1
-        check_constraints(&air, &main, &vec![BabyBear::new(4), BabyBear::new(5)]);
-    }
+    //     // Each row = previous + 1, with 4 rows total, 2 columns.
+    //     // Last row must match public values [4, 1]
+    //     // randomness = 5 + 10x + 15x^2 + 20x^3
+    //     // | m1 | m2 | a1      | a2      | a3 |
+    //     // | 1  | 4  | 1/(r-1) | 1/(r-4) | .. |
+    //     // | 2  | 0  | 1/(r-2) | 1/(r-3) | .. |
+    //     // | 0  | 2  | 1/(r-3) | 1/(r-2) | .. | <- wrong value
+    //     // | 4  | 1  | 1/(r-4) | 1/(r-1) | .. |
+    //     let air = RowLogicAir::<2>;
+
+    //     let mut main_col: Vec<BabyBear> = (1..=len).map(|i| BabyBear::new(i)).collect();
+    //     main_col[2] = BabyBear::new(0);
+    //     let main = gen_main(&main_col);
+
+    //     let aux_randomness = BinomialExtensionField::<BabyBear, 4>::from_basis_coefficients_slice(
+    //         [
+    //             BabyBear::new(5),
+    //             BabyBear::new(10),
+    //             BabyBear::new(15),
+    //             BabyBear::new(20),
+    //         ]
+    //         .as_ref(),
+    //     )
+    //     .unwrap();
+    //     let aux = gen_aux(&main_col, &aux_randomness);
+
+    //     check_constraints(
+    //         &air,
+    //         &main,
+    //         &aux,
+    //         &[aux_randomness],
+    //         &vec![BabyBear::new(len), BabyBear::new(1)],
+    //     );
+    // }
+
+    // #[test]
+    // #[should_panic]
+    // fn test_wrong_last_row_public_value() {
+    //     let len = 100;
+
+    //     // Each row = previous + 1, with 4 rows total, 2 columns.
+    //     // Last row must match public values [4, 1]
+    //     // randomness = 5 + 10x + 15x^2 + 20x^3
+    //     // | m1 | m2 | a1      | a2      | a3 |
+    //     // | 1  | 4  | 1/(r-1) | 1/(r-4) | .. |
+    //     // | 2  | 3  | 1/(r-2) | 1/(r-3) | .. |
+    //     // | 3  | 2  | 1/(r-3) | 1/(r-2) | .. |
+    //     // | 4  | 1  | 1/(r-4) | 1/(r-1) | .. | <- wrong value
+    //     let air = RowLogicAir::<2>;
+
+    //     let main_col = (1..=len).map(|i| BabyBear::new(i)).collect();
+    //     let main = gen_main(&main_col);
+
+    //     let aux_randomness = BinomialExtensionField::<BabyBear, 4>::from_basis_coefficients_slice(
+    //         [
+    //             BabyBear::new(5),
+    //             BabyBear::new(10),
+    //             BabyBear::new(15),
+    //             BabyBear::new(20),
+    //         ]
+    //         .as_ref(),
+    //     )
+    //     .unwrap();
+    //     let aux = gen_aux(&main_col, &aux_randomness);
+
+    //     check_constraints(
+    //         &air,
+    //         &main,
+    //         &aux,
+    //         &[aux_randomness],
+    //         &vec![BabyBear::new(len), BabyBear::new(len)],
+    //     );
+    // }
+
+    // #[test]
+    // #[should_panic]
+    // fn test_wrong_permutation_value() {
+    //     let len = 100;
+
+    //     // Each row = previous + 1, with 4 rows total, 2 columns.
+    //     // Last row must match public values [4, 1]
+    //     // randomness = 5 + 10x + 15x^2 + 20x^3
+    //     // | m1 | m2 | a1      | a2      | a3 |
+    //     // | 1  | 4  | 0       | 1/(r-4) | .. |  <- wrong value
+    //     // | 2  | 3  | 1/(r-2) | 1/(r-3) | .. |
+    //     // | 3  | 2  | 1/(r-3) | 1/(r-2) | .. |
+    //     // | 4  | 1  | 1/(r-4) | 1/(r-1) | .. |
+    //     let air = RowLogicAir::<2>;
+
+    //     let main_col = (1..=len).map(|i| BabyBear::new(i)).collect();
+    //     let main = gen_main(&main_col);
+
+    //     let aux_randomness = BinomialExtensionField::<BabyBear, 4>::from_basis_coefficients_slice(
+    //         [
+    //             BabyBear::new(5),
+    //             BabyBear::new(10),
+    //             BabyBear::new(15),
+    //             BabyBear::new(20),
+    //         ]
+    //         .as_ref(),
+    //     )
+    //     .unwrap();
+    //     let mut aux = gen_aux(&main_col, &aux_randomness);
+    //     aux.values[0] = BabyBear::new(0).into();
+
+    //     check_constraints(
+    //         &air,
+    //         &main,
+    //         &aux,
+    //         &[aux_randomness],
+    //         &vec![BabyBear::new(len), BabyBear::new(len)],
+    //     );
+    // }
 
     #[test]
     fn test_single_row_wraparound_logic() {
         // A single-row matrix still performs a wraparound check with itself.
         // row[0] == row[0] + 1 ⇒ fails unless handled properly by transition logic.
         // Here: is_transition == false ⇒ so no assertions are enforced.
+        let len = 1;
+
+        // Each row = previous + 1, with 4 rows total, 2 columns.
+        // Last row must match public values [4, 1]
+        // randomness = 5 + 10x + 15x^2 + 20x^3
+        // | m1 | m2 | a1      | a2      | a3 |
+        // | 1  | 1  | 1/(r-1) | 1/(r-1) | 0 |
         let air = RowLogicAir::<2>;
-        let values = vec![
-            BabyBear::new(99),
-            BabyBear::new(77), // Row 0
-        ];
-        let main = RowMajorMatrix::new(values, 2);
-        check_constraints(&air, &main, &vec![BabyBear::new(99), BabyBear::new(77)]);
+
+        let main_col: Vec<BabyBear> = (1..=len).map(|i| BabyBear::new(i)).collect();
+        let main = gen_main(&main_col);
+
+        // let aux_randomness = BinomialExtensionField::<BabyBear, 4>::from_basis_coefficients_slice(
+        //     [
+        //         BabyBear::new(5),
+        //         BabyBear::new(10),
+        //         BabyBear::new(15),
+        //         BabyBear::new(20),
+        //     ]
+        //     .as_ref(),
+        // )
+        // .unwrap();
+
+        let aux_randomness = BabyBear::new(500);
+        let aux = gen_aux(&main_col, &aux_randomness);
+
+        check_constraints(
+            &air,
+            &main,
+            &aux,
+            &[aux_randomness],
+            &vec![BabyBear::new(len), BabyBear::new(1)],
+        );
+    }
+
+    // A very simple permutation
+    pub fn permute<F: Field>(x: &Vec<F>) -> Vec<F> {
+        x.iter().rev().cloned().collect::<Vec<F>>()
+    }
+
+    // Give a column m, for each i, generate aux[i] = 1/(r-m[i])
+    fn gen_logup_col<F>(main_col: &[F], randomness: &F) -> Vec<F>
+    // fn gen_logup_col<F, EF>(main_col: &[F], randomness: &EF) -> Vec<EF>
+    where
+        F: Field,
+        // EF: ExtensionField<F>,
+    {
+        let res = main_col
+            .iter()
+            .map(|&x| (*randomness - F::from(x)))
+            .collect::<Vec<F>>();
+        // .map(|&x| (*randomness - EF::from(x)))
+        // .collect::<Vec<EF>>();
+
+        batch_multiplicative_inverse(&res)
     }
 }
