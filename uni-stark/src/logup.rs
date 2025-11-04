@@ -20,8 +20,8 @@ use p3_matrix::dense::DenseMatrix;
 /// Given two columns `A = [a₀, a₁, ..., aₙ₋₁]` and `B = [b₀, b₁, ..., bₙ₋₁]` that form a
 /// permutation, and a random challenge `r`, the LogUp protocol constructs:
 ///
-/// - `tᵢ = 1/(r - aᵢ)` 
-/// - `wᵢ = 1/(r - bᵢ)` 
+/// - `tᵢ = 1/(r - aᵢ)`
+/// - `wᵢ = 1/(r - bᵢ)`
 /// - Running sum: `Sᵢ = Σⱼ₌₀ⁱ (tⱼ - wⱼ)`
 ///
 /// If A and B are truly a permutation, then `Sₙ₋₁ = 0` (all terms cancel out).
@@ -113,6 +113,7 @@ where
     }
 
     // stores 1/(r - main[row_idx][width-2]) and 1/(r - main[row_idx][width-1])
+    // Note that the inverse is taken over the extension field and later on only the final result is parsed as base field elements
     let r_sub_main_second_last_col = main_second_last_col
         .iter()
         .map(|&x| *randomness - EF::from(x))
@@ -150,7 +151,6 @@ where
 
     DenseMatrix::new(aux_trace_base_values, 3 * EF::DIMENSION)
 }
-
 
 /// Check if two vectors contain the same multiset of elements (i.e., form a permutation).
 ///

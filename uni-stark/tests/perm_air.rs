@@ -14,20 +14,23 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-use p3_uni_stark::{StarkConfig, prove, prove_single_matrix_pcs, verify, verify_single_matrix_pcs};
+use p3_uni_stark::{
+    StarkConfig, ext_field_mul, ext_field_sub, prove, prove_single_matrix_pcs, verify,
+    verify_single_matrix_pcs,
+};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
-/// For testing the public values feature
-pub struct FibonacciAir {}
+/// An Air that enforce Fibonacci sequence and permutations.
+pub struct FibPermAir {}
 
-impl<F> BaseAir<F> for FibonacciAir {
+impl<F> BaseAir<F> for FibPermAir {
     fn width(&self) -> usize {
         3
     }
 }
 
-impl<F> MultiPhaseBaseAir<F> for FibonacciAir {
+impl<F> MultiPhaseBaseAir<F> for FibPermAir {
     fn aux_width_in_base_field(&self) -> usize {
         12
     }
@@ -37,7 +40,7 @@ impl<F> MultiPhaseBaseAir<F> for FibonacciAir {
     }
 }
 
-impl<AB: AirBuilderWithPublicValues + AirBuilderWithLogUp> Air<AB> for FibonacciAir
+impl<AB: AirBuilderWithPublicValues + AirBuilderWithLogUp> Air<AB> for FibPermAir
 where
     AB::F: Field,
 {
@@ -54,12 +57,6 @@ where
         let aux = builder.logup_permutation();
 
         let pis = builder.public_values();
-
-        // main constraints
-        let a = pis[0];
-        let b = pis[1];
-        let x = pis[2];
-
         let (local, next) = (
             main.row_slice(0).expect("Matrix is empty?"),
             main.row_slice(1).expect("Matrix only has 1 row?"),
@@ -67,21 +64,27 @@ where
         let local: &MainTraceRow<AB::Var> = (*local).borrow();
         let next: &MainTraceRow<AB::Var> = (*next).borrow();
 
-        let mut when_first_row = builder.when_first_row();
+        // main constraints
+        {
+            let a = pis[0];
+            let b = pis[1];
+            let x = pis[2];
 
-        when_first_row.assert_eq(local.m1.clone(), a);
-        when_first_row.assert_eq(local.m2.clone(), b);
+            let mut when_first_row = builder.when_first_row();
 
-        let mut when_transition = builder.when_transition();
+            when_first_row.assert_eq(local.m1.clone(), a);
+            when_first_row.assert_eq(local.m2.clone(), b);
 
-        // a' <- b
-        when_transition.assert_eq(local.m2.clone(), next.m1.clone());
+            let mut when_transition = builder.when_transition();
 
-        // b' <- a + b
-        when_transition.assert_eq(local.m1.clone() + local.m2.clone(), next.m2.clone());
+            // a' <- b
+            when_transition.assert_eq(local.m2.clone(), next.m1.clone());
 
-        builder.when_last_row().assert_eq(local.m2.clone(), x);
+            // b' <- a + b
+            when_transition.assert_eq(local.m1.clone() + local.m2.clone(), next.m2.clone());
 
+            builder.when_last_row().assert_eq(local.m2.clone(), x);
+        }
         // aux constraints
         {
             let xi = local.m2.clone().into();
@@ -93,7 +96,7 @@ where
 
             let randomnesses = builder.logup_permutation_randomness();
             let r_width =
-                <FibonacciAir as MultiPhaseBaseAir<AB::F>>::num_randomness_in_base_field(self);
+                <FibPermAir as MultiPhaseBaseAir<AB::F>>::num_randomness_in_base_field(self);
             assert_eq!(r_width, 4);
             let w = AB::F::from_i8(11); // 11 is the constant term w for BabyBear Ext4
 
@@ -162,53 +165,6 @@ where
             }
         }
     }
-}
-
-// Multiplication in BinomialExtensionField<F, W>
-// Example: BabyBearExt4 is defined by X^4 = W, where W = 11
-// Hardcoded for degree 4 extension field.
-// TODO: maybe this already exits somewhere?
-fn ext_field_mul<AB: AirBuilder>(a: &[AB::Expr], b: &[AB::Expr], w: &AB::F) -> Vec<AB::Expr>
-where
-    AB::F: Field,
-{
-    assert_eq!(a.len(), 4, "Expected degree 4 extension field element");
-    assert_eq!(b.len(), 4, "Expected degree 4 extension field element");
-
-    let mut res = vec![
-        AB::Expr::ZERO,
-        AB::Expr::ZERO,
-        AB::Expr::ZERO,
-        AB::Expr::ZERO,
-    ];
-
-    // Expanding the multiplication:
-    // res[0] = a0*b0 + W*(a1*b3 + a2*b2 + a3*b1)
-    // res[1] = a0*b1 + a1*b0 + W*(a2*b3 + a3*b2)
-    // res[2] = a0*b2 + a1*b1 + a2*b0 + W*a3*b3
-    // res[3] = a0*b3 + a1*b2 + a2*b1 + a3*b0
-    for i in 0..4 {
-        for j in 0..4 {
-            let prod = a[i].clone() * b[j].clone();
-            if i + j < 4 {
-                res[i + j] = res[i + j].clone() + prod;
-            } else {
-                // i + j >= 4, multiply by W since X^(i+j) = X^(i+j-4) * W
-                res[i + j - 4] = res[i + j - 4].clone() + prod * w.clone();
-            }
-        }
-    }
-
-    res
-}
-
-fn ext_field_sub<AB: AirBuilder>(a: &[AB::Expr], b: &[AB::Expr]) -> Vec<AB::Expr> {
-    assert_eq!(a.len(), 4, "Expected degree 4 extension field element");
-    assert_eq!(b.len(), 4, "Expected degree 4 extension field element");
-    a.iter()
-        .zip(b.iter())
-        .map(|(a, b)| a.clone() - b.clone())
-        .collect()
 }
 
 pub fn generate_trace_rows<F: PrimeField64>(a: u64, b: u64, n: usize) -> RowMajorMatrix<F> {
@@ -291,11 +247,11 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
     let config = MyConfig::new(pcs, challenger);
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
-    let proof = prove(&config, &FibonacciAir {}, trace.clone(), &pis);
-    verify(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");
+    let proof = prove(&config, &FibPermAir {}, trace.clone(), &pis);
+    verify(&config, &FibPermAir {}, &proof, &pis).expect("verification failed");
 
-    let proof = prove_single_matrix_pcs(&config, &FibonacciAir {}, trace, &pis);
-    verify_single_matrix_pcs(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");
+    let proof = prove_single_matrix_pcs(&config, &FibPermAir {}, trace, &pis);
+    verify_single_matrix_pcs(&config, &FibPermAir {}, &proof, &pis).expect("verification failed");
 }
 
 #[test]
@@ -330,5 +286,5 @@ fn test_incorrect_public_value() {
         BabyBear::ONE,
         BabyBear::from_u32(123_123), // incorrect result
     ];
-    prove(&config, &FibonacciAir {}, trace, &pis);
+    prove(&config, &FibPermAir {}, trace, &pis);
 }
