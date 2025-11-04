@@ -28,7 +28,7 @@ impl<F> BaseAir<F> for FibonacciAir {
 }
 
 impl<F> MultiPhaseBaseAir<F> for FibonacciAir {
-    fn aux_width(&self) -> usize {
+    fn aux_width_in_base_field(&self) -> usize {
         12
     }
 
@@ -51,7 +51,6 @@ where
         // | 5  | 8  | 1  | 1/(r-8) | 1/(r-1) | .. |
 
         let main = builder.main();
-        ark_std::println!("get FibonacciAir permutations");
         let aux = builder.logup_permutation();
 
         let pis = builder.public_values();
@@ -291,8 +290,6 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
 
     let config = MyConfig::new(pcs, challenger);
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
-
-    ark_std::println!("main trace: {:?}", trace);
 
     let proof = prove(&config, &FibonacciAir {}, trace.clone(), &pis);
     verify(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");

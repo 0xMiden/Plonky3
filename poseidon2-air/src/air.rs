@@ -124,13 +124,6 @@ impl<
         PARTIAL_ROUNDS,
     >
 {
-    fn aux_width(&self) -> usize {
-        0
-    }
-
-    fn num_randomness_in_base_field(&self) -> usize {
-        0
-    }
 }
 
 pub(crate) fn eval<

@@ -161,38 +161,42 @@ where
     // begin aux trace generation
     let num_randomness = air.num_randomness_in_base_field() / SC::Challenge::DIMENSION;
 
-    let (aux_trace_commit_opt, aux_trace_opt, aux_trace_data_opt, randomness, randomness_base) = if num_randomness > 0 {
-        let randomness: Vec<SC::Challenge> = (0..num_randomness)
-            .map(|_| challenger.sample_algebra_element())
-            .collect();
+    let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness, _randomness_base) =
+        if num_randomness > 0 {
+            let randomness: Vec<SC::Challenge> = (0..num_randomness)
+                .map(|_| challenger.sample_algebra_element())
+                .collect();
 
-        let aux_trace = generate_logup_trace::<SC::Challenge, _>(&trace, &randomness[0]);
-        ark_std::println!("\nprover randomness: {:?}\n", randomness[0]);
-        ark_std::println!("\nprover main trace: {:?}\n", trace);
-        ark_std::println!("\nprover aux trace: {:?}\n", aux_trace);
+            let aux_trace = generate_logup_trace::<SC::Challenge, _>(&trace, &randomness[0]);
 
-        let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
-            .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
+            let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
+                .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
 
-        challenger.observe(aux_trace_commit.clone());
+            challenger.observe(aux_trace_commit.clone());
 
-        let randomness_base = randomness
-            .iter()
-            .flat_map(|r| r.as_basis_coefficients_slice())
-            .cloned()
-            .collect_vec();
+            let randomness_base = randomness
+                .iter()
+                .flat_map(|r| r.as_basis_coefficients_slice())
+                .cloned()
+                .collect_vec();
 
-        (Some(aux_trace_commit), Some(aux_trace), Some(aux_trace_data), randomness, randomness_base)
-    } else {
-        (None, None, None, vec![], vec![])
-    };
+            (
+                Some(aux_trace_commit),
+                Some(aux_trace),
+                Some(aux_trace_data),
+                randomness,
+                randomness_base,
+            )
+        } else {
+            (None, None, None, vec![], vec![])
+        };
 
     #[cfg(debug_assertions)]
     crate::check_constraints::check_constraints(
         air,
         &trace,
-        &aux_trace_opt,
-        &randomness_base,
+        &_aux_trace_opt,
+        &_randomness_base,
         public_values,
     );
 
@@ -325,9 +329,6 @@ where
     let zeta: SC::Challenge = challenger.sample_algebra_element();
     let zeta_next = trace_domain.next_point(zeta).unwrap();
 
-    ark_std::println!("prover alpha: {:?}", alpha);
-    ark_std::println!("prover zeta: {:?}", zeta);
-
     let is_random = opt_r_data.is_some();
 
     if !with_single_matrix_pcs {
@@ -380,7 +381,6 @@ where
             degree_bits: log_ext_degree,
         }
     } else {
-        // let (opened_values, opening_proof)
         let (opened_values, opening_proofs): (Vec<_>, Vec<_>) = info_span!("open").in_scope(|| {
             let mut rounds = vec![];
             if let Some(r_data) = opt_r_data.as_ref() {
@@ -401,15 +401,9 @@ where
         let trace_idx = SC::Pcs::TRACE_IDX;
         let quotient_idx = SC::Pcs::QUOTIENT_IDX;
 
-        // let trace_local = opened_values[trace_idx][0][0].clone();
-        // let trace_next = opened_values[trace_idx][0][1].clone();
         let trace_local = opened_values[trace_idx][0][0][0].clone();
         let trace_next = opened_values[trace_idx][0][0][1].clone();
 
-        // let quotient_chunks = opened_values[quotient_idx]
-        //     .iter()
-        //     .map(|v| v[0].clone())
-        //     .collect_vec();
         let quotient_chunks = opened_values[quotient_idx][0]
             .iter()
             .map(|v| v[0].clone())
@@ -424,7 +418,6 @@ where
         };
 
         let random = if is_random {
-            // Some(opened_values[0][0][0].clone())
             Some(opened_values[0][0][0][0].clone())
         } else {
             None

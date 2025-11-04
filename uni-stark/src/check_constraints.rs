@@ -1,10 +1,18 @@
 use alloc::vec::Vec;
 
-use p3_air::{Air, AirBuilder, AirBuilderWithLogUp, AirBuilderWithPublicValues};
+use p3_air::{AirBuilder, AirBuilderWithLogUp, AirBuilderWithPublicValues};
 use p3_field::Field;
+use p3_matrix::stack::ViewPair;
+
+#[cfg(debug_assertions)]
+use p3_air::Air;
+#[cfg(debug_assertions)]
 use p3_matrix::Matrix;
+#[cfg(debug_assertions)]
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
-use p3_matrix::stack::{VerticalPair, ViewPair};
+#[cfg(debug_assertions)]
+use p3_matrix::stack::VerticalPair;
+#[cfg(debug_assertions)]
 use tracing::instrument;
 
 /// Runs constraint checks using a given AIR definition and trace matrix.
@@ -16,8 +24,11 @@ use tracing::instrument;
 /// # Arguments
 /// - `air`: The AIR logic to run
 /// - `main`: The trace matrix (rows of witness values)
+/// - `aux`: The aux trace matrix (if 2 phase proving)
+/// - `aux_randomness`: The randomness values that are used to generate `aux` trace
 /// - `public_values`: Public values provided to the builder
 #[instrument(name = "check constraints", skip_all)]
+#[cfg(debug_assertions)]
 pub(crate) fn check_constraints<F, A>(
     air: &A,
     main: &RowMajorMatrix<F>,
@@ -154,7 +165,6 @@ impl<F: Field> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F> {
 
 impl<F: Field> AirBuilderWithLogUp for DebugConstraintBuilder<'_, F> {
     fn logup_permutation(&self) -> <Self as AirBuilder>::M {
-        ark_std::println!("debug aux: {:?}", self.aux);
         self.aux.expect("logup_permutation called but aux trace is None - AIR should check num_randomness > 0 before using logup")
     }
 
@@ -164,6 +174,7 @@ impl<F: Field> AirBuilderWithLogUp for DebugConstraintBuilder<'_, F> {
 }
 
 #[cfg(test)]
+#[cfg(debug_assertions)]
 mod tests {
     use alloc::vec;
 
@@ -193,14 +204,12 @@ mod tests {
     impl<F: Field, const W: usize> BaseAirWithPublicValues<F> for RowLogicAir<W> {}
 
     impl<F: Field, const W: usize> MultiPhaseBaseAir<F> for RowLogicAir<W> {
-        fn aux_width(&self) -> usize {
-            // 3 extension field elements per row
-            12
+        fn aux_width_in_base_field(&self) -> usize {
+            12 // 3 extension field elements per row
         }
 
         fn num_randomness_in_base_field(&self) -> usize {
-            // 4 // a.k.a. EF::DIMENSION
-            4
+            4 // a.k.a. EF::DIMENSION
         }
     }
 
@@ -209,7 +218,6 @@ mod tests {
         F: Field,
     {
         fn eval(&self, builder: &mut DebugConstraintBuilder<'_, F>) {
-            ark_std::println!("debug constraint builder check");
             let main = builder.main();
             let aux = builder.aux;
 
@@ -244,7 +252,6 @@ mod tests {
             // - It is better than checking \prod(r-xi) == \prod(r-yi) which requires 4 extension columns (the last two store the running product)
 
             // aux row computation is correct
-            // let r = builder.aux_randomness[0];
             let xi = main.top.get(0, 0).unwrap();
             let yi = main.top.get(0, 1).unwrap();
 
@@ -254,13 +261,8 @@ mod tests {
                 let wi = aux.top.get(0, i + 4).unwrap();
                 let r = builder.aux_randomness[i];
 
-                // ark_std::println!("randomness: {:?}", r);
                 builder.assert_eq::<F, F>(F::ONE, ti * (r - F::from(xi)));
                 builder.assert_eq::<F, F>(F::ONE, wi * (r - F::from(yi)));
-
-                // ark_std::println!("ti: {:?}", ti);
-                // ark_std::println!("wi: {:?}", wi);
-                // ark_std::println!("a3_top + ti - wi: {:?}", a3_top + ti - wi);
 
                 // transition is correct
                 let a1_bot = aux.bottom.get(0, i).unwrap();
@@ -283,8 +285,6 @@ mod tests {
             let public_values = builder.public_values;
             let mut when_last = builder.when(builder.is_last_row);
             for (i, &pv) in public_values.iter().enumerate().take(W) {
-                ark_std::println!("{}: {:?}", i, pv);
-                ark_std::println!("{}: {:?}", i, main.top.get(0, i));
                 when_last.assert_eq(main.top.get(0, i).unwrap(), pv);
             }
         }
@@ -342,10 +342,6 @@ mod tests {
             final_values.extend_from_slice(current_first);
             final_values.extend_from_slice(current_second);
             final_values.extend_from_slice(&current_sums);
-            //     map(|(sum,(first,second)|
-
-            //     sum+first-second
-            // ).collect_vec();
         }
         DenseMatrix::new(final_values, 3 * 4)
     }
@@ -377,12 +373,8 @@ mod tests {
             .as_ref(),
         )
         .unwrap();
-        // let aux_randomness = BabyBear::new(101);
 
         let aux = gen_aux(&main_col, &aux_randomness);
-
-        ark_std::println!("main: {:?}", main);
-        ark_std::println!("aux: {:?}", aux);
 
         check_constraints(
             &air,

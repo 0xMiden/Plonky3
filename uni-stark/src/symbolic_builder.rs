@@ -63,7 +63,7 @@ where
     let mut builder = SymbolicAirBuilder::new(
         preprocessed_width,
         air.width(),
-        air.aux_width(),
+        air.aux_width_in_base_field(),
         air.num_randomness_in_base_field(),
         num_public_values,
     );
@@ -107,7 +107,8 @@ impl<F: Field> SymbolicAirBuilder<F> {
             let aux_values = [0, 1] // Aux trace also use consecutive rows for LogUp based permutation check
                 .into_iter()
                 .flat_map(|offset| {
-                    (0..aux_width).map(move |index| SymbolicVariable::new(Entry::Aux { offset }, index))
+                    (0..aux_width)
+                        .map(move |index| SymbolicVariable::new(Entry::Aux { offset }, index))
                 })
                 .collect();
             Some(RowMajorMatrix::new(aux_values, aux_width))
@@ -181,9 +182,9 @@ impl<F: Field> AirBuilderWithPublicValues for SymbolicAirBuilder<F> {
 
 impl<F: Field> AirBuilderWithLogUp for SymbolicAirBuilder<F> {
     fn logup_permutation(&self) -> <Self as AirBuilder>::M {
-        ark_std::println!("symbolic aux: {:?}", self.aux);
         self.aux.clone().expect("logup_permutation called but aux trace is None - AIR should check num_randomness > 0 before using logup")
     }
+
     fn logup_permutation_randomness(&self) -> Vec<Self::Expr> {
         self.aux_randomness.iter().map(|v| (*v).into()).collect()
     }
@@ -217,15 +218,7 @@ mod tests {
         }
     }
 
-    impl MultiPhaseBaseAir<BabyBear> for MockAir {
-        fn aux_width(&self) -> usize {
-            0
-        }
-
-        fn num_randomness_in_base_field(&self) -> usize {
-            0
-        }
-    }
+    impl MultiPhaseBaseAir<BabyBear> for MockAir {}
 
     impl Air<SymbolicAirBuilder<BabyBear>> for MockAir {
         fn eval(&self, builder: &mut SymbolicAirBuilder<BabyBear>) {

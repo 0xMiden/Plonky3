@@ -35,15 +35,7 @@ impl<F> BaseAir<F> for KeccakAir {
     }
 }
 
-impl<F> MultiPhaseBaseAir<F> for KeccakAir {
-    fn aux_width(&self) -> usize {
-        0
-    }
-
-    fn num_randomness_in_base_field(&self) -> usize {
-        0
-    }
-}
+impl<F> MultiPhaseBaseAir<F> for KeccakAir {}
 
 impl<AB: AirBuilder> Air<AB> for KeccakAir {
     #[inline]

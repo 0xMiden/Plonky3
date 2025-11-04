@@ -24,10 +24,27 @@ pub trait BaseAirWithPublicValues<F>: BaseAir<F> {
     }
 }
 
+/// An extension of `BaseAir` that includes support for Two Phases.
+/// A single phase `BaseAir` still needs to implement this trait; and set the values to 0.
+/// By default the second phase is not set.
 pub trait MultiPhaseBaseAir<F>: BaseAir<F> {
-    fn aux_width(&self) -> usize;
+    /// The width of the auxiliary columns during the second phase.
+    /// Note that this is the number of columns in BASE FIELD ELEMENTS.
+    ///
+    /// For example, with LogUp based permutation, we will need 3 extension field columns,
+    /// so the aux_width here is 12 if we work on BabyBearExt4.
+    fn aux_width_in_base_field(&self) -> usize {
+        0
+    }
 
-    fn num_randomness_in_base_field(&self) -> usize;
+    /// The number of challenges that are used to generate the aux column.
+    /// Note that this is the number of columns in BASE FIELD ELEMENTS.
+    ///
+    /// For example, with LogUp based permutation, we will need 1 extension field challenge,
+    /// so the aux_width here is 4 if we work on BabyBearExt4.
+    fn num_randomness_in_base_field(&self) -> usize {
+        0
+    }
 }
 
 /// An algebraic intermediate representation (AIR) definition.
@@ -185,11 +202,17 @@ pub trait AirBuilderWithPublicValues: AirBuilder {
     fn public_values(&self) -> &[Self::PublicVar];
 }
 
+/// Trait for `AirBuilder` variants that include LogUp permutation.
 pub trait AirBuilderWithLogUp: AirBuilder {
     /// Return the matrix representing permutation registers.
+    ///
+    /// Note that the elements of the result matrix are BASE FIELD ELEMENTS.
+    /// The extension field arithmetic are handled internally.
     fn logup_permutation(&self) -> Self::M;
 
     /// Return the list of randomness values for permutation argument.
+    ///
+    /// Note that the challenges are BASE FIELD ELEMENTS; the collectively form the extension field challenge.
     fn logup_permutation_randomness(&self) -> Vec<Self::Expr>;
 }
 

@@ -230,15 +230,7 @@ impl<F> BaseAir<F> for Blake3Air {
     }
 }
 
-impl<F> MultiPhaseBaseAir<F> for Blake3Air {
-    fn aux_width(&self) -> usize {
-        0
-    }
-
-    fn num_randomness_in_base_field(&self) -> usize {
-        0
-    }
-}
+impl<F> MultiPhaseBaseAir<F> for Blake3Air {}
 
 impl<AB: AirBuilder> Air<AB> for Blake3Air {
     #[inline]

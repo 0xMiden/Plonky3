@@ -129,12 +129,14 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverConstraintFold
 
 impl<SC: StarkGenericConfig> AirBuilderWithLogUp for ProverConstraintFolder<'_, SC> {
     fn logup_permutation(&self) -> <Self as AirBuilder>::M {
-        ark_std::println!("prover aux: {:?}", self.aux);
         self.aux.expect("logup_permutation called but aux trace is None - AIR should check num_randomness > 0 before using logup")
     }
+
     fn logup_permutation_randomness(&self) -> Vec<Self::Expr> {
         if self.randomness.is_empty() {
-            panic!("logup_permutation_randomness called but randomness is empty - AIR should check num_randomness > 0 before using logup");
+            panic!(
+                "logup_permutation_randomness called but randomness is empty - AIR should check num_randomness > 0 before using logup"
+            );
         }
         self.randomness[0]
             .as_basis_coefficients_slice()
@@ -190,12 +192,14 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for VerifierConstraintFo
 
 impl<SC: StarkGenericConfig> AirBuilderWithLogUp for VerifierConstraintFolder<'_, SC> {
     fn logup_permutation(&self) -> <Self as AirBuilder>::M {
-        ark_std::println!("verifier aux: {:?}", self.aux);
         self.aux.expect("logup_permutation called but aux trace is None - AIR should check num_randomness > 0 before using logup")
     }
+
     fn logup_permutation_randomness(&self) -> Vec<Self::Expr> {
         if self.randomness.is_empty() {
-            panic!("logup_permutation_randomness called but randomness is empty - AIR should check num_randomness > 0 before using logup");
+            panic!(
+                "logup_permutation_randomness called but randomness is empty - AIR should check num_randomness > 0 before using logup"
+            );
         }
         self.randomness[0]
             .as_basis_coefficients_slice()

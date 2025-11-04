@@ -28,15 +28,7 @@ impl<F> BaseAir<F> for FibonacciAir {
     }
 }
 
-impl<F> MultiPhaseBaseAir<F> for FibonacciAir {
-    fn aux_width(&self) -> usize {
-        0
-    }
-
-    fn num_randomness_in_base_field(&self) -> usize {
-        0
-    }
-}
+impl<F> MultiPhaseBaseAir<F> for FibonacciAir {}
 
 impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {
     fn eval(&self, builder: &mut AB) {
