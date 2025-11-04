@@ -128,17 +128,23 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverConstraintFold
 }
 
 impl<SC: StarkGenericConfig> AirBuilderWithLogUp for ProverConstraintFolder<'_, SC> {
-    fn permutation(&self) -> <Self as AirBuilder>::M {
+    fn logup_permutation(&self) -> <Self as AirBuilder>::M {
         ark_std::println!("prover aux: {:?}", self.aux);
         self.aux
     }
-    fn permutation_randomness(&self) -> Vec<Self::Expr> {
-        self.randomness
+    fn logup_permutation_randomness(&self) -> Vec<Self::Expr> {
+        self.randomness[0]
+            .as_basis_coefficients_slice()
             .iter()
-            .flat_map(|r| r.as_basis_coefficients_slice())
-            .cloned()
-            .map(|r| r.into())
+            .map(|&t| t.into())
             .collect()
+
+        // self.randomness
+        //     .iter()
+        //     .flat_map(|r| r.as_basis_coefficients_slice())
+        //     .cloned()
+        //     .map(|r| r.into())
+        //     .collect()
     }
 }
 
@@ -187,15 +193,21 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for VerifierConstraintFo
 }
 
 impl<SC: StarkGenericConfig> AirBuilderWithLogUp for VerifierConstraintFolder<'_, SC> {
-    fn permutation(&self) -> <Self as AirBuilder>::M {
+    fn logup_permutation(&self) -> <Self as AirBuilder>::M {
         ark_std::println!("verifier aux: {:?}", self.aux);
         self.aux
     }
-    fn permutation_randomness(&self) -> Vec<Self::Expr> {
-        self.randomness
+    fn logup_permutation_randomness(&self) -> Vec<Self::Expr> {
+        self.randomness[0]
+            .as_basis_coefficients_slice()
             .iter()
-            .flat_map(|r| r.as_basis_coefficients_slice().iter())
             .map(|&t| t.into())
             .collect()
+
+        // self.randomness
+        //     .iter()
+        //     .flat_map(|r| r.as_basis_coefficients_slice().iter())
+        //     .map(|&t| t.into())
+        //     .collect()
     }
 }

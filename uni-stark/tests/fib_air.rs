@@ -4,19 +4,16 @@ use p3_air::{
     Air, AirBuilder, AirBuilderWithLogUp, AirBuilderWithPublicValues, BaseAir, MultiPhaseBaseAir,
 };
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
-use p3_challenger::{DuplexChallenger, HashChallenger, SerializingChallenger32};
+use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
-use p3_fri::{HidingFriPcs, TwoAdicFriPcs, create_test_fri_params};
-use p3_keccak::{Keccak256Hash, KeccakF};
+use p3_fri::{TwoAdicFriPcs, create_test_fri_params};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_merkle_tree::{MerkleTreeHidingMmcs, MerkleTreeMmcs};
-use p3_symmetric::{
-    CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher, TruncatedPermutation,
-};
+use p3_merkle_tree::MerkleTreeMmcs;
+use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_uni_stark::{StarkConfig, prove, prove_single_matrix_pcs, verify, verify_single_matrix_pcs};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -35,12 +32,15 @@ impl<F> MultiPhaseBaseAir<F> for FibonacciAir {
         12
     }
 
-    fn num_randomness(&self) -> usize {
+    fn num_randomness_in_base_field(&self) -> usize {
         4
     }
 }
 
-impl<AB: AirBuilderWithPublicValues + AirBuilderWithLogUp> Air<AB> for FibonacciAir {
+impl<AB: AirBuilderWithPublicValues + AirBuilderWithLogUp> Air<AB> for FibonacciAir
+where
+    AB::F: Field,
+{
     fn eval(&self, builder: &mut AB) {
         // | m1 | m2 | m3 | a1      | a2      | a3 |
         // | 0  | 1  | 8  | 1/(r-1) | 1/(r-8) | .. |
@@ -52,7 +52,7 @@ impl<AB: AirBuilderWithPublicValues + AirBuilderWithLogUp> Air<AB> for Fibonacci
 
         let main = builder.main();
         ark_std::println!("get FibonacciAir permutations");
-        let aux = builder.permutation();
+        let aux = builder.logup_permutation();
 
         let pis = builder.public_values();
 
@@ -65,8 +65,8 @@ impl<AB: AirBuilderWithPublicValues + AirBuilderWithLogUp> Air<AB> for Fibonacci
             main.row_slice(0).expect("Matrix is empty?"),
             main.row_slice(1).expect("Matrix only has 1 row?"),
         );
-        let local: &FibonacciRow<AB::Var> = (*local).borrow();
-        let next: &FibonacciRow<AB::Var> = (*next).borrow();
+        let local: &MainTraceRow<AB::Var> = (*local).borrow();
+        let next: &MainTraceRow<AB::Var> = (*next).borrow();
 
         let mut when_first_row = builder.when_first_row();
 
@@ -92,36 +92,124 @@ impl<AB: AirBuilderWithPublicValues + AirBuilderWithLogUp> Air<AB> for Fibonacci
                 aux.row_slice(1).expect("Matrix only has 1 row?"),
             );
 
-            let randomnesses = builder.permutation_randomness();
-            let r_width = <FibonacciAir as MultiPhaseBaseAir<AB::F>>::num_randomness(self);
-            for i in 0..r_width {
-                let randomness = randomnesses[i].clone();
-                ark_std::println!("{}-th randomness in eval: {:?}", i, randomness);
+            let randomnesses = builder.logup_permutation_randomness();
+            let r_width =
+                <FibonacciAir as MultiPhaseBaseAir<AB::F>>::num_randomness_in_base_field(self);
+            assert_eq!(r_width, 4);
+            let w = AB::F::from_i8(11); // 11 is the constant term w for BabyBear Ext4
 
+            // t * (r - x_i) == 1
+            {
+                let r_min_xi = ext_field_sub::<AB>(
+                    &randomnesses,
+                    &[xi.clone(), AB::Expr::ZERO, AB::Expr::ZERO, AB::Expr::ZERO],
+                );
+
+                let t_mul_r_min_xi = ext_field_mul::<AB>(
+                    &aux_local[..r_width]
+                        .iter()
+                        .map(|x| x.clone().into())
+                        .collect::<Vec<_>>(),
+                    &r_min_xi,
+                    &w,
+                );
+
+                builder.assert_one(t_mul_r_min_xi[0].clone());
+                builder.assert_zero(t_mul_r_min_xi[1].clone());
+                builder.assert_zero(t_mul_r_min_xi[2].clone());
+                builder.assert_zero(t_mul_r_min_xi[3].clone());
+            }
+            // w * (r - y_i) == 1
+            {
+                let r_min_yi = ext_field_sub::<AB>(
+                    &randomnesses,
+                    &[yi.clone(), AB::Expr::ZERO, AB::Expr::ZERO, AB::Expr::ZERO],
+                );
+
+                let w_mul_r_min_yi = ext_field_mul::<AB>(
+                    &aux_local[r_width..2 * r_width]
+                        .iter()
+                        .map(|x| x.clone().into())
+                        .collect::<Vec<_>>(),
+                    &r_min_yi,
+                    &w,
+                );
+
+                builder.assert_one(w_mul_r_min_yi[0].clone());
+                builder.assert_zero(w_mul_r_min_yi[1].clone());
+                builder.assert_zero(w_mul_r_min_yi[2].clone());
+                builder.assert_zero(w_mul_r_min_yi[3].clone());
+            }
+
+            // running sums
+            for i in 0..r_width {
                 let ti = aux_local[i].clone().into();
                 let wi = aux_local[r_width + i].clone().into();
-                let tip1 = aux_next[i].clone().into();
-                let wip1 = aux_next[r_width + i].clone().into();
+                let next_ti = aux_next[i].clone().into();
+                let next_wi = aux_next[r_width + i].clone().into();
                 let running_sum = aux_local[2 * r_width + i].clone().into();
                 let next_running_sum = aux_next[2 * r_width + i].clone().into();
 
-                // // ti = 1/(r-xi)
-                // builder.assert_one(ti.clone() * (randomness.clone() - xi.clone()));
-                // // wi = 1/(r-yi)
-                // builder.assert_one(wi.clone() * (randomness - yi.clone()));
-                // next_running_sum = running_sum + ti - wi
-                // builder
-                //     .when_transition()
-                //     .assert_eq(next_running_sum, running_sum.clone() + tip1 - wip1);
                 // first row running_sum = ti - wi
-                // builder
-                //     .when_first_row()
-                //     .assert_eq(running_sum.clone(), ti - wi);
-                // last running sum is zero
+                builder
+                    .when_first_row()
+                    .assert_eq(running_sum.clone(), ti - wi);
+                // next_running_sum = running_sum + ti - wi
+                builder
+                    .when_transition()
+                    .assert_eq(next_running_sum, running_sum.clone() + next_ti - next_wi);
+                // last row running sum is zero
                 builder.when_last_row().assert_zero(running_sum);
             }
         }
     }
+}
+
+// Multiplication in BinomialExtensionField<F, W>
+// Example: BabyBearExt4 is defined by X^4 = W, where W = 11
+// Hardcoded for degree 4 extension field.
+// TODO: maybe this already exits somewhere?
+fn ext_field_mul<AB: AirBuilder>(a: &[AB::Expr], b: &[AB::Expr], w: &AB::F) -> Vec<AB::Expr>
+where
+    AB::F: Field,
+{
+    assert_eq!(a.len(), 4, "Expected degree 4 extension field element");
+    assert_eq!(b.len(), 4, "Expected degree 4 extension field element");
+
+    let mut res = vec![
+        AB::Expr::ZERO,
+        AB::Expr::ZERO,
+        AB::Expr::ZERO,
+        AB::Expr::ZERO,
+    ];
+
+    // Expanding the multiplication:
+    // res[0] = a0*b0 + W*(a1*b3 + a2*b2 + a3*b1)
+    // res[1] = a0*b1 + a1*b0 + W*(a2*b3 + a3*b2)
+    // res[2] = a0*b2 + a1*b1 + a2*b0 + W*a3*b3
+    // res[3] = a0*b3 + a1*b2 + a2*b1 + a3*b0
+    for i in 0..4 {
+        for j in 0..4 {
+            let prod = a[i].clone() * b[j].clone();
+            if i + j < 4 {
+                res[i + j] = res[i + j].clone() + prod;
+            } else {
+                // i + j >= 4, multiply by W since X^(i+j) = X^(i+j-4) * W
+                res[i + j - 4] = res[i + j - 4].clone() + prod * w.clone();
+            }
+        }
+    }
+
+    res
+}
+
+fn ext_field_sub<AB: AirBuilder>(a: &[AB::Expr], b: &[AB::Expr]) -> Vec<AB::Expr> {
+    assert_eq!(a.len(), 4, "Expected degree 4 extension field element");
+    assert_eq!(b.len(), 4, "Expected degree 4 extension field element");
+    a.iter()
+        .zip(b.iter())
+        .map(|(a, b)| a.clone() - b.clone())
+        .collect()
 }
 
 pub fn generate_trace_rows<F: PrimeField64>(a: u64, b: u64, n: usize) -> RowMajorMatrix<F> {
@@ -129,12 +217,12 @@ pub fn generate_trace_rows<F: PrimeField64>(a: u64, b: u64, n: usize) -> RowMajo
 
     let mut trace = RowMajorMatrix::new(F::zero_vec(n * 3), 3);
 
-    let (prefix, rows, suffix) = unsafe { trace.values.align_to_mut::<FibonacciRow<F>>() };
+    let (prefix, rows, suffix) = unsafe { trace.values.align_to_mut::<MainTraceRow<F>>() };
     assert!(prefix.is_empty(), "Alignment should match");
     assert!(suffix.is_empty(), "Alignment should match");
     assert_eq!(rows.len(), n);
 
-    rows[0] = FibonacciRow::new(F::from_u64(a), F::from_u64(b), F::ZERO);
+    rows[0] = MainTraceRow::new(F::from_u64(a), F::from_u64(b), F::ZERO);
 
     for i in 1..n {
         rows[i].m1 = rows[i - 1].m2;
@@ -148,22 +236,25 @@ pub fn generate_trace_rows<F: PrimeField64>(a: u64, b: u64, n: usize) -> RowMajo
     trace
 }
 
-pub struct FibonacciRow<F> {
+// A row in Main trace.
+// The first two columns are used for Fibonacci computation.
+// The last column is a permutation of the second column.
+pub struct MainTraceRow<F> {
     pub m1: F,
     pub m2: F,
     pub m3: F,
 }
 
-impl<F> FibonacciRow<F> {
+impl<F> MainTraceRow<F> {
     const fn new(m1: F, m2: F, m3: F) -> Self {
         Self { m1, m2, m3 }
     }
 }
 
-impl<F> Borrow<FibonacciRow<F>> for [F] {
-    fn borrow(&self) -> &FibonacciRow<F> {
+impl<F> Borrow<MainTraceRow<F>> for [F] {
+    fn borrow(&self) -> &MainTraceRow<F> {
         debug_assert_eq!(self.len(), 3);
-        let (prefix, shorts, suffix) = unsafe { self.align_to::<FibonacciRow<F>>() };
+        let (prefix, shorts, suffix) = unsafe { self.align_to::<MainTraceRow<F>>() };
         debug_assert!(prefix.is_empty(), "Alignment should match");
         debug_assert!(suffix.is_empty(), "Alignment should match");
         debug_assert_eq!(shorts.len(), 1);
@@ -209,54 +300,6 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
     let proof = prove_single_matrix_pcs(&config, &FibonacciAir {}, trace, &pis);
     verify_single_matrix_pcs(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");
 }
-
-// #[test]
-// fn test_zk() {
-//     type ByteHash = Keccak256Hash;
-//     let byte_hash = ByteHash {};
-
-//     type U64Hash = PaddingFreeSponge<KeccakF, 25, 17, 4>;
-//     let u64_hash = U64Hash::new(KeccakF {});
-
-//     type FieldHash = SerializingHasher<U64Hash>;
-//     let field_hash = FieldHash::new(u64_hash);
-
-//     type MyCompress = CompressionFunctionFromHasher<U64Hash, 2, 4>;
-//     let compress = MyCompress::new(u64_hash);
-
-//     type ValHidingMmcs = MerkleTreeHidingMmcs<
-//         [Val; p3_keccak::VECTOR_LEN],
-//         [u64; p3_keccak::VECTOR_LEN],
-//         FieldHash,
-//         MyCompress,
-//         SmallRng,
-//         4,
-//         4,
-//     >;
-
-//     let rng = SmallRng::seed_from_u64(1);
-//     let val_mmcs = ValHidingMmcs::new(field_hash, compress, rng);
-
-//     type Challenger = SerializingChallenger32<Val, HashChallenger<u8, ByteHash, 32>>;
-
-//     type ChallengeHidingMmcs = ExtensionMmcs<Val, Challenge, ValHidingMmcs>;
-
-//     let n = 1 << 3;
-//     let x = 21;
-
-//     let challenge_mmcs = ChallengeHidingMmcs::new(val_mmcs.clone());
-//     let dft = Dft::default();
-//     let trace = generate_trace_rows::<Val>(0, 1, n);
-//     let fri_params = create_test_fri_params(challenge_mmcs, 2);
-//     type HidingPcs = HidingFriPcs<Val, Dft, ValHidingMmcs, ChallengeHidingMmcs, SmallRng>;
-//     type MyHidingConfig = StarkConfig<HidingPcs, Challenge, Challenger>;
-//     let pcs = HidingPcs::new(dft, val_mmcs, fri_params, 4, SmallRng::seed_from_u64(1));
-//     let challenger = Challenger::from_hasher(vec![], byte_hash);
-//     let config = MyHidingConfig::new(pcs, challenger);
-//     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
-//     let proof = prove(&config, &FibonacciAir {}, trace, &pis);
-//     verify(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");
-// }
 
 #[test]
 fn test_one_row_trace() {

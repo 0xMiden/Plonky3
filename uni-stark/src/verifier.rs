@@ -123,7 +123,7 @@ where
     challenger.observe_slice(public_values);
 
     // begin processing aux trace
-    let num_randomness = air.num_randomness();
+    let num_randomness = air.num_randomness_in_base_field() / SC::Challenge::DIMENSION;
     let randomness = if num_randomness != 0 {
         let randomness: Vec<SC::Challenge> = (0..num_randomness)
             .map(|_| challenger.sample_algebra_element())

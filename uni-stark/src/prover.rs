@@ -165,17 +165,17 @@ where
     challenger.observe_slice(public_values);
 
     // begin aux trace generation
-    let num_randomness = air.num_randomness();
+    let num_randomness = air.num_randomness_in_base_field() / SC::Challenge::DIMENSION;
     // TODO: randomness to ext domain
     let randomness: Vec<SC::Challenge> = (0..num_randomness)
         .map(|_| challenger.sample_algebra_element())
         .collect();
 
-    let randomness_bases = randomness
-        .iter()
-        .flat_map(|r| r.as_basis_coefficients_slice())
-        .cloned()
-        .collect_vec();
+    // let randomness_bases = randomness
+    //     .iter()
+    //     .flat_map(|r| r.as_basis_coefficients_slice())
+    //     .cloned()
+    //     .collect_vec();
 
     let (aux_trace_commit, aux_trace, aux_trace_data) = {
         let aux_trace = generate_logup_trace::<SC::Challenge, _>(&trace, &randomness[0]);

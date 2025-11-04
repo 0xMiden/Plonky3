@@ -1,4 +1,3 @@
-use alloc::borrow::ToOwned;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -65,7 +64,7 @@ where
         preprocessed_width,
         air.width(),
         air.aux_width(),
-        air.num_randomness(),
+        air.num_randomness_in_base_field(),
         num_public_values,
     );
     air.eval(&mut builder);
@@ -176,11 +175,11 @@ impl<F: Field> AirBuilderWithPublicValues for SymbolicAirBuilder<F> {
 }
 
 impl<F: Field> AirBuilderWithLogUp for SymbolicAirBuilder<F> {
-    fn permutation(&self) -> <Self as AirBuilder>::M {
+    fn logup_permutation(&self) -> <Self as AirBuilder>::M {
         ark_std::println!("symbolic aux: {:?}", self.aux);
         self.aux.clone()
     }
-    fn permutation_randomness(&self) -> Vec<Self::Expr> {
+    fn logup_permutation_randomness(&self) -> Vec<Self::Expr> {
         self.aux_randomness.iter().map(|v| (*v).into()).collect()
     }
 }
@@ -218,7 +217,7 @@ mod tests {
             0
         }
 
-        fn num_randomness(&self) -> usize {
+        fn num_randomness_in_base_field(&self) -> usize {
             0
         }
     }

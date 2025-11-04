@@ -1,6 +1,6 @@
+use alloc::vec::Vec;
 use core::ops::{Add, Mul, Sub};
 
-use alloc::vec::Vec;
 use p3_field::{Algebra, ExtensionField, Field, PrimeCharacteristicRing};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -27,7 +27,7 @@ pub trait BaseAirWithPublicValues<F>: BaseAir<F> {
 pub trait MultiPhaseBaseAir<F>: BaseAir<F> {
     fn aux_width(&self) -> usize;
 
-    fn num_randomness(&self) -> usize;
+    fn num_randomness_in_base_field(&self) -> usize;
 }
 
 /// An algebraic intermediate representation (AIR) definition.
@@ -187,10 +187,10 @@ pub trait AirBuilderWithPublicValues: AirBuilder {
 
 pub trait AirBuilderWithLogUp: AirBuilder {
     /// Return the matrix representing permutation registers.
-    fn permutation(&self) -> Self::M;
+    fn logup_permutation(&self) -> Self::M;
 
     /// Return the list of randomness values for permutation argument.
-    fn permutation_randomness(&self) -> Vec<Self::Expr>;
+    fn logup_permutation_randomness(&self) -> Vec<Self::Expr>;
 }
 
 /// Trait for `AirBuilder` variants that include preprocessed data columns.

@@ -42,10 +42,7 @@ fn is_permutation<F: Field>(col1: &[&F], col2: &[&F]) -> bool {
     true
 }
 
-pub(crate) fn generate_logup_trace<EF, F>(
-    main_trace: &DenseMatrix<F>,
-    randomness: &EF,
-) -> DenseMatrix<F>
+pub fn generate_logup_trace<EF, F>(main_trace: &DenseMatrix<F>, randomness: &EF) -> DenseMatrix<F>
 where
     EF: ExtensionField<F>,
     F: Field,
@@ -124,13 +121,12 @@ where
 #[cfg(test)]
 mod tests {
     use p3_baby_bear::BabyBear;
+    use p3_field::PrimeCharacteristicRing;
     use p3_field::extension::BinomialExtensionField;
-    use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
 
     use super::*;
 
     type F = BabyBear;
-    // type EF = BabyBear;
     type EF = BinomialExtensionField<F, 4>;
 
     #[test]
@@ -194,63 +190,6 @@ mod tests {
         let running_sum_0 = aux_trace.get(0, 8).unwrap().clone();
         assert_eq!(running_sum_0, t0 - w0);
     }
-
-    // #[test]
-    // fn test_inverse_calculation() {
-    //     // Test that t_i * (r - x_i) = 1
-    //     // Last two columns must form a permutation: [5, 7] and [7, 5]
-    //     let trace_values = vec![
-    //         F::from_u64(1),
-    //         F::from_u64(5),
-    //         F::from_u64(7),
-    //         F::from_u64(2),
-    //         F::from_u64(7),
-    //         F::from_u64(5),
-    //     ];
-    //     let main_trace = DenseMatrix::new(trace_values, 3);
-    //     let randomness = EF::from_u64(42);
-
-    //     let aux_trace =  generate_logup_trace::<EF, _>(&main_trace, randomness.as_basis_coefficients_slice());
-
-    //     // Check that t * (r - main[width-2]) = 1 for first row
-    //     let t = aux_trace.get(0, 0).unwrap().clone();
-    //     let x = EF::from(main_trace.get(0, 1).unwrap());
-    //     assert_eq!(t * (randomness - x), F::ONE);
-
-    //     // Check that w * (r - main[width-1]) = 1 for first row
-    //     let w = aux_trace.get(0, 1).unwrap().clone();
-    //     let y = EF::from(main_trace.get(0, 2).unwrap());
-    //     assert_eq!(w * (randomness - y), F::ONE);
-    // }
-
-    // #[test]
-    // #[should_panic(expected = "Permutation check is not possible for main trace width (1) < 2")]
-    // fn test_insufficient_width() {
-    //     // Create a trace with only 1 column (should panic)
-    //     let trace_values = vec![F::from_u64(1), F::from_u64(2)];
-    //     let main_trace = DenseMatrix::new(trace_values, 1);
-    //     let randomness = EF::from_u64(10);
-
-    //     generate_logup_trace(&main_trace, &randomness);
-    // }
-
-    // #[test]
-    // fn test_minimum_width() {
-    //     // Test with exactly 2 columns (minimum required)
-    //     let trace_values = vec![
-    //         F::from_u64(1),
-    //         F::from_u64(2),
-    //         F::from_u64(2),
-    //         F::from_u64(1),
-    //     ];
-    //     let main_trace = DenseMatrix::new(trace_values, 2);
-    //     let randomness = EF::from_u64(50);
-
-    //     let aux_trace = generate_logup_trace(&main_trace, &randomness);
-
-    //     assert_eq!(aux_trace.height(), 2);
-    //     assert_eq!(aux_trace.width(), 3);
-    // }
 
     #[test]
     fn test_is_permutation() {
