@@ -32,11 +32,11 @@ impl<F> BaseAir<F> for FibonacciAir {
 
 impl<F> MultiPhaseBaseAir<F> for FibonacciAir {
     fn aux_width(&self) -> usize {
-        3
+        12
     }
 
     fn num_randomness(&self) -> usize {
-        1
+        4
     }
 }
 
@@ -84,33 +84,43 @@ impl<AB: AirBuilderWithPublicValues + AirBuilderWithLogUp> Air<AB> for Fibonacci
         builder.when_last_row().assert_eq(local.m2.clone(), x);
 
         // aux constraints
-        let (aux_local, aux_next) = (
-            aux.row_slice(0).expect("Matrix is empty?"),
-            aux.row_slice(1).expect("Matrix only has 1 row?"),
-        );
-        let randomnesses = builder.permutation_randomness();
-        let randomness = randomnesses[0].clone();
-        ark_std::println!("randomness in eval: {:?}", randomness);
+        {
+            let xi = local.m2.clone().into();
+            let yi = local.m3.clone().into();
+            let (aux_local, aux_next) = (
+                aux.row_slice(0).expect("Matrix is empty?"),
+                aux.row_slice(1).expect("Matrix only has 1 row?"),
+            );
 
-        let xi = local.m2.clone().into();
-        let yi = local.m3.clone().into();
-        let ti = aux_local[0].clone().into();
-        let wi = aux_local[1].clone().into();
-        let tip1 = aux_next[0].clone().into();
-        let wip1 = aux_next[1].clone().into();
-        let running_sum = aux_local[2].clone().into();
-        let next_running_sum = aux_next[2].clone().into();
+            let randomnesses = builder.permutation_randomness();
+            let r_width = <FibonacciAir as MultiPhaseBaseAir<AB::F>>::num_randomness(self);
+            for i in 0..r_width {
+                let randomness = randomnesses[i].clone();
+                ark_std::println!("{}-th randomness in eval: {:?}", i, randomness);
 
-        // ti = 1/(r-xi)
-        builder.assert_one(ti.clone() * (randomness.clone() - xi));
-        // wi = 1/(r-yi)
-        builder.assert_one(wi.clone() * (randomness - yi));
-        // next_running_sum = running_sum + ti - wi
-        builder
-            .when_transition()
-            .assert_eq(next_running_sum, running_sum.clone() + tip1 - wip1);
-        // last running sum is zero
-        builder.when_last_row().assert_zero(running_sum);
+                let ti = aux_local[i].clone().into();
+                let wi = aux_local[r_width + i].clone().into();
+                let tip1 = aux_next[i].clone().into();
+                let wip1 = aux_next[r_width + i].clone().into();
+                let running_sum = aux_local[2 * r_width + i].clone().into();
+                let next_running_sum = aux_next[2 * r_width + i].clone().into();
+
+                // // ti = 1/(r-xi)
+                // builder.assert_one(ti.clone() * (randomness.clone() - xi.clone()));
+                // // wi = 1/(r-yi)
+                // builder.assert_one(wi.clone() * (randomness - yi.clone()));
+                // next_running_sum = running_sum + ti - wi
+                // builder
+                //     .when_transition()
+                //     .assert_eq(next_running_sum, running_sum.clone() + tip1 - wip1);
+                // first row running_sum = ti - wi
+                // builder
+                //     .when_first_row()
+                //     .assert_eq(running_sum.clone(), ti - wi);
+                // last running sum is zero
+                builder.when_last_row().assert_zero(running_sum);
+            }
+        }
     }
 }
 

@@ -181,10 +181,7 @@ impl<F: Field> AirBuilderWithLogUp for SymbolicAirBuilder<F> {
         self.aux.clone()
     }
     fn permutation_randomness(&self) -> Vec<Self::Expr> {
-        self.aux_randomness
-            .iter()
-            .map(|v| (*v).into())
-            .collect()
+        self.aux_randomness.iter().map(|v| (*v).into()).collect()
     }
 }
 

@@ -178,7 +178,7 @@ where
         .collect_vec();
 
     let (aux_trace_commit, aux_trace, aux_trace_data) = {
-        let aux_trace = generate_logup_trace(&trace, &randomness_bases[0]);
+        let aux_trace = generate_logup_trace::<SC::Challenge, _>(&trace, &randomness[0]);
         ark_std::println!("\nprover randomness: {:?}\n", randomness[0]);
         ark_std::println!("\nprover main trace: {:?}\n", trace);
         ark_std::println!("\nprover aux trace: {:?}\n", aux_trace);

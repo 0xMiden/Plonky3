@@ -164,7 +164,11 @@ mod tests {
 
     use p3_air::{BaseAir, BaseAirWithPublicValues, MultiPhaseBaseAir};
     use p3_baby_bear::BabyBear;
-    use p3_field::{PrimeCharacteristicRing, batch_multiplicative_inverse};
+    use p3_field::{
+        BasedVectorSpace, ExtensionField, PrimeCharacteristicRing, batch_multiplicative_inverse,
+        extension::BinomialExtensionField,
+    };
+    use p3_matrix::dense::DenseMatrix;
 
     use super::*;
 
@@ -188,12 +192,11 @@ mod tests {
     impl<F: Field, const W: usize> MultiPhaseBaseAir<F> for RowLogicAir<W> {
         fn aux_width(&self) -> usize {
             // 3 extension field elements per row
-            // 12
-            3
+            12
         }
 
         fn num_randomness(&self) -> usize {
-            1
+            4 // a.k.a. EF::DIMENSION
         }
     }
 
@@ -237,32 +240,36 @@ mod tests {
             // - It is better than checking \prod(r-xi) == \prod(r-yi) which requires 4 extension columns (the last two store the running product)
 
             // aux row computation is correct
-            let r = builder.aux_randomness[0];
+            // let r = builder.aux_randomness[0];
             let xi = main.top.get(0, 0).unwrap();
             let yi = main.top.get(0, 1).unwrap();
-            let ti = aux.top.get(0, 0).unwrap();
-            let wi = aux.top.get(0, 1).unwrap();
 
-            // ark_std::println!("randomness: {:?}", r);
-            builder.assert_eq::<F, F>(F::ONE, ti * (r - F::from(xi)));
-            builder.assert_eq::<F, F>(F::ONE, wi * (r - F::from(yi)));
+            for i in 0..4 {
+                let ti = aux.top.get(0, i).unwrap();
+                let wi = aux.top.get(0, i + 4).unwrap();
+                let r = builder.aux_randomness[i];
 
-            // ark_std::println!("ti: {:?}", ti);
-            // ark_std::println!("wi: {:?}", wi);
-            // ark_std::println!("a3_top + ti - wi: {:?}", a3_top + ti - wi);
+                // ark_std::println!("randomness: {:?}", r);
+                builder.assert_eq::<F, F>(F::ONE, ti * (r - F::from(xi)));
+                builder.assert_eq::<F, F>(F::ONE, wi * (r - F::from(yi)));
 
-            // transition is correct
-            let a1_bot = aux.bottom.get(0, 0).unwrap();
-            let a2_bot = aux.bottom.get(0, 1).unwrap();
-            let a3_top = aux.top.get(0, 2).unwrap();
-            let a3_bot = aux.bottom.get(0, 2).unwrap();
-            builder
-                .when_transition()
-                .assert_eq::<F, F>(a3_bot, a3_top + a1_bot - a2_bot);
+                // ark_std::println!("ti: {:?}", ti);
+                // ark_std::println!("wi: {:?}", wi);
+                // ark_std::println!("a3_top + ti - wi: {:?}", a3_top + ti - wi);
 
-            // a3[last] = \sum ti - \sim w_i
-            // it is 0 if {ti} is a permutation of {wi}
-            builder.when_last_row().assert_zero::<F>(a3_top);
+                // transition is correct
+                let a1_bot = aux.bottom.get(0, i).unwrap();
+                let a2_bot = aux.bottom.get(0, i + 4).unwrap();
+                let a3_top = aux.top.get(0, i + 8).unwrap();
+                let a3_bot = aux.bottom.get(0, i + 8).unwrap();
+                builder
+                    .when_transition()
+                    .assert_eq::<F, F>(a3_bot, a3_top + a1_bot - a2_bot);
+
+                // a3[last] = \sum ti - \sim w_i
+                // it is 0 if {ti} is a permutation of {wi}
+                builder.when_last_row().assert_zero::<F>(a3_top);
+            }
 
             // ======================
             // public input
@@ -295,27 +302,49 @@ mod tests {
     // Generate the aux trace for logup arguments.
     fn gen_aux(
         main_col: &Vec<BabyBear>,
-        aux_randomness: &BabyBear,
-        // aux_randomness: &BinomialExtensionField<BabyBear, 4>,
+        // aux_randomness: &BabyBear,
+        aux_randomness: &BinomialExtensionField<BabyBear, 4>,
         // ) -> RowMajorMatrix<BinomialExtensionField<BabyBear, 4>> {
     ) -> RowMajorMatrix<BabyBear> {
         let perm_main_col = permute(main_col);
         let len = main_col.len();
 
-        let aux1 = gen_logup_col(&main_col, aux_randomness);
-        let aux2 = gen_logup_col(&perm_main_col, aux_randomness);
-        let mut aux3 = vec![aux1[0] - aux2[0]];
-        for i in 1..len {
-            aux3.push(aux3[i - 1] + aux1[i] - aux2[i])
-        }
-        let aux_values = aux1
-            .iter()
-            .zip(aux2.iter().zip(aux3.iter()))
-            .flat_map(|(a1, (a2, a3))| vec![a1, a2, a3])
-            .cloned()
-            .collect();
+        let aux1 = gen_logup_cols(&main_col, aux_randomness);
+        let aux2 = gen_logup_cols(&perm_main_col, aux_randomness);
 
-        RowMajorMatrix::new(aux_values, 3)
+        let current_first = &aux1[0];
+        let current_second = &aux2[0];
+        let current_sums = current_first
+            .iter()
+            .zip(current_second.iter())
+            .map(|(first, second)| *first - *second)
+            .collect::<Vec<_>>();
+
+        let mut final_values = vec![];
+        final_values.extend_from_slice(current_first);
+        final_values.extend_from_slice(current_second);
+        final_values.extend_from_slice(&current_sums);
+
+        for i in 1..len {
+            let previous_sums = &final_values[(i - 1) * 12 + 8..i * 12];
+            let current_first = &aux1[i];
+            let current_second = &aux2[i];
+
+            let current_sums = previous_sums
+                .iter()
+                .zip(current_first.iter().zip(current_second.iter()))
+                .map(|(sum, (first, second))| *sum + *first - *second)
+                .collect::<Vec<_>>();
+
+            final_values.extend_from_slice(current_first);
+            final_values.extend_from_slice(current_second);
+            final_values.extend_from_slice(&current_sums);
+            //     map(|(sum,(first,second)|
+
+            //     sum+first-second
+            // ).collect_vec();
+        }
+        DenseMatrix::new(final_values, 3 * 4)
     }
 
     #[test]
@@ -335,17 +364,17 @@ mod tests {
         let main_col = (1..=len).map(|i| BabyBear::new(i)).collect();
         let main = gen_main(&main_col);
 
-        // let aux_randomness = BinomialExtensionField::<BabyBear, 4>::from_basis_coefficients_slice(
-        //     [
-        //         BabyBear::new(5),
-        //         BabyBear::new(10),
-        //         BabyBear::new(15),
-        //         BabyBear::new(20),
-        //     ]
-        //     .as_ref(),
-        // )
-        // .unwrap();
-        let aux_randomness = BabyBear::new(101);
+        let aux_randomness = BinomialExtensionField::<BabyBear, 4>::from_basis_coefficients_slice(
+            [
+                BabyBear::new(1005),
+                BabyBear::new(10010),
+                BabyBear::new(10015),
+                BabyBear::new(10020),
+            ]
+            .as_ref(),
+        )
+        .unwrap();
+        // let aux_randomness = BabyBear::new(101);
 
         let aux = gen_aux(&main_col, &aux_randomness);
 
@@ -356,7 +385,7 @@ mod tests {
             &air,
             &main,
             &aux,
-            &[aux_randomness],
+            &aux_randomness.as_basis_coefficients_slice(),
             &vec![BabyBear::new(len), BabyBear::new(1)],
         );
     }
@@ -497,25 +526,25 @@ mod tests {
         let main_col: Vec<BabyBear> = (1..=len).map(|i| BabyBear::new(i)).collect();
         let main = gen_main(&main_col);
 
-        // let aux_randomness = BinomialExtensionField::<BabyBear, 4>::from_basis_coefficients_slice(
-        //     [
-        //         BabyBear::new(5),
-        //         BabyBear::new(10),
-        //         BabyBear::new(15),
-        //         BabyBear::new(20),
-        //     ]
-        //     .as_ref(),
-        // )
-        // .unwrap();
+        let aux_randomness = BinomialExtensionField::<BabyBear, 4>::from_basis_coefficients_slice(
+            [
+                BabyBear::new(1005),
+                BabyBear::new(10010),
+                BabyBear::new(10015),
+                BabyBear::new(10020),
+            ]
+            .as_ref(),
+        )
+        .unwrap();
 
-        let aux_randomness = BabyBear::new(500);
+        // let aux_randomness = BabyBear::new(500);
         let aux = gen_aux(&main_col, &aux_randomness);
 
         check_constraints(
             &air,
             &main,
             &aux,
-            &[aux_randomness],
+            &aux_randomness.as_basis_coefficients_slice(),
             &vec![BabyBear::new(len), BabyBear::new(1)],
         );
     }
@@ -525,20 +554,37 @@ mod tests {
         x.iter().rev().cloned().collect::<Vec<F>>()
     }
 
+    // // Give a column m, for each i, generate aux[i] = 1/(r-m[i])
+    // fn gen_logup_col<F>(main_col: &[F], randomness: &F) -> Vec<F>
+    // // fn gen_logup_col<F, EF>(main_col: &[F], randomness: &EF) -> Vec<EF>
+    // where
+    //     F: Field,
+    //     // EF: ExtensionField<F>,
+    // {
+    //     let res = main_col
+    //         .iter()
+    //         .map(|&x| (*randomness - F::from(x)))
+    //         .collect::<Vec<F>>();
+    //     // .map(|&x| (*randomness - EF::from(x)))
+    //     // .collect::<Vec<EF>>();
+
+    //     batch_multiplicative_inverse(&res)
+    // }
+
     // Give a column m, for each i, generate aux[i] = 1/(r-m[i])
-    fn gen_logup_col<F>(main_col: &[F], randomness: &F) -> Vec<F>
-    // fn gen_logup_col<F, EF>(main_col: &[F], randomness: &EF) -> Vec<EF>
+    fn gen_logup_cols<EF, F>(main_col: &[F], randomness: &EF) -> Vec<Vec<F>>
     where
         F: Field,
-        // EF: ExtensionField<F>,
+        EF: ExtensionField<F>,
     {
+        let rs = randomness.as_basis_coefficients_slice();
+
         let res = main_col
             .iter()
-            .map(|&x| (*randomness - F::from(x)))
+            .flat_map(|x| rs.iter().map(|r| *r - *x))
             .collect::<Vec<F>>();
-        // .map(|&x| (*randomness - EF::from(x)))
-        // .collect::<Vec<EF>>();
 
-        batch_multiplicative_inverse(&res)
+        let t = batch_multiplicative_inverse(&res);
+        t.chunks(EF::DIMENSION).map(|c| c.to_vec()).collect()
     }
 }
