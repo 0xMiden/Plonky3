@@ -22,9 +22,8 @@ use crate::{
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove_single_matrix_pcs<
     SC,
-    // #[cfg(debug_assertions)]
-    A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
-    // #[cfg(not(debug_assertions))] A,
+    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
     air: &A,
@@ -42,9 +41,8 @@ where
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove<
     SC,
-    // #[cfg(debug_assertions)]
-    A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
-    // #[cfg(not(debug_assertions))] A,
+    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
     air: &A,
@@ -62,9 +60,8 @@ where
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 fn prove_internal<
     SC,
-    // #[cfg(debug_assertions)]
-    A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
-    // #[cfg(not(debug_assertions))] A,
+    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
     air: &A,
@@ -76,9 +73,6 @@ where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
 {
-    // #[cfg(debug_assertions)]
-    // crate::check_constraints::check_constraints(air, &trace, public_values);
-
     // Compute the height `N = 2^n` and `log_2(height)`, `n`, of the trace.
     let degree = trace.height();
     let log_degree = log2_strict_usize(degree);
@@ -166,44 +160,38 @@ where
 
     // begin aux trace generation
     let num_randomness = air.num_randomness_in_base_field() / SC::Challenge::DIMENSION;
-    // TODO: randomness to ext domain
-    let randomness: Vec<SC::Challenge> = (0..num_randomness)
-        .map(|_| challenger.sample_algebra_element())
-        .collect();
 
-    // let randomness_bases = randomness
-    //     .iter()
-    //     .flat_map(|r| r.as_basis_coefficients_slice())
-    //     .cloned()
-    //     .collect_vec();
+    let (aux_trace_commit_opt, aux_trace_opt, aux_trace_data_opt, randomness, randomness_base) = if num_randomness > 0 {
+        let randomness: Vec<SC::Challenge> = (0..num_randomness)
+            .map(|_| challenger.sample_algebra_element())
+            .collect();
 
-    let (aux_trace_commit, aux_trace, aux_trace_data) = {
         let aux_trace = generate_logup_trace::<SC::Challenge, _>(&trace, &randomness[0]);
         ark_std::println!("\nprover randomness: {:?}\n", randomness[0]);
         ark_std::println!("\nprover main trace: {:?}\n", trace);
         ark_std::println!("\nprover aux trace: {:?}\n", aux_trace);
 
-        // let aux_trace = generate_logup_trace(&trace, &-SC::Challenge::ONE); // TODO -- remove
         let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
             .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
 
         challenger.observe(aux_trace_commit.clone());
 
-        // ark_std::println!("aux trace: {:?}", aux_trace);
-        //    ark_std::println!("aux trace data: {:?}", aux_trace_data);
+        let randomness_base = randomness
+            .iter()
+            .flat_map(|r| r.as_basis_coefficients_slice())
+            .cloned()
+            .collect_vec();
 
-        (aux_trace_commit, aux_trace, aux_trace_data)
+        (Some(aux_trace_commit), Some(aux_trace), Some(aux_trace_data), randomness, randomness_base)
+    } else {
+        (None, None, None, vec![], vec![])
     };
 
-    let randomness_base = randomness
-        .iter()
-        .flat_map(|r| r.as_basis_coefficients_slice())
-        .cloned()
-        .collect_vec();
+    #[cfg(debug_assertions)]
     crate::check_constraints::check_constraints(
         air,
         &trace,
-        &aux_trace,
+        &aux_trace_opt,
         &randomness_base,
         public_values,
     );
@@ -242,8 +230,9 @@ where
     // This only works if the trace domain is `gH'` and the quotient domain is `gK` for some subgroup `K` contained in `H'`.
     // TODO: Make this explicit in `get_evaluations_on_domain` or otherwise fix this.
     let trace_on_quotient_domain = pcs.get_evaluations_on_domain(&trace_data, 0, quotient_domain);
-    let aux_trace_on_quotient_domain =
-        pcs.get_evaluations_on_domain(&aux_trace_data, 0, quotient_domain);
+    let aux_trace_on_quotient_domain = aux_trace_data_opt
+        .as_ref()
+        .map(|data| pcs.get_evaluations_on_domain(data, 0, quotient_domain));
 
     // Compute the quotient polynomial `Q(x)` by evaluating
     //          `C(T_1(x), ..., T_w(x), T_1(hx), ..., T_w(hx), selectors(x)) / Z_H(x)`
@@ -313,7 +302,7 @@ where
     // will be passed to the verifier.
     let commitments = Commitments {
         trace: trace_commit,
-        aux: aux_trace_commit,
+        aux: aux_trace_commit_opt,
         quotient_chunks: quotient_commit,
         random: opt_r_commit.clone(),
     };
@@ -343,12 +332,15 @@ where
 
     if !with_single_matrix_pcs {
         let (opened_values, opening_proof) = info_span!("open").in_scope(|| {
-            let round0 = opt_r_data.as_ref().map(|r_data| (r_data, vec![vec![zeta]]));
-            let round1 = (&trace_data, vec![vec![zeta, zeta_next]]);
-            let round2 = (&quotient_data, vec![vec![zeta]; quotient_degree]); // open every chunk at zeta
-            let round3 = (&aux_trace_data, vec![vec![zeta, zeta_next]]);
-
-            let rounds = round0.into_iter().chain([round1, round2, round3]).collect();
+            let mut rounds = vec![];
+            if let Some(r_data) = opt_r_data.as_ref() {
+                rounds.push((r_data, vec![vec![zeta]]));
+            }
+            rounds.push((&trace_data, vec![vec![zeta, zeta_next]]));
+            rounds.push((&quotient_data, vec![vec![zeta]; quotient_degree])); // open every chunk at zeta
+            if let Some(aux_data) = aux_trace_data_opt.as_ref() {
+                rounds.push((aux_data, vec![vec![zeta, zeta_next]]));
+            }
 
             pcs.open(rounds, &mut challenger)
         });
@@ -361,8 +353,13 @@ where
             .map(|v| v[0].clone())
             .collect_vec();
 
-        let aux_trace_local = opened_values[quotient_idx + 1][0][0].clone();
-        let aux_trace_next = opened_values[quotient_idx + 1][0][1].clone();
+        let (aux_trace_local, aux_trace_next) = if aux_trace_data_opt.is_some() {
+            let aux_local = opened_values[quotient_idx + 1][0][0].clone();
+            let aux_next = opened_values[quotient_idx + 1][0][1].clone();
+            (Some(aux_local), Some(aux_next))
+        } else {
+            (None, None)
+        };
         let random = if is_random {
             Some(opened_values[0][0][0].clone())
         } else {
@@ -385,14 +382,18 @@ where
     } else {
         // let (opened_values, opening_proof)
         let (opened_values, opening_proofs): (Vec<_>, Vec<_>) = info_span!("open").in_scope(|| {
-            let round0 = opt_r_data.as_ref().map(|r_data| (r_data, vec![vec![zeta]]));
-            let round1 = (&trace_data, vec![vec![zeta, zeta_next]]);
-            let round2 = (&quotient_data, vec![vec![zeta]; quotient_degree]); // open every chunk at zeta
-            let round3 = (&aux_trace_data, vec![vec![zeta, zeta_next]]);
+            let mut rounds = vec![];
+            if let Some(r_data) = opt_r_data.as_ref() {
+                rounds.push((r_data, vec![vec![zeta]]));
+            }
+            rounds.push((&trace_data, vec![vec![zeta, zeta_next]]));
+            rounds.push((&quotient_data, vec![vec![zeta]; quotient_degree])); // open every chunk at zeta
+            if let Some(aux_data) = aux_trace_data_opt.as_ref() {
+                rounds.push((aux_data, vec![vec![zeta, zeta_next]]));
+            }
 
-            round0
+            rounds
                 .into_iter()
-                .chain([round1, round2, round3])
                 .map(|round| pcs.open(vec![round], &mut challenger))
                 .unzip()
         });
@@ -413,8 +414,14 @@ where
             .iter()
             .map(|v| v[0].clone())
             .collect_vec();
-        let aux_trace_local = opened_values[quotient_idx + 1][0][0][0].clone();
-        let aux_trace_next = opened_values[quotient_idx + 1][0][0][1].clone();
+
+        let (aux_trace_local, aux_trace_next) = if aux_trace_data_opt.is_some() {
+            let aux_local = opened_values[quotient_idx + 1][0][0][0].clone();
+            let aux_next = opened_values[quotient_idx + 1][0][0][1].clone();
+            (Some(aux_local), Some(aux_next))
+        } else {
+            (None, None)
+        };
 
         let random = if is_random {
             // Some(opened_values[0][0][0].clone())
@@ -448,7 +455,7 @@ fn quotient_values<SC, A, Mat>(
     trace_domain: Domain<SC>,
     quotient_domain: Domain<SC>,
     trace_on_quotient_domain: Mat,
-    aux_trace_on_quotient_domain: Mat,
+    aux_trace_on_quotient_domain: Option<Mat>,
     randomness: &[SC::Challenge],
     alpha: SC::Challenge,
     constraint_count: usize,
@@ -502,15 +509,17 @@ where
                 trace_on_quotient_domain.vertically_packed_row_pair(i_start, next_step),
                 width,
             );
-            let aux = RowMajorMatrix::new(
-                aux_trace_on_quotient_domain.vertically_packed_row_pair(i_start, next_step),
-                aux_trace_on_quotient_domain.width(), // fix
-            );
+            let aux = aux_trace_on_quotient_domain.as_ref().map(|aux_trace| {
+                RowMajorMatrix::new(
+                    aux_trace.vertically_packed_row_pair(i_start, next_step),
+                    aux_trace.width(),
+                )
+            });
 
             let accumulator = PackedChallenge::<SC>::ZERO;
             let mut folder = ProverConstraintFolder {
                 main: main.as_view(),
-                aux: aux.as_view(),
+                aux: aux.as_ref().map(|a| a.as_view()),
                 randomness,
                 public_values,
                 is_first_row,

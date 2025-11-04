@@ -1,7 +1,7 @@
 use core::borrow::Borrow;
 use core::marker::PhantomData;
 
-use p3_air::{Air, AirBuilder, BaseAir};
+use p3_air::{Air, AirBuilder, BaseAir, MultiPhaseBaseAir};
 use p3_field::{PrimeCharacteristicRing, PrimeField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -102,6 +102,34 @@ impl<
 {
     fn width(&self) -> usize {
         num_cols::<WIDTH, SBOX_DEGREE, SBOX_REGISTERS, HALF_FULL_ROUNDS, PARTIAL_ROUNDS>()
+    }
+}
+
+impl<
+    F: PrimeCharacteristicRing + Sync,
+    LinearLayers: Sync,
+    const WIDTH: usize,
+    const SBOX_DEGREE: u64,
+    const SBOX_REGISTERS: usize,
+    const HALF_FULL_ROUNDS: usize,
+    const PARTIAL_ROUNDS: usize,
+> MultiPhaseBaseAir<F>
+    for Poseidon2Air<
+        F,
+        LinearLayers,
+        WIDTH,
+        SBOX_DEGREE,
+        SBOX_REGISTERS,
+        HALF_FULL_ROUNDS,
+        PARTIAL_ROUNDS,
+    >
+{
+    fn aux_width(&self) -> usize {
+        0
+    }
+
+    fn num_randomness_in_base_field(&self) -> usize {
+        0
     }
 }
 

@@ -21,7 +21,7 @@ use tracing::instrument;
 pub(crate) fn check_constraints<F, A>(
     air: &A,
     main: &RowMajorMatrix<F>,
-    aux_trace: &RowMajorMatrix<F>,
+    aux_trace: &Option<RowMajorMatrix<F>>,
     aux_randomness: &[F],
     public_values: &Vec<F>,
 ) where
@@ -42,12 +42,17 @@ pub(crate) fn check_constraints<F, A>(
             RowMajorMatrixView::new_row(&*next),
         );
 
-        let aux_local = unsafe { aux_trace.row_slice_unchecked(row_index) };
-        let aux_next = unsafe { aux_trace.row_slice_unchecked(row_index_next) };
-        let aux = VerticalPair::new(
-            RowMajorMatrixView::new_row(&*aux_local),
-            RowMajorMatrixView::new_row(&*aux_next),
-        );
+        let (aux, aux_local, aux_next);
+        if let Some(aux_matrix) = aux_trace.as_ref() {
+            aux_local = unsafe { aux_matrix.row_slice_unchecked(row_index) };
+            aux_next = unsafe { aux_matrix.row_slice_unchecked(row_index_next) };
+            aux = Some(VerticalPair::new(
+                RowMajorMatrixView::new_row(&*aux_local),
+                RowMajorMatrixView::new_row(&*aux_next),
+            ));
+        } else {
+            aux = None;
+        }
 
         let mut builder = DebugConstraintBuilder {
             row_index,
@@ -75,7 +80,7 @@ pub struct DebugConstraintBuilder<'a, F: Field> {
     /// A view of the current and next row as a vertical pair.
     main: ViewPair<'a, F>,
     /// A view of the current and next aux row as a vertical pair.
-    aux: ViewPair<'a, F>,
+    aux: Option<ViewPair<'a, F>>,
     /// randomness that is used to compute aux trace
     aux_randomness: &'a [F],
     /// The public values provided for constraint validation (e.g. inputs or outputs).
@@ -150,7 +155,7 @@ impl<F: Field> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F> {
 impl<F: Field> AirBuilderWithLogUp for DebugConstraintBuilder<'_, F> {
     fn logup_permutation(&self) -> <Self as AirBuilder>::M {
         ark_std::println!("debug aux: {:?}", self.aux);
-        self.aux
+        self.aux.expect("logup_permutation called but aux trace is None - AIR should check num_randomness > 0 before using logup")
     }
 
     fn logup_permutation_randomness(&self) -> Vec<Self::Expr> {
@@ -243,6 +248,7 @@ mod tests {
             let xi = main.top.get(0, 0).unwrap();
             let yi = main.top.get(0, 1).unwrap();
 
+            let aux = aux.expect("test expects aux trace");
             for i in 0..4 {
                 let ti = aux.top.get(0, i).unwrap();
                 let wi = aux.top.get(0, i + 4).unwrap();
@@ -381,7 +387,7 @@ mod tests {
         check_constraints(
             &air,
             &main,
-            &aux,
+            &Some(aux),
             &aux_randomness.as_basis_coefficients_slice(),
             &vec![BabyBear::new(len), BabyBear::new(1)],
         );
@@ -421,7 +427,7 @@ mod tests {
         check_constraints(
             &air,
             &main,
-            &aux,
+            &Some(aux),
             &aux_randomness_bases,
             &vec![BabyBear::new(len), BabyBear::new(1)],
         );
@@ -460,7 +466,7 @@ mod tests {
         check_constraints(
             &air,
             &main,
-            &aux,
+            &Some(aux),
             aux_randomness_bases,
             &vec![BabyBear::new(len), BabyBear::new(len)],
         );
@@ -501,7 +507,7 @@ mod tests {
         check_constraints(
             &air,
             &main,
-            &aux,
+            &Some(aux),
             aux_randomness_bases,
             &vec![BabyBear::new(len), BabyBear::new(len)],
         );
@@ -534,14 +540,12 @@ mod tests {
             .as_ref(),
         )
         .unwrap();
-
-        // let aux_randomness = BabyBear::new(500);
         let aux = gen_aux(&main_col, &aux_randomness);
 
         check_constraints(
             &air,
             &main,
-            &aux,
+            &Some(aux),
             &aux_randomness.as_basis_coefficients_slice(),
             &vec![BabyBear::new(len), BabyBear::new(1)],
         );

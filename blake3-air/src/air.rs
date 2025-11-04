@@ -3,7 +3,7 @@ use core::borrow::Borrow;
 
 use itertools::izip;
 use p3_air::utils::{add2, add3, pack_bits_le, xor_32_shift};
-use p3_air::{Air, AirBuilder, BaseAir};
+use p3_air::{Air, AirBuilder, BaseAir, MultiPhaseBaseAir};
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -227,6 +227,16 @@ impl Blake3Air {
 impl<F> BaseAir<F> for Blake3Air {
     fn width(&self) -> usize {
         NUM_BLAKE3_COLS
+    }
+}
+
+impl<F> MultiPhaseBaseAir<F> for Blake3Air {
+    fn aux_width(&self) -> usize {
+        0
+    }
+
+    fn num_randomness_in_base_field(&self) -> usize {
+        0
     }
 }
 

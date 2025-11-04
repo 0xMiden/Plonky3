@@ -1,7 +1,7 @@
 use core::array;
 use core::borrow::Borrow;
 
-use p3_air::{Air, AirBuilder, BaseAir};
+use p3_air::{Air, AirBuilder, BaseAir, MultiPhaseBaseAir};
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -32,6 +32,16 @@ impl KeccakAir {
 impl<F> BaseAir<F> for KeccakAir {
     fn width(&self) -> usize {
         NUM_KECCAK_COLS
+    }
+}
+
+impl<F> MultiPhaseBaseAir<F> for KeccakAir {
+    fn aux_width(&self) -> usize {
+        0
+    }
+
+    fn num_randomness_in_base_field(&self) -> usize {
+        0
     }
 }
 

@@ -17,7 +17,7 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     /// The matrix containing rows on which the constraint polynomial is to be evaluated
     pub main: RowMajorMatrixView<'a, PackedVal<SC>>,
     /// Optional: the matrix containing rows on which the aux constraint polynomial is to be evaluated
-    pub aux: RowMajorMatrixView<'a, PackedVal<SC>>,
+    pub aux: Option<RowMajorMatrixView<'a, PackedVal<SC>>>,
     /// Optional: the randomness used to compute the aux tract
     pub randomness: &'a [SC::Challenge],
     /// Public inputs to the AIR
@@ -48,7 +48,7 @@ pub struct VerifierConstraintFolder<'a, SC: StarkGenericConfig> {
     /// Pair of consecutive rows from the committed polynomial evaluations
     pub main: ViewPair<'a, SC::Challenge>,
     /// Optional: pair of consecutive rows from the committed polynomial evaluations
-    pub aux: ViewPair<'a, SC::Challenge>,
+    pub aux: Option<ViewPair<'a, SC::Challenge>>,
     /// Optional: the randomness used to compute the aux tract
     pub randomness: &'a [SC::Challenge],
     /// Public values that are inputs to the computation
@@ -130,21 +130,17 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverConstraintFold
 impl<SC: StarkGenericConfig> AirBuilderWithLogUp for ProverConstraintFolder<'_, SC> {
     fn logup_permutation(&self) -> <Self as AirBuilder>::M {
         ark_std::println!("prover aux: {:?}", self.aux);
-        self.aux
+        self.aux.expect("logup_permutation called but aux trace is None - AIR should check num_randomness > 0 before using logup")
     }
     fn logup_permutation_randomness(&self) -> Vec<Self::Expr> {
+        if self.randomness.is_empty() {
+            panic!("logup_permutation_randomness called but randomness is empty - AIR should check num_randomness > 0 before using logup");
+        }
         self.randomness[0]
             .as_basis_coefficients_slice()
             .iter()
             .map(|&t| t.into())
             .collect()
-
-        // self.randomness
-        //     .iter()
-        //     .flat_map(|r| r.as_basis_coefficients_slice())
-        //     .cloned()
-        //     .map(|r| r.into())
-        //     .collect()
     }
 }
 
@@ -195,19 +191,16 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for VerifierConstraintFo
 impl<SC: StarkGenericConfig> AirBuilderWithLogUp for VerifierConstraintFolder<'_, SC> {
     fn logup_permutation(&self) -> <Self as AirBuilder>::M {
         ark_std::println!("verifier aux: {:?}", self.aux);
-        self.aux
+        self.aux.expect("logup_permutation called but aux trace is None - AIR should check num_randomness > 0 before using logup")
     }
     fn logup_permutation_randomness(&self) -> Vec<Self::Expr> {
+        if self.randomness.is_empty() {
+            panic!("logup_permutation_randomness called but randomness is empty - AIR should check num_randomness > 0 before using logup");
+        }
         self.randomness[0]
             .as_basis_coefficients_slice()
             .iter()
             .map(|&t| t.into())
             .collect()
-
-        // self.randomness
-        //     .iter()
-        //     .flat_map(|r| r.as_basis_coefficients_slice().iter())
-        //     .map(|&t| t.into())
-        //     .collect()
     }
 }

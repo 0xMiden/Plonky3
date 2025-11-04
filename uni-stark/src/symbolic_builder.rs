@@ -76,7 +76,7 @@ where
 pub struct SymbolicAirBuilder<F: Field> {
     preprocessed: RowMajorMatrix<SymbolicVariable<F>>,
     main: RowMajorMatrix<SymbolicVariable<F>>,
-    aux: RowMajorMatrix<SymbolicVariable<F>>,
+    aux: Option<RowMajorMatrix<SymbolicVariable<F>>>,
     aux_randomness: Vec<SymbolicVariable<F>>,
     public_values: Vec<SymbolicVariable<F>>,
     constraints: Vec<SymbolicExpression<F>>,
@@ -103,12 +103,17 @@ impl<F: Field> SymbolicAirBuilder<F> {
                 (0..width).map(move |index| SymbolicVariable::new(Entry::Main { offset }, index))
             })
             .collect();
-        let aux_values = [0, 1] // Aux trace also use consecutive rows for LogUp based permutation check
-            .into_iter()
-            .flat_map(|offset| {
-                (0..aux_width).map(move |index| SymbolicVariable::new(Entry::Aux { offset }, index))
-            })
-            .collect();
+        let aux = if aux_width > 0 {
+            let aux_values = [0, 1] // Aux trace also use consecutive rows for LogUp based permutation check
+                .into_iter()
+                .flat_map(|offset| {
+                    (0..aux_width).map(move |index| SymbolicVariable::new(Entry::Aux { offset }, index))
+                })
+                .collect();
+            Some(RowMajorMatrix::new(aux_values, aux_width))
+        } else {
+            None
+        };
         let randomness = Self::sample_randomness(num_randomness);
         let public_values = (0..num_public_values)
             .map(move |index| SymbolicVariable::new(Entry::Public, index))
@@ -116,7 +121,7 @@ impl<F: Field> SymbolicAirBuilder<F> {
         Self {
             preprocessed: RowMajorMatrix::new(prep_values, preprocessed_width),
             main: RowMajorMatrix::new(main_values, width),
-            aux: RowMajorMatrix::new(aux_values, aux_width),
+            aux,
             aux_randomness: randomness,
             public_values,
             constraints: vec![],
@@ -177,7 +182,7 @@ impl<F: Field> AirBuilderWithPublicValues for SymbolicAirBuilder<F> {
 impl<F: Field> AirBuilderWithLogUp for SymbolicAirBuilder<F> {
     fn logup_permutation(&self) -> <Self as AirBuilder>::M {
         ark_std::println!("symbolic aux: {:?}", self.aux);
-        self.aux.clone()
+        self.aux.clone().expect("logup_permutation called but aux trace is None - AIR should check num_randomness > 0 before using logup")
     }
     fn logup_permutation_randomness(&self) -> Vec<Self::Expr> {
         self.aux_randomness.iter().map(|v| (*v).into()).collect()

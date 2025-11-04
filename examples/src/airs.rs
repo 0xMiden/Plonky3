@@ -1,4 +1,4 @@
-use p3_air::{Air, AirBuilder, BaseAir};
+use p3_air::{Air, AirBuilder, BaseAir, MultiPhaseBaseAir};
 use p3_blake3_air::Blake3Air;
 use p3_challenger::FieldChallenger;
 use p3_commit::PolynomialSpace;
@@ -91,6 +91,36 @@ impl<
             Self::Poseidon2(p2_air) => p2_air.width(),
             Self::Keccak(k_air) => <KeccakAir as BaseAir<F>>::width(k_air),
         }
+    }
+}
+
+impl<
+    F: PrimeCharacteristicRing + Sync,
+    LinearLayers: Sync,
+    const WIDTH: usize,
+    const SBOX_DEGREE: u64,
+    const SBOX_REGISTERS: usize,
+    const HALF_FULL_ROUNDS: usize,
+    const PARTIAL_ROUNDS: usize,
+    const VECTOR_LEN: usize,
+> MultiPhaseBaseAir<F>
+    for ProofObjective<
+        F,
+        LinearLayers,
+        WIDTH,
+        SBOX_DEGREE,
+        SBOX_REGISTERS,
+        HALF_FULL_ROUNDS,
+        PARTIAL_ROUNDS,
+        VECTOR_LEN,
+    >
+{
+    fn aux_width(&self) -> usize {
+        0
+    }
+
+    fn num_randomness_in_base_field(&self) -> usize {
+        0
     }
 }
 

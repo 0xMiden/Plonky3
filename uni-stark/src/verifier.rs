@@ -92,24 +92,6 @@ where
         return Err(VerificationError::RandomizationError);
     }
 
-    let air_width = A::width(air);
-    let valid_shape = opened_values.trace_local.len() == air_width
-        && opened_values.trace_next.len() == air_width
-        && opened_values.quotient_chunks.len() == quotient_degree
-        && opened_values
-            .quotient_chunks
-            .iter()
-            .all(|qc| qc.len() == SC::Challenge::DIMENSION)
-        // We've already checked that opened_values.random is present if and only if ZK is enabled.
-        && if let Some(r_comm) = &opened_values.random {
-            r_comm.len() == SC::Challenge::DIMENSION
-        } else {
-            true
-        };
-    if !valid_shape {
-        return Err(VerificationError::InvalidProofShape);
-    }
-
     // Observe the instance.
     challenger.observe(Val::<SC>::from_usize(proof.degree_bits));
     challenger.observe(Val::<SC>::from_usize(proof.degree_bits - config.is_zk()));
@@ -124,14 +106,48 @@ where
 
     // begin processing aux trace
     let num_randomness = air.num_randomness_in_base_field() / SC::Challenge::DIMENSION;
+
+    let air_width = A::width(air);
+    let aux_width = air.aux_width();
+    let valid_shape = opened_values.trace_local.len() == air_width
+        && opened_values.trace_next.len() == air_width
+        && opened_values.quotient_chunks.len() == quotient_degree
+        && opened_values
+            .quotient_chunks
+            .iter()
+            .all(|qc| qc.len() == SC::Challenge::DIMENSION)
+        // We've already checked that opened_values.random is present if and only if ZK is enabled.
+        && if let Some(r_comm) = &opened_values.random {
+            r_comm.len() == SC::Challenge::DIMENSION
+        } else {
+            true
+        }
+        // Check aux trace shape
+        && if num_randomness > 0 {
+            opened_values.aux_trace_local.as_ref().map_or(false, |v| v.len() == aux_width)
+                && opened_values.aux_trace_next.as_ref().map_or(false, |v| v.len() == aux_width)
+        } else {
+            opened_values.aux_trace_local.is_none() && opened_values.aux_trace_next.is_none()
+        };
+    if !valid_shape {
+        return Err(VerificationError::InvalidProofShape);
+    }
     let randomness = if num_randomness != 0 {
         let randomness: Vec<SC::Challenge> = (0..num_randomness)
             .map(|_| challenger.sample_algebra_element())
             .collect();
 
-        challenger.observe(commitments.aux.clone());
+        if let Some(aux_commit) = &commitments.aux {
+            challenger.observe(aux_commit.clone());
+        } else {
+            return Err(VerificationError::InvalidProofShape);
+        }
         randomness
     } else {
+        // No aux trace expected
+        if commitments.aux.is_some() {
+            return Err(VerificationError::InvalidProofShape);
+        }
         vec![]
     };
 
@@ -193,17 +209,25 @@ where
                 .map(|(domain, values)| (*domain, vec![(zeta, values.clone())]))
                 .collect_vec(),
             ),
-            (
-                commitments.aux.clone(),
+        ]);
+
+        // Add aux trace verification if present
+        if let Some(aux_commit) = &commitments.aux {
+            let aux_local = opened_values.aux_trace_local.as_ref()
+                .ok_or(VerificationError::InvalidProofShape)?;
+            let aux_next = opened_values.aux_trace_next.as_ref()
+                .ok_or(VerificationError::InvalidProofShape)?;
+            coms_to_verify.push((
+                aux_commit.clone(),
                 vec![(
                     trace_domain,
                     vec![
-                        (zeta, opened_values.aux_trace_local.clone()),
-                        (zeta_next, opened_values.aux_trace_next.clone()),
+                        (zeta, aux_local.clone()),
+                        (zeta_next, aux_next.clone()),
                     ],
                 )],
-            ),
-        ]);
+            ));
+        }
 
         pcs.verify(coms_to_verify, &opening_proofs[0], &mut challenger)
             .map_err(VerificationError::InvalidOpeningArgument)?;
@@ -266,26 +290,34 @@ where
         )
         .map_err(VerificationError::InvalidOpeningArgument)?;
 
-        ark_std::println!("aux opening is fine");
+        ark_std::println!("quotient opening is fine");
         opening_proofs_index += 1;
 
-        pcs.verify(
-            vec![(
-                commitments.aux.clone(),
+        // Verify aux trace opening if present
+        if let Some(aux_commit) = &commitments.aux {
+            let aux_local = opened_values.aux_trace_local.as_ref()
+                .ok_or(VerificationError::InvalidProofShape)?;
+            let aux_next = opened_values.aux_trace_next.as_ref()
+                .ok_or(VerificationError::InvalidProofShape)?;
+
+            pcs.verify(
                 vec![(
-                    trace_domain,
-                    vec![
-                        (zeta, opened_values.aux_trace_local.clone()),
-                        (zeta_next, opened_values.aux_trace_next.clone()),
-                    ],
+                    aux_commit.clone(),
+                    vec![(
+                        trace_domain,
+                        vec![
+                            (zeta, aux_local.clone()),
+                            (zeta_next, aux_next.clone()),
+                        ],
+                    )],
                 )],
-            )],
-            &opening_proofs[opening_proofs_index],
-            &mut challenger,
-        )
-        .map_err(VerificationError::InvalidOpeningArgument)?;
-        ark_std::println!("aux opening is fine");
-        // opening_proofs_index += 1;
+                &opening_proofs[opening_proofs_index],
+                &mut challenger,
+            )
+            .map_err(VerificationError::InvalidOpeningArgument)?;
+            ark_std::println!("aux opening is fine");
+            // opening_proofs_index += 1;
+        }
     }
 
     let zps = quotient_chunks_domains
@@ -328,10 +360,13 @@ where
         RowMajorMatrixView::new_row(&opened_values.trace_local),
         RowMajorMatrixView::new_row(&opened_values.trace_next),
     );
-    let aux = VerticalPair::new(
-        RowMajorMatrixView::new_row(&opened_values.aux_trace_local),
-        RowMajorMatrixView::new_row(&opened_values.aux_trace_next),
-    );
+    let aux = match (&opened_values.aux_trace_local, &opened_values.aux_trace_next) {
+        (Some(local), Some(next)) => Some(VerticalPair::new(
+            RowMajorMatrixView::new_row(local),
+            RowMajorMatrixView::new_row(next),
+        )),
+        _ => None,
+    };
 
     let mut folder = VerifierConstraintFolder {
         main,
