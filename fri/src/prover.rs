@@ -191,7 +191,7 @@ where
         // if the folding factor = 2 then
         //      `f_{i + 1}'(x^2) = (f_i(x) + f_i(-x))/2 + beta_i (f_i(x) - f_i(-x))/2x`
         // note the folding factor can be an arbitrary power of 2
-        folded = folding.fold_matrix_arbitrary(beta, leaves.as_view(), folding_factor);
+        folded = folding.fold_matrix(beta, leaves.as_view(), folding_factor);
 
         data.push(prover_data);
 

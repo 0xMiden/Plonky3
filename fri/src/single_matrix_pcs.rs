@@ -274,14 +274,11 @@ where
         );
 
         // Write all evaluations to challenger
-        for (_, round) in &commitments_with_opening_points {
-            for (_, mat) in round {
-                for (_, point) in mat {
-                    point
-                        .iter()
-                        .for_each(|&opening| challenger.observe_algebra_element(opening));
-                }
-            }
+        // Since we have exactly one commitment with one matrix, directly access it
+        for (_, openings) in &commitments_with_opening_points[0].1[0].1 {
+            openings
+                .iter()
+                .for_each(|&opening| challenger.observe_algebra_element(opening));
         }
 
         let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding(PhantomData);

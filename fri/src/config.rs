@@ -73,49 +73,18 @@ pub trait FriFoldingStrategy<F: Field, EF: ExtensionField<F>> {
     fn extra_query_index_bits(&self) -> usize;
 
     /// Fold a row, returning a single column.
-    /// Right now the input row will always be 2 columns wide,
-    /// but we may support higher folding arity in the future.
+    /// Supporting arbitrary folding width that is a power of 2.
     fn fold_row(
         &self,
         index: usize,
         log_height: usize,
         beta: EF,
         evals: impl Iterator<Item = EF>,
+        folding_factor: usize,
     ) -> EF;
 
-    /// Fold a row, returning a single column.
-    /// Supporting arbitrary folding width that is a power of 2.
-    fn fold_row_arbitrary(
-        &self,
-        index: usize,
-        log_height: usize,
-        beta: EF,
-        evals: impl Iterator<Item = EF>,
-        folding_factor: usize,
-    ) -> EF {
-        if folding_factor == 2 {
-            self.fold_row(index, log_height, beta, evals)
-        } else {
-            panic!("folding for parameters != 2 is not implemented")
-        }
-    }
-
     /// Same as applying fold_row to every row, possibly faster.
-    fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, m: M) -> Vec<EF>;
-
-    /// Same as applying fold_row to every row, possibly faster.
-    fn fold_matrix_arbitrary<M: Matrix<EF>>(
-        &self,
-        beta: EF,
-        m: M,
-        folding_factor: usize,
-    ) -> Vec<EF> {
-        if folding_factor == 2 {
-            self.fold_matrix(beta, m)
-        } else {
-            panic!("folding for parameters != 2 is not implemented")
-        }
-    }
+    fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, m: M, folding_factor: usize) -> Vec<EF>;
 }
 
 /// Creates a minimal set of `FriParameters` for testing purposes.

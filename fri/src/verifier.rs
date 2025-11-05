@@ -300,7 +300,7 @@ where
             .map_err(FriError::CommitPhaseMmcsError)?;
 
         // Fold all evaluations in the group to get the evaluation of the parent FRI node.
-        folded_eval = folding.fold_row_arbitrary(
+        folded_eval = folding.fold_row(
             group_index,
             log_folded_height,
             beta,

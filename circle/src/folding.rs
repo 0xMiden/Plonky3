@@ -39,11 +39,12 @@ impl<F: ComplexExtendable, EF: ExtensionField<F>, InputProof, InputError: Debug>
         log_folded_height: usize,
         beta: EF,
         evals: impl Iterator<Item = EF>,
+        _folding_factor: usize,
     ) -> EF {
         fold_x_row(index, log_folded_height, beta, evals)
     }
 
-    fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, m: M) -> Vec<EF> {
+    fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, m: M, _folding_factor: usize) -> Vec<EF> {
         fold_x(beta, m)
     }
 }
