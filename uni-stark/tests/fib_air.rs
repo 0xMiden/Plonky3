@@ -28,7 +28,6 @@ impl<F> BaseAir<F> for FibonacciAir {
     }
 }
 
-
 impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();

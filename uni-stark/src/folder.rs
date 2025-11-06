@@ -1,11 +1,10 @@
 use alloc::vec::Vec;
 
-
 use p3_air::{AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder};
 use p3_field::{BasedVectorSpace, PackedField, PrimeCharacteristicRing};
+use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::ViewPair;
-use p3_matrix::Matrix;
 
 use crate::{PackedChallenge, PackedVal, StarkGenericConfig, Val};
 
@@ -79,7 +78,10 @@ impl<'a, SC: StarkGenericConfig> EfAuxView<'a, SC> {
         #[cfg(debug_assertions)]
         {
             let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
-            debug_assert!(inner.width() % d == 0, "aux trace width must be a multiple of EF dimension");
+            debug_assert!(
+                inner.width() % d == 0,
+                "aux trace width must be a multiple of EF dimension"
+            );
         }
         Self { inner }
     }
@@ -106,7 +108,10 @@ impl<'a, SC: StarkGenericConfig> VerifierEfAuxView<'a, SC> {
         #[cfg(debug_assertions)]
         {
             let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
-            debug_assert!(inner.width() % d == 0, "aux trace width must be a multiple of EF dimension");
+            debug_assert!(
+                inner.width() % d == 0,
+                "aux trace width must be a multiple of EF dimension"
+            );
         }
         Self { inner }
     }
@@ -126,7 +131,11 @@ impl<'a, SC: StarkGenericConfig> Matrix<SC::Challenge> for VerifierEfAuxView<'a,
         if r >= 2 || c >= self.width() {
             return None;
         }
-        let row = if r == 0 { self.inner.top } else { self.inner.bottom };
+        let row = if r == 0 {
+            self.inner.top
+        } else {
+            self.inner.bottom
+        };
         let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
         // Recombine EF element at column `c` from its `d` base limbs using the canonical basis.
         let mut acc = SC::Challenge::ZERO;
@@ -144,7 +153,11 @@ impl<'a, SC: StarkGenericConfig> Matrix<SC::Challenge> for VerifierEfAuxView<'a,
         }
         let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
         let ef_w = self.width();
-        let row = if r == 0 { self.inner.top } else { self.inner.bottom };
+        let row = if r == 0 {
+            self.inner.top
+        } else {
+            self.inner.bottom
+        };
         // Recombine every EF column in this row from its `d` base limbs.
         let mut v: alloc::vec::Vec<SC::Challenge> = alloc::vec::Vec::with_capacity(ef_w);
         for ec in 0..ef_w {
@@ -267,9 +280,9 @@ impl<SC: StarkGenericConfig> ExtensionBuilder for ProverConstraintFolder<'_, SC>
     where
         I: Into<Self::ExprEF>,
     {
-            let alpha_power = self.alpha_powers[self.constraint_index];
-            self.accumulator += Into::<PackedChallenge<SC>>::into(alpha_power) * x.into();
-            self.constraint_index += 1;
+        let alpha_power = self.alpha_powers[self.constraint_index];
+        self.accumulator += Into::<PackedChallenge<SC>>::into(alpha_power) * x.into();
+        self.constraint_index += 1;
     }
 }
 

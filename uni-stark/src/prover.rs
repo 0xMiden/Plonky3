@@ -22,7 +22,8 @@ use crate::{
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove_single_matrix_pcs<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>> + p3_air::BaseAir<Val<SC>>,
+    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>>
+        + p3_air::BaseAir<Val<SC>>,
     #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
@@ -41,7 +42,8 @@ where
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>> + p3_air::BaseAir<Val<SC>>,
+    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>>
+        + p3_air::BaseAir<Val<SC>>,
     #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
@@ -60,7 +62,8 @@ where
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 fn prove_internal<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>> + p3_air::BaseAir<Val<SC>>,
+    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>>
+        + p3_air::BaseAir<Val<SC>>,
     #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
@@ -175,39 +178,44 @@ where
     // begin aux trace generation (optional)
     let num_randomness = config.aux_challenges();
 
-    let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness, _randomness_base) = if num_randomness > 0 {
-        let randomness: Vec<SC::Challenge> = (0..num_randomness)
-            .map(|_| challenger.sample_algebra_element())
-            .collect();
+    let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness, _randomness_base) =
+        if num_randomness > 0 {
+            let randomness: Vec<SC::Challenge> = (0..num_randomness)
+                .map(|_| challenger.sample_algebra_element())
+                .collect();
 
-        // Ask config (VM) to build the aux trace if available; otherwise, fall back to legacy LogUp generator.
-        let aux_trace_opt = config
-            .build_aux_trace(&trace, &randomness)
-            .or_else(|| Some(generate_logup_trace::<SC::Challenge, _>(&trace, &randomness[0])));
+            // Ask config (VM) to build the aux trace if available; otherwise, fall back to legacy LogUp generator.
+            let aux_trace_opt = config.build_aux_trace(&trace, &randomness).or_else(|| {
+                Some(generate_logup_trace::<SC::Challenge, _>(
+                    &trace,
+                    &randomness[0],
+                ))
+            });
 
-        let aux_trace = aux_trace_opt.expect("aux_challenges > 0 but no aux trace was provided or generated");
+            let aux_trace = aux_trace_opt
+                .expect("aux_challenges > 0 but no aux trace was provided or generated");
 
-        let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
-            .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
+            let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
+                .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
 
-        challenger.observe(aux_trace_commit.clone());
+            challenger.observe(aux_trace_commit.clone());
 
-        let randomness_base = randomness
-            .iter()
-            .flat_map(|r| r.as_basis_coefficients_slice())
-            .cloned()
-            .collect_vec();
+            let randomness_base = randomness
+                .iter()
+                .flat_map(|r| r.as_basis_coefficients_slice())
+                .cloned()
+                .collect_vec();
 
-        (
-            Some(aux_trace_commit),
-            Some(aux_trace),
-            Some(aux_trace_data),
-            randomness,
-            randomness_base,
-        )
-    } else {
-        (None, None, None, vec![], vec![])
-    };
+            (
+                Some(aux_trace_commit),
+                Some(aux_trace),
+                Some(aux_trace_data),
+                randomness,
+                randomness_base,
+            )
+        } else {
+            (None, None, None, vec![], vec![])
+        };
 
     #[cfg(debug_assertions)]
     crate::check_constraints::check_constraints::<Val<SC>, SC::Challenge, _>(

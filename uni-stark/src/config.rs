@@ -1,5 +1,6 @@
 use core::marker::PhantomData;
 
+use alloc::boxed::Box;
 use p3_challenger::{CanObserve, CanSample, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{ExtensionField, Field};
@@ -21,6 +22,10 @@ pub type PackedVal<SC> = <Val<SC> as Field>::Packing;
 
 pub type PackedChallenge<SC> =
     <<SC as StarkGenericConfig>::Challenge as ExtensionField<Val<SC>>>::ExtensionPacking;
+
+/// An aux builder takes in a main matrix and a randomness, and generate a aux matrix.
+pub type AuxBuilder<Val, Challenge> =
+    dyn Fn(&RowMajorMatrix<Val>, &[Challenge]) -> RowMajorMatrix<Val> + Send + Sync;
 
 pub trait StarkGenericConfig {
     /// The PCS used to commit to trace polynomials.
@@ -55,17 +60,26 @@ pub trait StarkGenericConfig {
     /// Return None to indicate no aux or to fall back to legacy behavior.
     fn build_aux_trace(
         &self,
-        _main: &RowMajorMatrix<
-            <<Self::Pcs as Pcs<Self::Challenge, Self::Challenger>>::Domain as PolynomialSpace>::Val,
-        >,
+        _main: &RowMajorMatrix<Val<Self>>,
         _challenges: &[Self::Challenge],
-    ) -> Option<
-        RowMajorMatrix<
-            <<Self::Pcs as Pcs<Self::Challenge, Self::Challenger>>::Domain as PolynomialSpace>::Val,
-        >,
-    > {
+    ) -> Option<RowMajorMatrix<Val<Self>>> {
         None
     }
+
+    /// Load an aux builder.
+    ///
+    /// An aux builder takes in a main matrix and a randomness, and generate a aux matrix.
+    fn with_aux_builder<Builder>(
+        self,
+        aux_challenges: usize,
+        aux_width: usize,
+        builder: Builder,
+    ) -> Self
+    where
+        Builder: Fn(&RowMajorMatrix<Val<Self>>, &[Self::Challenge]) -> RowMajorMatrix<Val<Self>>
+            + Send
+            + Sync
+            + 'static;
 
     /// Optional: width of the aux trace when flattened in base field elements.
     fn aux_width_in_base_field(&self) -> usize {
@@ -76,45 +90,39 @@ pub trait StarkGenericConfig {
 pub struct StarkConfig<Pcs, Challenge, Challenger>
 where
     Pcs: p3_commit::Pcs<Challenge, Challenger>,
-    Challenge:
-        ExtensionField<<<Pcs as p3_commit::Pcs<Challenge, Challenger>>::Domain as PolynomialSpace>::Val>,
+    Challenge: ExtensionField<
+        <<Pcs as p3_commit::Pcs<Challenge, Challenger>>::Domain as PolynomialSpace>::Val,
+    >,
 {
     /// The PCS used to commit polynomials and prove opening proofs.
     pcs: Pcs,
     /// An initialised instance of the challenger.
     challenger: Challenger,
-    _phantom: PhantomData<Challenge>,
     /// Optional: number of EF challenges used to build aux trace.
     aux_challenges: usize,
     /// Optional: aux width (flattened in base field elements).
     aux_width: usize,
     /// Optional: aux trace builder callback.
-    aux_builder: Option<
-        alloc::boxed::Box<
-            dyn Fn(
-                    &RowMajorMatrix<<Pcs::Domain as PolynomialSpace>::Val>,
-                    &[Challenge],
-                ) -> RowMajorMatrix<<Pcs::Domain as PolynomialSpace>::Val>
-                + Send
-                + Sync,
-        >,
-    >,
+    aux_builder: Option<Box<AuxBuilder<<Pcs::Domain as PolynomialSpace>::Val, Challenge>>>,
+
+    _phantom: PhantomData<Challenge>,
 }
 
 impl<Pcs, Challenge, Challenger> StarkConfig<Pcs, Challenge, Challenger>
 where
     Pcs: p3_commit::Pcs<Challenge, Challenger>,
-    Challenge:
-        ExtensionField<<<Pcs as p3_commit::Pcs<Challenge, Challenger>>::Domain as PolynomialSpace>::Val>,
+    Challenge: ExtensionField<
+        <<Pcs as p3_commit::Pcs<Challenge, Challenger>>::Domain as PolynomialSpace>::Val,
+    >,
 {
     pub const fn new(pcs: Pcs, challenger: Challenger) -> Self {
         Self {
             pcs,
             challenger,
-            _phantom: PhantomData,
             aux_challenges: 0,
             aux_width: 0,
             aux_builder: None,
+            _phantom: PhantomData,
         }
     }
 }
@@ -149,23 +157,14 @@ where
         main: &RowMajorMatrix<<Pcs::Domain as PolynomialSpace>::Val>,
         challenges: &[Challenge],
     ) -> Option<RowMajorMatrix<<Pcs::Domain as PolynomialSpace>::Val>> {
-        self.aux_builder
-            .as_ref()
-            .map(|f| (f)(main, challenges))
+        self.aux_builder.as_ref().map(|f| (f)(main, challenges))
     }
 
     fn aux_width_in_base_field(&self) -> usize {
         self.aux_width
     }
-}
 
-impl<Pcs, Challenge, Challenger> StarkConfig<Pcs, Challenge, Challenger>
-where
-    Pcs: p3_commit::Pcs<Challenge, Challenger>,
-    Challenge:
-        ExtensionField<<<Pcs as p3_commit::Pcs<Challenge, Challenger>>::Domain as PolynomialSpace>::Val>,
-{
-    pub fn with_aux_builder<F>(mut self, aux_challenges: usize, aux_width: usize, f: F) -> Self
+    fn with_aux_builder<F>(mut self, aux_challenges: usize, aux_width: usize, f: F) -> Self
     where
         F: Fn(
                 &RowMajorMatrix<<Pcs::Domain as PolynomialSpace>::Val>,

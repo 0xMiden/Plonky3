@@ -24,7 +24,6 @@ pub trait BaseAirWithPublicValues<F>: BaseAir<F> {
     }
 }
 
-
 /// An algebraic intermediate representation (AIR) definition.
 ///
 /// Contains an evaluation function for computing the constraints of the AIR.

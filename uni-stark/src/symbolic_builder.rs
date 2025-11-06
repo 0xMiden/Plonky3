@@ -1,11 +1,11 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+use p3_air::BaseAir;
 use p3_air::{
     Air, AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder,
     PermutationAirBuilder,
 };
-use p3_air::BaseAir;
 use p3_field::Field;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_util::log2_ceil_usize;
@@ -64,10 +64,10 @@ where
         aux_width_in_base_field,
         num_randomness_in_base_field,
     )
-        .iter()
-        .map(|c| c.degree_multiple())
-        .max()
-        .unwrap_or(0)
+    .iter()
+    .map(|c| c.degree_multiple())
+    .max()
+    .unwrap_or(0)
 }
 
 #[instrument(name = "evaluate constraints symbolically", skip_all, level = "debug")]

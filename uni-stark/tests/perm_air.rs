@@ -1,6 +1,8 @@
 use core::borrow::Borrow;
 
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, ExtensionBuilder, PermutationAirBuilder};
+use p3_air::{
+    Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, ExtensionBuilder, PermutationAirBuilder,
+};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
@@ -13,7 +15,8 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_uni_stark::{
-    StarkConfig, prove, prove_single_matrix_pcs, verify, verify_single_matrix_pcs,
+    StarkConfig, StarkGenericConfig, prove, prove_single_matrix_pcs, verify,
+    verify_single_matrix_pcs,
 };
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -26,7 +29,6 @@ impl<F> BaseAir<F> for FibPermAir {
         3
     }
 }
-
 
 impl<AB: AirBuilderWithPublicValues + PermutationAirBuilder> Air<AB> for FibPermAir
 where
@@ -193,9 +195,13 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
     let pcs = Pcs::new(dft, val_mmcs, fri_params);
     let challenger = Challenger::new(perm);
 
-    let config = MyConfig::new(pcs, challenger).with_aux_builder(1, 12, |main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
-        p3_uni_stark::generate_logup_trace::<Challenge, _>(main, &challenges[0])
-    });
+    let config = MyConfig::new(pcs, challenger).with_aux_builder(
+        1,
+        12,
+        |main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
+            p3_uni_stark::generate_logup_trace::<Challenge, _>(main, &challenges[0])
+        },
+    );
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
     let proof = prove(&config, &FibPermAir {}, trace.clone(), &pis);
@@ -228,8 +234,8 @@ fn test_public_value_deg8() {
 
 // Degree-5 extension variant
 fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
-    use p3_field::extension::BinomialExtensionField;
     use p3_commit::ExtensionMmcs;
+    use p3_field::extension::BinomialExtensionField;
     use p3_fri::TwoAdicFriPcs;
     use p3_uni_stark::StarkConfig;
 
@@ -251,9 +257,13 @@ fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
     let challenger = Challenger::new(perm);
 
     let aux_width = 3 * 5; // three EF columns flattened
-    let config = MyConfig5::new(pcs, challenger).with_aux_builder(1, aux_width, |main: &RowMajorMatrix<Val>, challenges: &[Challenge5]| {
-        p3_uni_stark::generate_logup_trace::<Challenge5, _>(main, &challenges[0])
-    });
+    let config = MyConfig5::new(pcs, challenger).with_aux_builder(
+        1,
+        aux_width,
+        |main: &RowMajorMatrix<Val>, challenges: &[Challenge5]| {
+            p3_uni_stark::generate_logup_trace::<Challenge5, _>(main, &challenges[0])
+        },
+    );
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
     let proof = prove(&config, &FibPermAir {}, trace.clone(), &pis);
@@ -262,8 +272,8 @@ fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
 
 // Degree-8 extension variant
 fn test_public_value_impl_deg8(n: usize, x: u64, log_final_poly_len: usize) {
-    use p3_field::extension::BinomialExtensionField;
     use p3_commit::ExtensionMmcs;
+    use p3_field::extension::BinomialExtensionField;
     use p3_fri::TwoAdicFriPcs;
     use p3_uni_stark::StarkConfig;
 
@@ -285,9 +295,13 @@ fn test_public_value_impl_deg8(n: usize, x: u64, log_final_poly_len: usize) {
     let challenger = Challenger::new(perm);
 
     let aux_width = 3 * 8; // three EF columns flattened
-    let config = MyConfig8::new(pcs, challenger).with_aux_builder(1, aux_width, |main: &RowMajorMatrix<Val>, challenges: &[Challenge8]| {
-        p3_uni_stark::generate_logup_trace::<Challenge8, _>(main, &challenges[0])
-    });
+    let config = MyConfig8::new(pcs, challenger).with_aux_builder(
+        1,
+        aux_width,
+        |main: &RowMajorMatrix<Val>, challenges: &[Challenge8]| {
+            p3_uni_stark::generate_logup_trace::<Challenge8, _>(main, &challenges[0])
+        },
+    );
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
     let proof = prove(&config, &FibPermAir {}, trace.clone(), &pis);
@@ -298,6 +312,8 @@ fn test_public_value_impl_deg8(n: usize, x: u64, log_final_poly_len: usize) {
 #[test]
 #[should_panic(expected = "assertion `left == right` failed: constraints had nonzero value")]
 fn test_incorrect_public_value() {
+    use p3_uni_stark::StarkGenericConfig;
+
     let mut rng = SmallRng::seed_from_u64(1);
     let perm = Perm::new_from_rng_128(&mut rng);
     let hash = MyHash::new(perm.clone());
@@ -309,9 +325,13 @@ fn test_incorrect_public_value() {
     let trace = generate_trace_rows::<Val>(0, 1, 1 << 3);
     let pcs = Pcs::new(dft, val_mmcs, fri_params);
     let challenger = Challenger::new(perm);
-    let config = MyConfig::new(pcs, challenger).with_aux_builder(1, 12, |main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
-        p3_uni_stark::generate_logup_trace::<Challenge, _>(main, &challenges[0])
-    });
+    let config = MyConfig::new(pcs, challenger).with_aux_builder(
+        1,
+        12,
+        |main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
+            p3_uni_stark::generate_logup_trace::<Challenge, _>(main, &challenges[0])
+        },
+    );
     let pis = vec![
         BabyBear::ZERO,
         BabyBear::ONE,

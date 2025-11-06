@@ -25,7 +25,9 @@ pub fn verify_single_matrix_pcs<SC, A>(
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
     SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>> + p3_air::BaseAir<Val<SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>>>
+        + for<'a> Air<VerifierConstraintFolder<'a, SC>>
+        + p3_air::BaseAir<Val<SC>>,
 {
     verify_internal(config, air, proof, public_values, true)
 }
@@ -39,7 +41,9 @@ pub fn verify<SC, A>(
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
     SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>> + p3_air::BaseAir<Val<SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>>>
+        + for<'a> Air<VerifierConstraintFolder<'a, SC>>
+        + p3_air::BaseAir<Val<SC>>,
 {
     verify_internal(config, air, proof, public_values, false)
 }
@@ -54,7 +58,9 @@ fn verify_internal<SC, A>(
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
     SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>> + p3_air::BaseAir<Val<SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>>>
+        + for<'a> Air<VerifierConstraintFolder<'a, SC>>
+        + p3_air::BaseAir<Val<SC>>,
 {
     let Proof {
         commitments,
