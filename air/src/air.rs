@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+// no_std
 use core::ops::{Add, Mul, Sub};
 
 use p3_field::{Algebra, ExtensionField, Field, PrimeCharacteristicRing};
@@ -24,28 +24,6 @@ pub trait BaseAirWithPublicValues<F>: BaseAir<F> {
     }
 }
 
-/// An extension of `BaseAir` that includes support for Two Phases.
-/// A single phase `BaseAir` still needs to implement this trait; and set the values to 0.
-/// By default the second phase is not set.
-pub trait MultiPhaseBaseAir<F>: BaseAir<F> {
-    /// The width of the auxiliary columns during the second phase.
-    /// Note that this is the number of columns in BASE FIELD ELEMENTS.
-    ///
-    /// For example, with LogUp based permutation, we will need 3 extension field columns,
-    /// so the aux_width here is 12 if we work on BabyBearExt4.
-    fn aux_width_in_base_field(&self) -> usize {
-        0
-    }
-
-    /// The number of challenges that are used to generate the aux column.
-    /// Note that this is the number of columns in BASE FIELD ELEMENTS.
-    ///
-    /// For example, with LogUp based permutation, we will need 1 extension field challenge,
-    /// so the aux_width here is 4 if we work on BabyBearExt4.
-    fn num_randomness_in_base_field(&self) -> usize {
-        0
-    }
-}
 
 /// An algebraic intermediate representation (AIR) definition.
 ///
@@ -53,7 +31,7 @@ pub trait MultiPhaseBaseAir<F>: BaseAir<F> {
 /// This function can be applied to an evaluation trace in which case each
 /// constraint will compute a particular value or it can be applied symbolically
 /// with each constraint computing a symbolic expression.
-pub trait Air<AB: AirBuilder>: MultiPhaseBaseAir<AB::F> {
+pub trait Air<AB: AirBuilder>: BaseAir<AB::F> {
     /// Evaluate all AIR constraints using the provided builder.
     ///
     /// The builder provides both the trace on which the constraints
@@ -202,20 +180,6 @@ pub trait AirBuilderWithPublicValues: AirBuilder {
     fn public_values(&self) -> &[Self::PublicVar];
 }
 
-/// Trait for `AirBuilder` variants that include LogUp permutation.
-pub trait AirBuilderWithLogUp: AirBuilder {
-    /// Return the matrix representing permutation registers.
-    ///
-    /// Note that the elements of the result matrix are BASE FIELD ELEMENTS.
-    /// The extension field arithmetic are handled internally.
-    fn logup_permutation(&self) -> Self::M;
-
-    /// Return the list of randomness values for permutation argument.
-    ///
-    /// Note that the challenges are BASE FIELD ELEMENTS; the collectively form the extension field challenge.
-    fn logup_permutation_randomness(&self) -> Vec<Self::Expr>;
-}
-
 /// Trait for `AirBuilder` variants that include preprocessed data columns.
 pub trait PairBuilder: AirBuilder {
     /// Return a matrix of preprocessed registers.
@@ -256,15 +220,20 @@ pub trait ExtensionBuilder: AirBuilder<F: Field> {
     }
 }
 
-/// Trait for builders supporting permutation arguments (e.g., for lookup constraints).
+/// Trait for builders supporting permutation-style auxiliary traces.
+///
+/// This extends [`ExtensionBuilder`] because permutation traces typically live in an extension
+/// field, while the AIR itself may still work over the base field. Randomness is supplied in the
+/// base expression type to preserve compatibility with existing AIR code that expects to work with
+/// flattened components.
 pub trait PermutationAirBuilder: ExtensionBuilder {
-    /// Matrix type over extension field variables representing a permutation.
+    /// Matrix type over extension-field variables representing permutation registers.
     type MP: Matrix<Self::VarEF>;
 
     /// Randomness variable type used in permutation commitments.
     type RandomVar: Into<Self::ExprEF> + Copy;
 
-    /// Return the matrix representing permutation registers.
+    /// Return the matrix representing permutation registers over EF variables.
     fn permutation(&self) -> Self::MP;
 
     /// Return the list of randomness values for permutation argument.
@@ -335,7 +304,6 @@ impl<AB: ExtensionBuilder> ExtensionBuilder for FilteredAirBuilder<'_, AB> {
 
 impl<AB: PermutationAirBuilder> PermutationAirBuilder for FilteredAirBuilder<'_, AB> {
     type MP = AB::MP;
-
     type RandomVar = AB::RandomVar;
 
     fn permutation(&self) -> Self::MP {

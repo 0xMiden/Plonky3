@@ -1,8 +1,6 @@
 use core::borrow::Borrow;
 
-use p3_air::{
-    Air, AirBuilder, AirBuilderWithLogUp, AirBuilderWithPublicValues, BaseAir, MultiPhaseBaseAir,
-};
+use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, ExtensionBuilder, PermutationAirBuilder};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
@@ -15,8 +13,7 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_uni_stark::{
-    StarkConfig, ext_field_mul, ext_field_sub, prove, prove_single_matrix_pcs, verify,
-    verify_single_matrix_pcs,
+    StarkConfig, prove, prove_single_matrix_pcs, verify, verify_single_matrix_pcs,
 };
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -30,17 +27,8 @@ impl<F> BaseAir<F> for FibPermAir {
     }
 }
 
-impl<F> MultiPhaseBaseAir<F> for FibPermAir {
-    fn aux_width_in_base_field(&self) -> usize {
-        12
-    }
 
-    fn num_randomness_in_base_field(&self) -> usize {
-        4
-    }
-}
-
-impl<AB: AirBuilderWithPublicValues + AirBuilderWithLogUp> Air<AB> for FibPermAir
+impl<AB: AirBuilderWithPublicValues + PermutationAirBuilder> Air<AB> for FibPermAir
 where
     AB::F: Field,
 {
@@ -54,7 +42,7 @@ where
         // | 5  | 8  | 1  | 1/(r-8) | 1/(r-1) | .. |
 
         let main = builder.main();
-        let aux = builder.logup_permutation();
+        let _ = builder.permutation();
 
         let pis = builder.public_values();
         let (local, next) = (
@@ -87,81 +75,42 @@ where
         }
         // aux constraints
         {
-            let xi = local.m2.clone().into();
-            let yi = local.m3.clone().into();
-            let (aux_local, aux_next) = (
-                aux.row_slice(0).expect("Matrix is empty?"),
-                aux.row_slice(1).expect("Matrix only has 1 row?"),
-            );
+            let xi = local.m2.clone();
+            let yi = local.m3.clone();
 
-            let randomnesses = builder.logup_permutation_randomness();
-            let r_width =
-                <FibPermAir as MultiPhaseBaseAir<AB::F>>::num_randomness_in_base_field(self);
-            assert_eq!(r_width, 4);
-            let w = AB::F::from_i8(11); // 11 is the constant term w for BabyBear Ext4
+            let aux = builder.permutation();
+            let aux_local = aux.row_slice(0).expect("Matrix is empty?");
+            let aux_next = aux.row_slice(1).expect("Matrix only has 1 row?");
+
+            let t_i: AB::ExprEF = aux_local[0].clone().into();
+            let w_i: AB::ExprEF = aux_local[1].clone().into();
+            let s_i: AB::ExprEF = aux_local[2].clone().into();
+            let t_next: AB::ExprEF = aux_next[0].clone().into();
+            let w_next: AB::ExprEF = aux_next[1].clone().into();
+            let s_next: AB::ExprEF = aux_next[2].clone().into();
+
+            let r_expr = builder.permutation_randomness()[0].into();
 
             // t * (r - x_i) == 1
             {
-                let r_min_xi = ext_field_sub::<AB>(
-                    &randomnesses,
-                    &[xi.clone(), AB::Expr::ZERO, AB::Expr::ZERO, AB::Expr::ZERO],
-                );
-
-                let t_mul_r_min_xi = ext_field_mul::<AB>(
-                    &aux_local[..r_width]
-                        .iter()
-                        .map(|x| x.clone().into())
-                        .collect::<Vec<_>>(),
-                    &r_min_xi,
-                    &w,
-                );
-
-                builder.assert_one(t_mul_r_min_xi[0].clone());
-                builder.assert_zero(t_mul_r_min_xi[1].clone());
-                builder.assert_zero(t_mul_r_min_xi[2].clone());
-                builder.assert_zero(t_mul_r_min_xi[3].clone());
+                let xi_ext: AB::ExprEF = AB::Expr::from(xi.clone()).into();
+                builder.assert_one_ext(t_i.clone() * (r_expr.clone() - xi_ext));
             }
             // w * (r - y_i) == 1
             {
-                let r_min_yi = ext_field_sub::<AB>(
-                    &randomnesses,
-                    &[yi.clone(), AB::Expr::ZERO, AB::Expr::ZERO, AB::Expr::ZERO],
-                );
-
-                let w_mul_r_min_yi = ext_field_mul::<AB>(
-                    &aux_local[r_width..2 * r_width]
-                        .iter()
-                        .map(|x| x.clone().into())
-                        .collect::<Vec<_>>(),
-                    &r_min_yi,
-                    &w,
-                );
-
-                builder.assert_one(w_mul_r_min_yi[0].clone());
-                builder.assert_zero(w_mul_r_min_yi[1].clone());
-                builder.assert_zero(w_mul_r_min_yi[2].clone());
-                builder.assert_zero(w_mul_r_min_yi[3].clone());
+                let yi_ext: AB::ExprEF = AB::Expr::from(yi.clone()).into();
+                builder.assert_one_ext(w_i.clone() * (r_expr - yi_ext));
             }
 
             // running sums
-            for i in 0..r_width {
-                let ti = aux_local[i].clone().into();
-                let wi = aux_local[r_width + i].clone().into();
-                let next_ti = aux_next[i].clone().into();
-                let next_wi = aux_next[r_width + i].clone().into();
-                let running_sum = aux_local[2 * r_width + i].clone().into();
-                let next_running_sum = aux_next[2 * r_width + i].clone().into();
-
-                // first row running_sum = ti - wi
+            {
                 builder
                     .when_first_row()
-                    .assert_eq(running_sum.clone(), ti - wi);
-                // next_running_sum = running_sum + ti - wi
+                    .assert_eq_ext(s_i.clone(), t_i.clone() - w_i.clone());
                 builder
                     .when_transition()
-                    .assert_eq(next_running_sum, running_sum.clone() + next_ti - next_wi);
-                // last row running sum is zero
-                builder.when_last_row().assert_zero(running_sum);
+                    .assert_eq_ext(s_next, s_i.clone() + t_next - w_next);
+                builder.when_last_row().assert_zero_ext(s_i);
             }
         }
     }
@@ -244,7 +193,9 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
     let pcs = Pcs::new(dft, val_mmcs, fri_params);
     let challenger = Challenger::new(perm);
 
-    let config = MyConfig::new(pcs, challenger);
+    let config = MyConfig::new(pcs, challenger).with_aux_builder(1, 12, |main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
+        p3_uni_stark::generate_logup_trace::<Challenge, _>(main, &challenges[0])
+    });
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
     let proof = prove(&config, &FibPermAir {}, trace.clone(), &pis);
@@ -265,6 +216,84 @@ fn test_public_value() {
     test_public_value_impl(1 << 3, 21, 2);
 }
 
+#[test]
+fn test_public_value_deg5() {
+    test_public_value_impl_deg5(1 << 3, 21, 2);
+}
+
+#[test]
+fn test_public_value_deg8() {
+    test_public_value_impl_deg8(1 << 3, 21, 2);
+}
+
+// Degree-5 extension variant
+fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
+    use p3_field::extension::BinomialExtensionField;
+    use p3_commit::ExtensionMmcs;
+    use p3_fri::TwoAdicFriPcs;
+    use p3_uni_stark::StarkConfig;
+
+    type Challenge5 = BinomialExtensionField<Val, 5>;
+    type ChallengeMmcs5 = ExtensionMmcs<Val, Challenge5, ValMmcs>;
+    type Pcs5 = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs5>;
+    type MyConfig5 = StarkConfig<Pcs5, Challenge5, Challenger>;
+
+    let mut rng = SmallRng::seed_from_u64(1);
+    let perm = Perm::new_from_rng_128(&mut rng);
+    let hash = MyHash::new(perm.clone());
+    let compress = MyCompress::new(perm.clone());
+    let val_mmcs = ValMmcs::new(hash, compress);
+    let challenge_mmcs = ChallengeMmcs5::new(val_mmcs.clone());
+    let dft = Dft::default();
+    let trace = generate_trace_rows::<Val>(0, 1, n);
+    let fri_params = create_test_fri_params(challenge_mmcs, log_final_poly_len);
+    let pcs = Pcs5::new(dft, val_mmcs, fri_params);
+    let challenger = Challenger::new(perm);
+
+    let aux_width = 3 * 5; // three EF columns flattened
+    let config = MyConfig5::new(pcs, challenger).with_aux_builder(1, aux_width, |main: &RowMajorMatrix<Val>, challenges: &[Challenge5]| {
+        p3_uni_stark::generate_logup_trace::<Challenge5, _>(main, &challenges[0])
+    });
+    let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
+
+    let proof = prove(&config, &FibPermAir {}, trace.clone(), &pis);
+    verify(&config, &FibPermAir {}, &proof, &pis).expect("verification failed");
+}
+
+// Degree-8 extension variant
+fn test_public_value_impl_deg8(n: usize, x: u64, log_final_poly_len: usize) {
+    use p3_field::extension::BinomialExtensionField;
+    use p3_commit::ExtensionMmcs;
+    use p3_fri::TwoAdicFriPcs;
+    use p3_uni_stark::StarkConfig;
+
+    type Challenge8 = BinomialExtensionField<Val, 8>;
+    type ChallengeMmcs8 = ExtensionMmcs<Val, Challenge8, ValMmcs>;
+    type Pcs8 = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs8>;
+    type MyConfig8 = StarkConfig<Pcs8, Challenge8, Challenger>;
+
+    let mut rng = SmallRng::seed_from_u64(1);
+    let perm = Perm::new_from_rng_128(&mut rng);
+    let hash = MyHash::new(perm.clone());
+    let compress = MyCompress::new(perm.clone());
+    let val_mmcs = ValMmcs::new(hash, compress);
+    let challenge_mmcs = ChallengeMmcs8::new(val_mmcs.clone());
+    let dft = Dft::default();
+    let trace = generate_trace_rows::<Val>(0, 1, n);
+    let fri_params = create_test_fri_params(challenge_mmcs, log_final_poly_len);
+    let pcs = Pcs8::new(dft, val_mmcs, fri_params);
+    let challenger = Challenger::new(perm);
+
+    let aux_width = 3 * 8; // three EF columns flattened
+    let config = MyConfig8::new(pcs, challenger).with_aux_builder(1, aux_width, |main: &RowMajorMatrix<Val>, challenges: &[Challenge8]| {
+        p3_uni_stark::generate_logup_trace::<Challenge8, _>(main, &challenges[0])
+    });
+    let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
+
+    let proof = prove(&config, &FibPermAir {}, trace.clone(), &pis);
+    verify(&config, &FibPermAir {}, &proof, &pis).expect("verification failed");
+}
+
 #[cfg(debug_assertions)]
 #[test]
 #[should_panic(expected = "assertion `left == right` failed: constraints had nonzero value")]
@@ -280,7 +309,9 @@ fn test_incorrect_public_value() {
     let trace = generate_trace_rows::<Val>(0, 1, 1 << 3);
     let pcs = Pcs::new(dft, val_mmcs, fri_params);
     let challenger = Challenger::new(perm);
-    let config = MyConfig::new(pcs, challenger);
+    let config = MyConfig::new(pcs, challenger).with_aux_builder(1, 12, |main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
+        p3_uni_stark::generate_logup_trace::<Challenge, _>(main, &challenges[0])
+    });
     let pis = vec![
         BabyBear::ZERO,
         BabyBear::ONE,

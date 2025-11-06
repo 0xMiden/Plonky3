@@ -25,7 +25,7 @@ pub fn verify_single_matrix_pcs<SC, A>(
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
     SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>> + p3_air::BaseAir<Val<SC>>,
 {
     verify_internal(config, air, proof, public_values, true)
 }
@@ -39,7 +39,7 @@ pub fn verify<SC, A>(
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
     SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>> + p3_air::BaseAir<Val<SC>>,
 {
     verify_internal(config, air, proof, public_values, false)
 }
@@ -54,7 +54,7 @@ fn verify_internal<SC, A>(
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
     SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>> + p3_air::BaseAir<Val<SC>>,
 {
     let Proof {
         commitments,
@@ -66,8 +66,16 @@ where
     let pcs = config.pcs();
 
     let degree = 1 << degree_bits;
-    let log_quotient_degree =
-        get_log_quotient_degree::<Val<SC>, A>(air, 0, public_values.len(), config.is_zk());
+    let aux_width_base = config.aux_width_in_base_field();
+    let num_randomness_base = config.aux_challenges() * SC::Challenge::DIMENSION;
+    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, A>(
+        air,
+        0,
+        public_values.len(),
+        config.is_zk(),
+        aux_width_base,
+        num_randomness_base,
+    );
     let quotient_degree = 1 << (log_quotient_degree + config.is_zk());
 
     let mut challenger = config.initialise_challenger();
@@ -104,11 +112,10 @@ where
     challenger.observe(commitments.trace.clone());
     challenger.observe_slice(public_values);
 
-    // begin processing aux trace
-    let num_randomness = air.num_randomness_in_base_field() / SC::Challenge::DIMENSION;
+    // begin processing aux trace (optional)
+    let num_randomness = config.aux_challenges();
 
     let air_width = A::width(air);
-    let aux_width = air.aux_width_in_base_field();
     let valid_shape = opened_values.trace_local.len() == air_width
         && opened_values.trace_next.len() == air_width
         && opened_values.quotient_chunks.len() == quotient_degree
@@ -124,8 +131,10 @@ where
         }
         // Check aux trace shape
         && if num_randomness > 0 {
-            opened_values.aux_trace_local.as_ref().is_some_and(|v| v.len() == aux_width)
-                && opened_values.aux_trace_next.as_ref().is_some_and(|v| v.len() == aux_width)
+            match (&opened_values.aux_trace_local, &opened_values.aux_trace_next) {
+                (Some(l), Some(n)) => l.len() == aux_width_base && n.len() == aux_width_base,
+                _ => false,
+            }
         } else {
             opened_values.aux_trace_local.is_none() && opened_values.aux_trace_next.is_none()
         };

@@ -1,6 +1,6 @@
 use core::borrow::{Borrow, BorrowMut};
 
-use p3_air::{Air, AirBuilder, BaseAir, MultiPhaseBaseAir};
+use p3_air::{Air, AirBuilder, BaseAir};
 use p3_field::{PrimeCharacteristicRing, PrimeField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -232,29 +232,6 @@ impl<
     fn width(&self) -> usize {
         self.air.width() * VECTOR_LEN
     }
-}
-
-impl<
-    F: PrimeCharacteristicRing + Sync,
-    LinearLayers: Sync,
-    const WIDTH: usize,
-    const SBOX_DEGREE: u64,
-    const SBOX_REGISTERS: usize,
-    const HALF_FULL_ROUNDS: usize,
-    const PARTIAL_ROUNDS: usize,
-    const VECTOR_LEN: usize,
-> MultiPhaseBaseAir<F>
-    for VectorizedPoseidon2Air<
-        F,
-        LinearLayers,
-        WIDTH,
-        SBOX_DEGREE,
-        SBOX_REGISTERS,
-        HALF_FULL_ROUNDS,
-        PARTIAL_ROUNDS,
-        VECTOR_LEN,
-    >
-{
 }
 
 impl<

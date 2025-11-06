@@ -22,7 +22,7 @@ use crate::{
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove_single_matrix_pcs<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>> + p3_air::BaseAir<Val<SC>>,
     #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
@@ -41,7 +41,7 @@ where
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>> + p3_air::BaseAir<Val<SC>>,
     #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
@@ -60,7 +60,7 @@ where
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 fn prove_internal<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>> + p3_air::BaseAir<Val<SC>>,
     #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
@@ -79,7 +79,15 @@ where
     let log_ext_degree = log_degree + config.is_zk();
 
     // Compute the constraint polynomials as vectors of symbolic expressions.
-    let symbolic_constraints = get_symbolic_constraints(air, 0, public_values.len());
+    let aux_width_base = config.aux_width_in_base_field();
+    let num_randomness_base = config.aux_challenges() * SC::Challenge::DIMENSION;
+    let symbolic_constraints = get_symbolic_constraints(
+        air,
+        0,
+        public_values.len(),
+        aux_width_base,
+        num_randomness_base,
+    );
 
     // Count the number of constraints that we have.
     let constraint_count = symbolic_constraints.len();
@@ -117,8 +125,14 @@ where
     // From the degree of the constraint polynomial, compute the number
     // of quotient polynomials we will split Q(x) into. This is chosen to
     // always be a power of 2.
-    let log_quotient_degree =
-        get_log_quotient_degree::<Val<SC>, A>(air, 0, public_values.len(), config.is_zk());
+    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, A>(
+        air,
+        0,
+        public_values.len(),
+        config.is_zk(),
+        aux_width_base,
+        num_randomness_base,
+    );
     let quotient_degree = 1 << (log_quotient_degree + config.is_zk());
 
     // Initialize the PCS and the Challenger.
@@ -158,41 +172,45 @@ where
     // Observe the public input values.
     challenger.observe_slice(public_values);
 
-    // begin aux trace generation
-    let num_randomness = air.num_randomness_in_base_field() / SC::Challenge::DIMENSION;
+    // begin aux trace generation (optional)
+    let num_randomness = config.aux_challenges();
 
-    let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness, _randomness_base) =
-        if num_randomness > 0 {
-            let randomness: Vec<SC::Challenge> = (0..num_randomness)
-                .map(|_| challenger.sample_algebra_element())
-                .collect();
+    let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness, _randomness_base) = if num_randomness > 0 {
+        let randomness: Vec<SC::Challenge> = (0..num_randomness)
+            .map(|_| challenger.sample_algebra_element())
+            .collect();
 
-            let aux_trace = generate_logup_trace::<SC::Challenge, _>(&trace, &randomness[0]);
+        // Ask config (VM) to build the aux trace if available; otherwise, fall back to legacy LogUp generator.
+        let aux_trace_opt = config
+            .build_aux_trace(&trace, &randomness)
+            .or_else(|| Some(generate_logup_trace::<SC::Challenge, _>(&trace, &randomness[0])));
 
-            let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
-                .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
+        let aux_trace = aux_trace_opt.expect("aux_challenges > 0 but no aux trace was provided or generated");
 
-            challenger.observe(aux_trace_commit.clone());
+        let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
+            .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
 
-            let randomness_base = randomness
-                .iter()
-                .flat_map(|r| r.as_basis_coefficients_slice())
-                .cloned()
-                .collect_vec();
+        challenger.observe(aux_trace_commit.clone());
 
-            (
-                Some(aux_trace_commit),
-                Some(aux_trace),
-                Some(aux_trace_data),
-                randomness,
-                randomness_base,
-            )
-        } else {
-            (None, None, None, vec![], vec![])
-        };
+        let randomness_base = randomness
+            .iter()
+            .flat_map(|r| r.as_basis_coefficients_slice())
+            .cloned()
+            .collect_vec();
+
+        (
+            Some(aux_trace_commit),
+            Some(aux_trace),
+            Some(aux_trace_data),
+            randomness,
+            randomness_base,
+        )
+    } else {
+        (None, None, None, vec![], vec![])
+    };
 
     #[cfg(debug_assertions)]
-    crate::check_constraints::check_constraints(
+    crate::check_constraints::check_constraints::<Val<SC>, SC::Challenge, _>(
         air,
         &trace,
         &_aux_trace_opt,
@@ -522,6 +540,7 @@ where
                 decomposed_alpha_powers: &decomposed_alpha_powers,
                 accumulator,
                 constraint_index: 0,
+                packed_randomness: randomness.iter().copied().map(Into::into).collect(),
             };
             air.eval(&mut folder);
 
