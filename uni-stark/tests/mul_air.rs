@@ -2,7 +2,7 @@ use core::fmt::Debug;
 use core::marker::PhantomData;
 
 use itertools::Itertools;
-use p3_air::{Air, AirBuilder, BaseAir, MultiPhaseBaseAir};
+use p3_air::{Air, AirBuilder, BaseAir};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::{DuplexChallenger, HashChallenger, SerializingChallenger32};
 use p3_circle::CirclePcs;
@@ -89,8 +89,6 @@ impl<F> BaseAir<F> for MulAir {
         TRACE_WIDTH
     }
 }
-
-impl<F> MultiPhaseBaseAir<F> for MulAir {}
 
 impl<AB: AirBuilder> Air<AB> for MulAir {
     fn eval(&self, builder: &mut AB) {

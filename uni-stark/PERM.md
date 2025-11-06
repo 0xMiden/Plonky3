@@ -41,35 +41,29 @@ Your AIR must implement these traits:
 ```rust
 // Basic AIR structure
 impl<F> BaseAir<F> for MyAir {
-    fn width(&self) -> usize {
-        // Return the number of columns in your main trace
-        3  // Example: includes the two permutation columns
-    }
+    fn width(&self) -> usize { 3 }
 }
 
-// Multi-phase support (required for LogUp)
-impl<F> MultiPhaseBaseAir<F> for MyAir {
-    fn aux_width_in_base_field(&self) -> usize {
-        // For LogUp: 3 extension field columns = 3 * EF::DIMENSION base field columns
-        // For BabyBearExt4: 3 * 4 = 12
-        12
-    }
-
-    fn num_randomness_in_base_field(&self) -> usize {
-        // Number of base field elements in the random challenge
-        // For BabyBearExt4: 4
-        4
-    }
-}
-
-// AIR evaluation with LogUp support
-impl<AB: AirBuilderWithPublicValues + AirBuilderWithLogUp> Air<AB> for MyAir
+// AIR evaluation with LogUp support (EF-first)
+impl<AB: AirBuilderWithPublicValues + PermutationAirBuilder> Air<AB> for MyAir
 where
     AB::F: Field,
 {
     fn eval(&self, builder: &mut AB) {
         // Your constraint implementation
     }
+}
+```
+
+The permutation interface follows the logup-p3 style and works directly over the extension field:
+
+```rust
+pub trait PermutationAirBuilder: ExtensionBuilder {
+    type MP: Matrix<Self::VarEF>;                 // EF aux rows
+    type RandomVar: Into<Self::ExprEF> + Copy;    // EF randomness
+
+    fn permutation(&self) -> Self::MP;            // EF aux matrix view
+    fn permutation_randomness(&self) -> &[Self::RandomVar];
 }
 ```
 
@@ -100,8 +94,8 @@ In your `eval` function, you need to:
 #### a. Access the auxiliary trace and randomness
 
 ```rust
-let aux = builder.logup_permutation();
-let randomnesses = builder.logup_permutation_randomness();
+let aux = builder.permutation();               // EF rows
+let r = builder.permutation_randomness();      // EF challenges
 ```
 
 #### b. Extract the permutation values from your main trace
@@ -118,96 +112,47 @@ let xi = local[width - 2].clone().into();  // Second-to-last column
 let yi = local[width - 1].clone().into();  // Last column
 ```
 
-#### c. Constrain the auxiliary trace structure
+#### c. Constrain the auxiliary trace structure (EF-first)
 
-The auxiliary trace has 3 extension field columns (in base field representation):
-- Columns 0..r_width: `tᵢ = 1/(r - xᵢ)`
-- Columns r_width..2*r_width: `wᵢ = 1/(r - yᵢ)`
-- Columns 2*r_width..3*r_width: Running sum
+The auxiliary trace has 3 extension field columns (t, w, running sum), already exposed as EF elements:
 
 ```rust
-let (aux_local, aux_next) = (
-    aux.row_slice(0).expect("Matrix is empty?"),
-    aux.row_slice(1).expect("Matrix only has 1 row?"),
-);
+let local = aux.row_slice(0).unwrap();
+let next = aux.row_slice(1).unwrap();
 
-let r_width = <MyAir as MultiPhaseBaseAir<AB::F>>::num_randomness_in_base_field(self);
-let w = AB::F::from_i8(11); // Extension field constant (e.g., 11 for BabyBearExt4)
+let t_i: AB::ExprEF = local[0].into();
+let w_i: AB::ExprEF = local[1].into();
+let s_i: AB::ExprEF = local[2].into();
+let t_next: AB::ExprEF = next[0].into();
+let w_next: AB::ExprEF = next[1].into();
+let s_next: AB::ExprEF = next[2].into();
 
-// Constraint 1: t * (r - x_i) == 1
-{
-    let r_min_xi = ext_field_sub::<AB>(
-        &randomnesses,
-        &[xi.clone(), AB::Expr::ZERO, AB::Expr::ZERO, AB::Expr::ZERO],
-    );
+let r_expr = r[0].into();
 
-    let t_mul_r_min_xi = ext_field_mul::<AB>(
-        &aux_local[..r_width]
-            .iter()
-            .map(|x| x.clone().into())
-            .collect::<Vec<_>>(),
-        &r_min_xi,
-        &w,
-    );
+// t * (r - x_i) == 1
+builder.assert_one_ext(t_i.clone() * (r_expr.clone() - AB::Expr::from(xi).into()));
+// w * (r - y_i) == 1
+builder.assert_one_ext(w_i.clone() * (r_expr - AB::Expr::from(yi).into()));
 
-    builder.assert_one(t_mul_r_min_xi[0].clone());
-    builder.assert_zero(t_mul_r_min_xi[1].clone());
-    builder.assert_zero(t_mul_r_min_xi[2].clone());
-    builder.assert_zero(t_mul_r_min_xi[3].clone());
-}
-
-// Constraint 2: w * (r - y_i) == 1
-{
-    let r_min_yi = ext_field_sub::<AB>(
-        &randomnesses,
-        &[yi.clone(), AB::Expr::ZERO, AB::Expr::ZERO, AB::Expr::ZERO],
-    );
-
-    let w_mul_r_min_yi = ext_field_mul::<AB>(
-        &aux_local[r_width..2 * r_width]
-            .iter()
-            .map(|x| x.clone().into())
-            .collect::<Vec<_>>(),
-        &r_min_yi,
-        &w,
-    );
-
-    builder.assert_one(w_mul_r_min_yi[0].clone());
-    builder.assert_zero(w_mul_r_min_yi[1].clone());
-    builder.assert_zero(w_mul_r_min_yi[2].clone());
-    builder.assert_zero(w_mul_r_min_yi[3].clone());
-}
-
-// Constraint 3: Running sum constraints
-for i in 0..r_width {
-    let ti = aux_local[i].clone().into();
-    let wi = aux_local[r_width + i].clone().into();
-    let next_ti = aux_next[i].clone().into();
-    let next_wi = aux_next[r_width + i].clone().into();
-    let running_sum = aux_local[2 * r_width + i].clone().into();
-    let next_running_sum = aux_next[2 * r_width + i].clone().into();
-
-    // First row: running_sum = ti - wi
-    builder
-        .when_first_row()
-        .assert_eq(running_sum.clone(), ti - wi);
-
-    // Transition: next_running_sum = running_sum + next_ti - next_wi
-    builder
-        .when_transition()
-        .assert_eq(next_running_sum, running_sum.clone() + next_ti - next_wi);
-
-    // Last row: running_sum == 0 (proves permutation)
-    builder.when_last_row().assert_zero(running_sum);
-}
+// Running sums
+builder.when_first_row().assert_eq_ext(s_i.clone(), t_i.clone() - w_i.clone());
+builder.when_transition().assert_eq_ext(s_next, s_i.clone() + t_next - w_next);
+builder.when_last_row().assert_zero_ext(s_i);
 ```
 
 ### 4. Proving and Verifying
 
-The prover and verifier handle the auxiliary trace generation automatically:
+The prover and verifier handle the auxiliary trace generation automatically. Configure EF challenges and aux building via `with_aux_builder`:
 
 ```rust
-use p3_uni_stark::{prove, verify};
+use p3_uni_stark::{prove, verify, StarkConfig, generate_logup_trace};
+
+// Configure EF challenge count and aux width (in base field limbs)
+let config = MyConfig::new(pcs, challenger)
+    .with_aux_builder(1, 12, |main, challenges| {
+        // Build aux trace over EF, but commit its flattened base view internally
+        generate_logup_trace::<Challenge, _>(main, &challenges[0])
+    });
 
 // Generate your main trace (with permutation in last two columns)
 let trace = generate_main_trace(data, n);
@@ -246,11 +191,6 @@ Here, column_b is a permutation of column_a: both contain {1,1,2,3,5,8}.
 ```rust
 impl<F> BaseAir<F> for MyAir {
     fn width(&self) -> usize { 3 }
-}
-
-impl<F> MultiPhaseBaseAir<F> for MyAir {
-    fn aux_width_in_base_field(&self) -> usize { 12 }  // For BabyBearExt4
-    fn num_randomness_in_base_field(&self) -> usize { 4 }  // For BabyBearExt4
 }
 ```
 

@@ -1,7 +1,11 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_air::{Air, AirBuilder, AirBuilderWithLogUp, AirBuilderWithPublicValues, PairBuilder};
+use p3_air::{
+    Air, AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder,
+    PermutationAirBuilder,
+};
+use p3_air::BaseAir;
 use p3_field::Field;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_util::log2_ceil_usize;
@@ -17,15 +21,23 @@ pub fn get_log_quotient_degree<F, A>(
     preprocessed_width: usize,
     num_public_values: usize,
     is_zk: usize,
+    aux_width_in_base_field: usize,
+    num_randomness_in_base_field: usize,
 ) -> usize
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>>,
+    A: Air<SymbolicAirBuilder<F>> + BaseAir<F>,
 {
     assert!(is_zk <= 1, "is_zk must be either 0 or 1");
     // We pad to at least degree 2, since a quotient argument doesn't make sense with smaller degrees.
-    let constraint_degree =
-        (get_max_constraint_degree(air, preprocessed_width, num_public_values) + is_zk).max(2);
+    let constraint_degree = (get_max_constraint_degree(
+        air,
+        preprocessed_width,
+        num_public_values,
+        aux_width_in_base_field,
+        num_randomness_in_base_field,
+    ) + is_zk)
+        .max(2);
 
     // The quotient's actual degree is approximately (max_constraint_degree - 1) n,
     // where subtracting 1 comes from division by the vanishing polynomial.
@@ -38,12 +50,20 @@ pub fn get_max_constraint_degree<F, A>(
     air: &A,
     preprocessed_width: usize,
     num_public_values: usize,
+    aux_width_in_base_field: usize,
+    num_randomness_in_base_field: usize,
 ) -> usize
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>>,
+    A: Air<SymbolicAirBuilder<F>> + BaseAir<F>,
 {
-    get_symbolic_constraints(air, preprocessed_width, num_public_values)
+    get_symbolic_constraints(
+        air,
+        preprocessed_width,
+        num_public_values,
+        aux_width_in_base_field,
+        num_randomness_in_base_field,
+    )
         .iter()
         .map(|c| c.degree_multiple())
         .max()
@@ -55,16 +75,18 @@ pub fn get_symbolic_constraints<F, A>(
     air: &A,
     preprocessed_width: usize,
     num_public_values: usize,
+    aux_width_in_base_field: usize,
+    num_randomness_in_base_field: usize,
 ) -> Vec<SymbolicExpression<F>>
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>>,
+    A: Air<SymbolicAirBuilder<F>> + BaseAir<F>,
 {
     let mut builder = SymbolicAirBuilder::new(
         preprocessed_width,
         air.width(),
-        air.aux_width_in_base_field(),
-        air.num_randomness_in_base_field(),
+        aux_width_in_base_field,
+        num_randomness_in_base_field,
         num_public_values,
     );
     air.eval(&mut builder);
@@ -180,13 +202,29 @@ impl<F: Field> AirBuilderWithPublicValues for SymbolicAirBuilder<F> {
     }
 }
 
-impl<F: Field> AirBuilderWithLogUp for SymbolicAirBuilder<F> {
-    fn logup_permutation(&self) -> <Self as AirBuilder>::M {
-        self.aux.clone().expect("logup_permutation called but aux trace is None - AIR should check num_randomness > 0 before using logup")
+impl<F: Field> ExtensionBuilder for SymbolicAirBuilder<F> {
+    type EF = F;
+    type ExprEF = SymbolicExpression<F>;
+    type VarEF = SymbolicVariable<F>;
+
+    fn assert_zero_ext<I>(&mut self, x: I)
+    where
+        I: Into<Self::ExprEF>,
+    {
+        self.constraints.push(x.into());
+    }
+}
+
+impl<F: Field> PermutationAirBuilder for SymbolicAirBuilder<F> {
+    type MP = RowMajorMatrix<SymbolicVariable<F>>;
+    type RandomVar = SymbolicVariable<F>;
+
+    fn permutation(&self) -> Self::MP {
+        self.aux.clone().expect("permutation called but aux trace is None - AIR should check num_randomness > 0 before using permutation columns")
     }
 
-    fn logup_permutation_randomness(&self) -> Vec<Self::Expr> {
-        self.aux_randomness.iter().map(|v| (*v).into()).collect()
+    fn permutation_randomness(&self) -> &[Self::RandomVar] {
+        &self.aux_randomness
     }
 }
 
@@ -201,7 +239,7 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    use p3_air::{BaseAir, MultiPhaseBaseAir};
+    use p3_air::BaseAir;
     use p3_baby_bear::BabyBear;
 
     use super::*;
@@ -218,8 +256,6 @@ mod tests {
         }
     }
 
-    impl MultiPhaseBaseAir<BabyBear> for MockAir {}
-
     impl Air<SymbolicAirBuilder<BabyBear>> for MockAir {
         fn eval(&self, builder: &mut SymbolicAirBuilder<BabyBear>) {
             for constraint in &self.constraints {
@@ -234,7 +270,7 @@ mod tests {
             constraints: vec![],
             width: 4,
         };
-        let log_degree = get_log_quotient_degree(&air, 3, 2, 0);
+        let log_degree = get_log_quotient_degree(&air, 3, 2, 0, 0, 0);
         assert_eq!(log_degree, 0);
     }
 
@@ -244,7 +280,7 @@ mod tests {
             constraints: vec![SymbolicVariable::new(Entry::Main { offset: 0 }, 0)],
             width: 4,
         };
-        let log_degree = get_log_quotient_degree(&air, 3, 2, 0);
+        let log_degree = get_log_quotient_degree(&air, 3, 2, 0, 0, 0);
         assert_eq!(log_degree, log2_ceil_usize(1));
     }
 
@@ -258,7 +294,7 @@ mod tests {
             ],
             width: 4,
         };
-        let log_degree = get_log_quotient_degree(&air, 3, 2, 0);
+        let log_degree = get_log_quotient_degree(&air, 3, 2, 0, 0, 0);
         assert_eq!(log_degree, log2_ceil_usize(1));
     }
 
@@ -268,7 +304,7 @@ mod tests {
             constraints: vec![],
             width: 4,
         };
-        let max_degree = get_max_constraint_degree(&air, 3, 2);
+        let max_degree = get_max_constraint_degree(&air, 3, 2, 0, 0);
         assert_eq!(
             max_degree, 0,
             "No constraints should result in a degree of 0"
@@ -285,7 +321,7 @@ mod tests {
             ],
             width: 4,
         };
-        let max_degree = get_max_constraint_degree(&air, 3, 2);
+        let max_degree = get_max_constraint_degree(&air, 3, 2, 0, 0);
         assert_eq!(max_degree, 1, "Max constraint degree should be 1");
     }
 
@@ -299,7 +335,7 @@ mod tests {
             width: 4,
         };
 
-        let constraints = get_symbolic_constraints(&air, 3, 2);
+        let constraints = get_symbolic_constraints(&air, 3, 2, 0, 0);
 
         assert_eq!(constraints.len(), 2, "Should return exactly 2 constraints");
 

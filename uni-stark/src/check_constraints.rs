@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
-use p3_air::{AirBuilder, AirBuilderWithLogUp, AirBuilderWithPublicValues};
-use p3_field::Field;
+use p3_air::{AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder};
+use p3_field::{BasedVectorSpace, ExtensionField, Field};
 use p3_matrix::stack::ViewPair;
 
 #[cfg(debug_assertions)]
@@ -29,15 +29,16 @@ use tracing::instrument;
 /// - `public_values`: Public values provided to the builder
 #[instrument(name = "check constraints", skip_all)]
 #[cfg(debug_assertions)]
-pub(crate) fn check_constraints<F, A>(
+pub(crate) fn check_constraints<F, EF, A>(
     air: &A,
     main: &RowMajorMatrix<F>,
     aux_trace: &Option<RowMajorMatrix<F>>,
-    aux_randomness: &[F],
+    aux_randomness_bases: &[F],
     public_values: &Vec<F>,
 ) where
     F: Field,
-    A: for<'a> Air<DebugConstraintBuilder<'a, F>>,
+    EF: ExtensionField<F> + BasedVectorSpace<F>,
+    A: for<'a> Air<DebugConstraintBuilder<'a, F, EF>>,
 {
     let height = main.height();
 
@@ -65,11 +66,14 @@ pub(crate) fn check_constraints<F, A>(
             aux = None;
         }
 
+        let randomness_ef: Vec<EF> =
+            <EF as BasedVectorSpace<F>>::reconstitute_from_base(aux_randomness_bases.to_vec());
+
         let mut builder = DebugConstraintBuilder {
             row_index,
             main,
             aux,
-            aux_randomness,
+            aux_randomness: &randomness_ef,
             public_values,
             is_first_row: F::from_bool(row_index == 0),
             is_last_row: F::from_bool(row_index == height - 1),
@@ -85,7 +89,7 @@ pub(crate) fn check_constraints<F, A>(
 /// Used in conjunction with [`check_constraints`] to simulate
 /// an execution trace and verify that the AIR logic enforces all constraints.
 #[derive(Debug)]
-pub struct DebugConstraintBuilder<'a, F: Field> {
+pub struct DebugConstraintBuilder<'a, F: Field, EF: ExtensionField<F>> {
     /// The index of the row currently being evaluated.
     row_index: usize,
     /// A view of the current and next row as a vertical pair.
@@ -93,7 +97,7 @@ pub struct DebugConstraintBuilder<'a, F: Field> {
     /// A view of the current and next aux row as a vertical pair.
     aux: Option<ViewPair<'a, F>>,
     /// randomness that is used to compute aux trace
-    aux_randomness: &'a [F],
+    aux_randomness: &'a [EF],
     /// The public values provided for constraint validation (e.g. inputs or outputs).
     public_values: &'a [F],
     /// A flag indicating whether this is the first row.
@@ -104,9 +108,10 @@ pub struct DebugConstraintBuilder<'a, F: Field> {
     is_transition: F,
 }
 
-impl<'a, F> AirBuilder for DebugConstraintBuilder<'a, F>
+impl<'a, F, EF> AirBuilder for DebugConstraintBuilder<'a, F, EF>
 where
     F: Field,
+    EF: ExtensionField<F>,
 {
     type F = F;
     type Expr = F;
@@ -155,7 +160,7 @@ where
     }
 }
 
-impl<F: Field> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F> {
+impl<F: Field, EF: ExtensionField<F>> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F, EF> {
     type PublicVar = Self::F;
 
     fn public_values(&self) -> &[Self::F] {
@@ -163,13 +168,72 @@ impl<F: Field> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F> {
     }
 }
 
-impl<F: Field> AirBuilderWithLogUp for DebugConstraintBuilder<'_, F> {
-    fn logup_permutation(&self) -> <Self as AirBuilder>::M {
-        self.aux.expect("logup_permutation called but aux trace is None - AIR should check num_randomness > 0 before using logup")
+impl<F: Field, EF: ExtensionField<F>> ExtensionBuilder for DebugConstraintBuilder<'_, F, EF> {
+    type EF = EF;
+    type ExprEF = EF;
+    type VarEF = EF;
+
+    fn assert_zero_ext<I>(&mut self, x: I)
+    where
+        I: Into<Self::ExprEF>,
+    {
+        let val: EF = x.into();
+        for limb in val.as_basis_coefficients_slice() {
+            self.assert_zero(*limb);
+        }
+    }
+}
+
+pub struct DebugEfView<'a, F: Field, EF: ExtensionField<F>> {
+    inner: ViewPair<'a, F>,
+    _pd: core::marker::PhantomData<EF>,
+}
+
+impl<'a, F: Field, EF: ExtensionField<F>> DebugEfView<'a, F, EF> {
+    const fn new(inner: ViewPair<'a, F>) -> Self {
+        Self { inner, _pd: core::marker::PhantomData }
+    }
+}
+
+impl<'a, F: Field, EF: ExtensionField<F>> p3_matrix::Matrix<EF> for DebugEfView<'a, F, EF> {
+    fn width(&self) -> usize {
+        self.inner.width() / EF::DIMENSION
     }
 
-    fn logup_permutation_randomness(&self) -> Vec<Self::Expr> {
-        self.aux_randomness.to_vec()
+    fn height(&self) -> usize {
+        2
+    }
+
+    fn get(&self, r: usize, c: usize) -> Option<EF> {
+        if r >= 2 || c >= self.width() {
+            return None;
+        }
+        let row = if r == 0 { self.inner.top } else { self.inner.bottom };
+        Some(EF::from_basis_coefficients_fn(|i| row.get(0, c * EF::DIMENSION + i).unwrap()))
+    }
+
+    fn row_slice(&self, r: usize) -> Option<impl core::ops::Deref<Target = [EF]>> {
+        if r >= 2 { return None; }
+        let row = if r == 0 { self.inner.top } else { self.inner.bottom };
+        let ef_w = self.width();
+        let mut v = alloc::vec::Vec::with_capacity(ef_w);
+        for c in 0..ef_w {
+            v.push(EF::from_basis_coefficients_fn(|i| row.get(0, c * EF::DIMENSION + i).unwrap()));
+        }
+        Some(v)
+    }
+}
+
+impl<'a, F: Field, EF: ExtensionField<F>> PermutationAirBuilder for DebugConstraintBuilder<'a, F, EF> {
+    type MP = DebugEfView<'a, F, EF>;
+    type RandomVar = EF;
+
+    fn permutation(&self) -> Self::MP {
+        DebugEfView::new(self.aux.expect("permutation called but aux trace is None - AIR should check num_randomness > 0 before using permutation columns"))
+    }
+
+    fn permutation_randomness(&self) -> &[Self::RandomVar] {
+        self.aux_randomness
     }
 }
 
@@ -178,7 +242,7 @@ impl<F: Field> AirBuilderWithLogUp for DebugConstraintBuilder<'_, F> {
 mod tests {
     use alloc::vec;
 
-    use p3_air::{BaseAir, BaseAirWithPublicValues, MultiPhaseBaseAir};
+    use p3_air::{BaseAir, BaseAirWithPublicValues};
     use p3_baby_bear::BabyBear;
     use p3_field::extension::BinomialExtensionField;
     use p3_field::{BasedVectorSpace, ExtensionField, batch_multiplicative_inverse};
@@ -203,21 +267,12 @@ mod tests {
 
     impl<F: Field, const W: usize> BaseAirWithPublicValues<F> for RowLogicAir<W> {}
 
-    impl<F: Field, const W: usize> MultiPhaseBaseAir<F> for RowLogicAir<W> {
-        fn aux_width_in_base_field(&self) -> usize {
-            12 // 3 extension field elements per row
-        }
-
-        fn num_randomness_in_base_field(&self) -> usize {
-            4 // a.k.a. EF::DIMENSION
-        }
-    }
-
-    impl<F, const W: usize> Air<DebugConstraintBuilder<'_, F>> for RowLogicAir<W>
+    impl<F, EF, const W: usize> Air<DebugConstraintBuilder<'_, F, EF>> for RowLogicAir<W>
     where
         F: Field,
+        EF: ExtensionField<F>,
     {
-        fn eval(&self, builder: &mut DebugConstraintBuilder<'_, F>) {
+        fn eval(&self, builder: &mut DebugConstraintBuilder<'_, F, EF>) {
             let main = builder.main();
             let aux = builder.aux;
 
@@ -251,32 +306,34 @@ mod tests {
             // - Potentially even less: the extension fields for aux1 and aux2 are identical. So we should be able to save another 3 base columns.
             // - It is better than checking \prod(r-xi) == \prod(r-yi) which requires 4 extension columns (the last two store the running product)
 
-            // aux row computation is correct
+            // aux row computation is correct (EF-first)
             let xi = main.top.get(0, 0).unwrap();
             let yi = main.top.get(0, 1).unwrap();
 
-            let aux = aux.expect("test expects aux trace");
-            for i in 0..4 {
-                let ti = aux.top.get(0, i).unwrap();
-                let wi = aux.top.get(0, i + 4).unwrap();
-                let r = builder.aux_randomness[i];
+            let aux_pair = aux.expect("test expects aux trace");
+            let aux_ef = DebugEfView::<F, EF>::new(aux_pair);
+            let r = builder.aux_randomness[0];
 
-                builder.assert_eq::<F, F>(F::ONE, ti * (r - F::from(xi)));
-                builder.assert_eq::<F, F>(F::ONE, wi * (r - F::from(yi)));
+            // current row EF elements
+            let t_i = aux_ef.get(0, 0).unwrap();
+            let w_i = aux_ef.get(0, 1).unwrap();
+            let s_i = aux_ef.get(0, 2).unwrap();
+            // next row EF elements
+            let t_next = aux_ef.get(1, 0).unwrap();
+            let w_next = aux_ef.get(1, 1).unwrap();
+            let s_next = aux_ef.get(1, 2).unwrap();
 
-                // transition is correct
-                let a1_bot = aux.bottom.get(0, i).unwrap();
-                let a2_bot = aux.bottom.get(0, i + 4).unwrap();
-                let a3_top = aux.top.get(0, i + 8).unwrap();
-                let a3_bot = aux.bottom.get(0, i + 8).unwrap();
-                builder
-                    .when_transition()
-                    .assert_eq::<F, F>(a3_bot, a3_top + a1_bot - a2_bot);
+            // t * (r - x_i) == 1  and  w * (r - y_i) == 1
+            builder.assert_eq_ext(t_i * (r - EF::from(xi)), EF::ONE);
+            builder.assert_eq_ext(w_i * (r - EF::from(yi)), EF::ONE);
 
-                // a3[last] = \sum ti - \sim w_i
-                // it is 0 if {ti} is a permutation of {wi}
-                builder.when_last_row().assert_zero::<F>(a3_top);
-            }
+            // transition is correct: s' = s + t' - w'
+            builder
+                .when_transition()
+                .assert_eq_ext(s_next, s_i + t_next - w_next);
+
+            // a3[last] = Σ(t - w) == 0 if multisets match
+            builder.when_last_row().assert_zero_ext(s_i);
 
             // ======================
             // public input
@@ -304,46 +361,22 @@ mod tests {
         RowMajorMatrix::new(main_values, 2)
     }
 
-    // Generate the aux trace for logup arguments.
+    // Generate the aux trace for logup arguments (EF-first, flattened for storage).
     fn gen_aux(
         main_col: &Vec<BabyBear>,
         aux_randomness: &BinomialExtensionField<BabyBear, 4>,
     ) -> RowMajorMatrix<BabyBear> {
-        let perm_main_col = permute(main_col);
-        let len = main_col.len();
-
-        let aux1 = gen_logup_cols(&main_col, aux_randomness);
-        let aux2 = gen_logup_cols(&perm_main_col, aux_randomness);
-
-        let current_first = &aux1[0];
-        let current_second = &aux2[0];
-        let current_sums = current_first
+        use p3_matrix::dense::DenseMatrix;
+        // Build a DenseMatrix main trace with width 2
+        let main_rev = permute(main_col);
+        let main_values = main_col
             .iter()
-            .zip(current_second.iter())
-            .map(|(first, second)| *first - *second)
-            .collect::<Vec<_>>();
-
-        let mut final_values = vec![];
-        final_values.extend_from_slice(current_first);
-        final_values.extend_from_slice(current_second);
-        final_values.extend_from_slice(&current_sums);
-
-        for i in 1..len {
-            let previous_sums = &final_values[(i - 1) * 12 + 8..i * 12];
-            let current_first = &aux1[i];
-            let current_second = &aux2[i];
-
-            let current_sums = previous_sums
-                .iter()
-                .zip(current_first.iter().zip(current_second.iter()))
-                .map(|(sum, (first, second))| *sum + *first - *second)
-                .collect::<Vec<_>>();
-
-            final_values.extend_from_slice(current_first);
-            final_values.extend_from_slice(current_second);
-            final_values.extend_from_slice(&current_sums);
-        }
-        DenseMatrix::new(final_values, 3 * 4)
+            .zip(main_rev.iter())
+            .flat_map(|(a, b)| vec![*a, *b])
+            .collect();
+        let main = DenseMatrix::new(main_values, 2);
+        // Use the library EF-first generator and return the flattened aux
+        super::super::generate_logup_trace::<BinomialExtensionField<BabyBear, 4>, _>(&main, aux_randomness)
     }
 
     #[test]
@@ -376,7 +409,7 @@ mod tests {
 
         let aux = gen_aux(&main_col, &aux_randomness);
 
-        check_constraints(
+        check_constraints::<BabyBear, BinomialExtensionField<BabyBear, 4>, _>(
             &air,
             &main,
             &Some(aux),
@@ -416,7 +449,7 @@ mod tests {
         .unwrap();
         let aux = gen_aux(&main_col, &aux_randomness);
         let aux_randomness_bases = aux_randomness.as_basis_coefficients_slice();
-        check_constraints(
+        check_constraints::<BabyBear, BinomialExtensionField<BabyBear, 4>, _>(
             &air,
             &main,
             &Some(aux),
@@ -455,7 +488,7 @@ mod tests {
         .unwrap();
         let aux = gen_aux(&main_col, &aux_randomness);
         let aux_randomness_bases = aux_randomness.as_basis_coefficients_slice();
-        check_constraints(
+        check_constraints::<BabyBear, BinomialExtensionField<BabyBear, 4>, _>(
             &air,
             &main,
             &Some(aux),
@@ -496,7 +529,7 @@ mod tests {
         aux.values[0] = BabyBear::new(0).into();
         let aux_randomness_bases = aux_randomness.as_basis_coefficients_slice();
 
-        check_constraints(
+        check_constraints::<BabyBear, BinomialExtensionField<BabyBear, 4>, _>(
             &air,
             &main,
             &Some(aux),
@@ -534,7 +567,7 @@ mod tests {
         .unwrap();
         let aux = gen_aux(&main_col, &aux_randomness);
 
-        check_constraints(
+        check_constraints::<BabyBear, BinomialExtensionField<BabyBear, 4>, _>(
             &air,
             &main,
             &Some(aux),
@@ -549,19 +582,5 @@ mod tests {
     }
 
     // Give a column m, for each i, generate aux[i] = 1/(r-m[i])
-    fn gen_logup_cols<EF, F>(main_col: &[F], randomness: &EF) -> Vec<Vec<F>>
-    where
-        F: Field,
-        EF: ExtensionField<F>,
-    {
-        let rs = randomness.as_basis_coefficients_slice();
-
-        let res = main_col
-            .iter()
-            .flat_map(|x| rs.iter().map(|r| *r - *x))
-            .collect::<Vec<F>>();
-
-        let t = batch_multiplicative_inverse(&res);
-        t.chunks(EF::DIMENSION).map(|c| c.to_vec()).collect()
-    }
+    // Old limb-by-limb helper removed (now EF-first via generate_logup_trace)
 }
