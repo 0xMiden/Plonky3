@@ -78,52 +78,16 @@ where
             let xi = local.m2.clone();
             let yi = local.m3.clone();
 
-            // Support both EF-first and base-limb aux layouts
-            let perm = builder.permutation();
-            let aux_local = perm.row_slice(0).expect("Matrix is empty?");
-            let aux_next = perm.row_slice(1).expect("Matrix only has 1 row?");
-            let d = <AB::EF as p3_field::BasedVectorSpace<AB::F>>::DIMENSION;
-            let (t_i, w_i, s_i, t_next, w_next, s_next) = if aux_local.len() >= 3 * d {
-                let t_i = p3_uni_stark::ext_from_limbs::<AB>(
-                    &aux_local[0..d].iter().cloned().map(Into::into).collect::<Vec<_>>(),
-                );
-                let w_i = p3_uni_stark::ext_from_limbs::<AB>(
-                    &aux_local[d..2 * d]
-                        .iter()
-                        .cloned()
-                        .map(Into::into)
-                        .collect::<Vec<_>>(),
-                );
-                let s_i = p3_uni_stark::ext_from_limbs::<AB>(
-                    &aux_local[2 * d..3 * d]
-                        .iter()
-                        .cloned()
-                        .map(Into::into)
-                        .collect::<Vec<_>>(),
-                );
-                let t_next = p3_uni_stark::ext_from_limbs::<AB>(
-                    &aux_next[0..d].iter().cloned().map(Into::into).collect::<Vec<_>>(),
-                );
-                let w_next = p3_uni_stark::ext_from_limbs::<AB>(
-                    &aux_next[d..2 * d]
-                        .iter()
-                        .cloned()
-                        .map(Into::into)
-                        .collect::<Vec<_>>(),
-                );
-                let s_next = p3_uni_stark::ext_from_limbs::<AB>(
-                    &aux_next[2 * d..3 * d]
-                        .iter()
-                        .cloned()
-                        .map(Into::into)
-                        .collect::<Vec<_>>(),
-                );
-                (t_i, w_i, s_i, t_next, w_next, s_next)
-            } else {
-                let l: Vec<AB::ExprEF> = aux_local.iter().cloned().map(Into::into).collect();
-                let n: Vec<AB::ExprEF> = aux_next.iter().cloned().map(Into::into).collect();
-                (l[0].clone(), l[1].clone(), l[2].clone(), n[0].clone(), n[1].clone(), n[2].clone())
-            };
+            let aux = builder.permutation();
+            let aux_local = aux.row_slice(0).expect("Matrix is empty?");
+            let aux_next = aux.row_slice(1).expect("Matrix only has 1 row?");
+
+            let t_i: AB::ExprEF = aux_local[0].clone().into();
+            let w_i: AB::ExprEF = aux_local[1].clone().into();
+            let s_i: AB::ExprEF = aux_local[2].clone().into();
+            let t_next: AB::ExprEF = aux_next[0].clone().into();
+            let w_next: AB::ExprEF = aux_next[1].clone().into();
+            let s_next: AB::ExprEF = aux_next[2].clone().into();
 
             let r_expr = builder.permutation_randomness()[0].into();
 

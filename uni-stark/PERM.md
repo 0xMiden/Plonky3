@@ -44,7 +44,7 @@ impl<F> BaseAir<F> for MyAir {
     fn width(&self) -> usize { 3 }
 }
 
-// AIR evaluation with LogUp support (EF-first)
+// AIR evaluation with LogUp support
 impl<AB: AirBuilderWithPublicValues + PermutationAirBuilder> Air<AB> for MyAir
 where
     AB::F: Field,
@@ -112,7 +112,7 @@ let xi = local[width - 2].clone().into();  // Second-to-last column
 let yi = local[width - 1].clone().into();  // Last column
 ```
 
-#### c. Constrain the auxiliary trace structure (EF-first)
+#### c. Constrain the auxiliary trace structure
 
 The auxiliary trace has 3 extension field columns (t, w, running sum), already exposed as EF elements:
 

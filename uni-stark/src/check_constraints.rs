@@ -306,7 +306,7 @@ mod tests {
             // - Potentially even less: the extension fields for aux1 and aux2 are identical. So we should be able to save another 3 base columns.
             // - It is better than checking \prod(r-xi) == \prod(r-yi) which requires 4 extension columns (the last two store the running product)
 
-            // aux row computation is correct (EF-first)
+            // aux row computation is correct
             let xi = main.top.get(0, 0).unwrap();
             let yi = main.top.get(0, 1).unwrap();
 
@@ -361,7 +361,7 @@ mod tests {
         RowMajorMatrix::new(main_values, 2)
     }
 
-    // Generate the aux trace for logup arguments (EF-first, flattened for storage).
+    // Generate the aux trace for logup arguments (flattened for storage).
     fn gen_aux(
         main_col: &Vec<BabyBear>,
         aux_randomness: &BinomialExtensionField<BabyBear, 4>,
@@ -375,7 +375,7 @@ mod tests {
             .flat_map(|(a, b)| vec![*a, *b])
             .collect();
         let main = DenseMatrix::new(main_values, 2);
-        // Use the library EF-first generator and return the flattened aux
+        // Use the library generator and return the flattened aux
         super::super::generate_logup_trace::<BinomialExtensionField<BabyBear, 4>, _>(&main, aux_randomness)
     }
 
@@ -582,5 +582,5 @@ mod tests {
     }
 
     // Give a column m, for each i, generate aux[i] = 1/(r-m[i])
-    // Old limb-by-limb helper removed (now EF-first via generate_logup_trace)
+    // Old limb-by-limb helper removed (replaced by generate_logup_trace)
 }

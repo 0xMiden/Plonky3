@@ -172,7 +172,7 @@ where
     // Observe the public input values.
     challenger.observe_slice(public_values);
 
-    // begin aux trace generation (EF-first, optional)
+    // begin aux trace generation (optional)
     let num_randomness = config.aux_challenges();
 
     let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness, _randomness_base) = if num_randomness > 0 {

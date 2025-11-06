@@ -112,7 +112,7 @@ where
     challenger.observe(commitments.trace.clone());
     challenger.observe_slice(public_values);
 
-    // begin processing aux trace (EF-first, optional)
+    // begin processing aux trace (optional)
     let num_randomness = config.aux_challenges();
 
     let air_width = A::width(air);
@@ -129,7 +129,7 @@ where
         } else {
             true
         }
-        // Check aux trace shape (relaxed if using EF-first aux builder)
+        // Check aux trace shape
         && if num_randomness > 0 {
             match (&opened_values.aux_trace_local, &opened_values.aux_trace_next) {
                 (Some(l), Some(n)) => l.len() == aux_width_base && n.len() == aux_width_base,
