@@ -4,8 +4,6 @@ use p3_air::PermutationAirBuilder;
 use p3_field::Field;
 use p3_matrix::Matrix;
 
-// Limb-level helpers removed to avoid manipulating extension field basis coefficients directly.
-
 /// Convenience: get EF elements for current and next aux rows from the builder.
 pub fn permutation_rows_ext<AB>(builder: &AB) -> (Vec<AB::ExprEF>, Vec<AB::ExprEF>)
 where

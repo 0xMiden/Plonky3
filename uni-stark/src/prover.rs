@@ -178,7 +178,7 @@ where
     // begin aux trace generation (optional)
     let num_randomness = config.aux_challenges();
 
-    let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness, _randomness_base) =
+    let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness) =
         if num_randomness > 0 {
             let randomness: Vec<SC::Challenge> = (0..num_randomness)
                 .map(|_| challenger.sample_algebra_element())
@@ -200,21 +200,14 @@ where
 
             challenger.observe(aux_trace_commit.clone());
 
-            let randomness_base = randomness
-                .iter()
-                .flat_map(|r| r.as_basis_coefficients_slice())
-                .cloned()
-                .collect_vec();
-
             (
                 Some(aux_trace_commit),
                 Some(aux_trace),
                 Some(aux_trace_data),
                 randomness,
-                randomness_base,
             )
         } else {
-            (None, None, None, vec![], vec![])
+            (None, None, None, vec![])
         };
 
     #[cfg(debug_assertions)]
@@ -222,7 +215,7 @@ where
         air,
         &trace,
         &_aux_trace_opt,
-        &_randomness_base,
+        &randomness,
         public_values,
     );
 
@@ -539,7 +532,6 @@ where
             let mut folder = ProverConstraintFolder {
                 main: main.as_view(),
                 aux: aux.as_ref().map(|a| a.as_view()),
-                randomness,
                 public_values,
                 is_first_row,
                 is_last_row,

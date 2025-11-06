@@ -20,7 +20,8 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     /// Optional: the matrix containing rows on which the aux constraint polynomial is to be evaluated
     pub aux: Option<RowMajorMatrixView<'a, PackedVal<SC>>>,
     /// Optional: the randomness used to compute the aux tract
-    pub randomness: &'a [SC::Challenge],
+    /// Cached EF randomness packed from base randomness to avoid temporary leaks
+    pub packed_randomness: Vec<PackedChallenge<SC>>,
     /// Public inputs to the AIR
     pub public_values: &'a Vec<Val<SC>>,
     /// Evaluations of the Selector polynomial for the first row of the trace
@@ -38,8 +39,6 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     pub accumulator: PackedChallenge<SC>,
     /// Current constraint index being processed
     pub constraint_index: usize,
-    /// Cached EF randomness packed from base randomness to avoid temporary leaks
-    pub packed_randomness: Vec<PackedChallenge<SC>>,
 }
 
 /// Handles constraint verification for the verifier in a STARK system.

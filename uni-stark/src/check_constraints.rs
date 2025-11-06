@@ -33,7 +33,7 @@ pub(crate) fn check_constraints<F, EF, A>(
     air: &A,
     main: &RowMajorMatrix<F>,
     aux_trace: &Option<RowMajorMatrix<F>>,
-    aux_randomness_bases: &[F],
+    aux_randomness: &[EF],
     public_values: &Vec<F>,
 ) where
     F: Field,
@@ -73,14 +73,11 @@ pub(crate) fn check_constraints<F, EF, A>(
             None
         };
 
-        let randomness_ef: Vec<EF> =
-            <EF as BasedVectorSpace<F>>::reconstitute_from_base(aux_randomness_bases.to_vec());
-
         let mut builder = DebugConstraintBuilder {
             row_index,
             main,
             aux,
-            aux_randomness: &randomness_ef,
+            aux_randomness,
             public_values,
             is_first_row: F::from_bool(row_index == 0),
             is_last_row: F::from_bool(row_index == height - 1),
