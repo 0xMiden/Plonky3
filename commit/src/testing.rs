@@ -204,14 +204,19 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use p3_baby_bear::BabyBear;
+    use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
+    use p3_challenger::DuplexChallenger;
     use p3_dft::Radix2DitParallel;
     use p3_field::PrimeCharacteristicRing;
+    use p3_field::extension::BinomialExtensionField;
 
     #[test]
     fn test_commit_single_matrix_matches_commit() {
         type Val = BabyBear;
         type Dft = Radix2DitParallel<Val>;
+        type Challenge = BinomialExtensionField<Val, 4>;
+        type Perm = Poseidon2BabyBear<16>;
+        type Challenger = DuplexChallenger<Val, Perm, 16, 8>;
 
         let log_n = 4;
         let dft = Dft::default();
@@ -238,48 +243,19 @@ mod tests {
                 TwoAdicMultiplicativeCoset::new(Val::ONE, log2_strict_usize(height)).unwrap();
             let evaluation = (domain, matrix.clone());
 
-            // Call commit implementations directly (bypassing trait to avoid Challenger type issues)
-            let coeffs_general: Vec<_> = vec![evaluation.clone()]
-                .into_iter()
-                .map(|(domain, evals)| {
-                    let log_domain_size = log2_strict_usize(domain.size());
-                    assert!(log_domain_size >= pcs.log_n);
-                    assert_eq!(domain.size(), evals.height());
-                    let mut coeffs = pcs.dft.idft_batch(evals);
-                    coeffs
-                        .rows_mut()
-                        .zip(domain.shift_inverse().powers())
-                        .for_each(|(row, weight)| {
-                            row.iter_mut().for_each(|coeff| {
-                                *coeff *= weight;
-                            })
-                        });
-                    coeffs
-                })
-                .collect();
-            let commitment_general: Vec<Vec<Val>> = coeffs_general
-                .clone()
-                .into_iter()
-                .map(|m| m.values)
-                .collect();
-            let prover_data_general = coeffs_general;
+            // Use trait interface for commit (multi-matrix version)
+            let (commitment_general, prover_data_general) =
+                <TrivialPcs<Val, Dft> as Pcs<Challenge, Challenger>>::commit(
+                    &pcs,
+                    vec![evaluation.clone()]
+                );
 
-            // Call commit_single_matrix implementation directly
-            let (domain, evals) = &evaluation;
-            let log_domain_size = log2_strict_usize(domain.size());
-            assert!(log_domain_size >= pcs.log_n);
-            assert_eq!(domain.size(), evals.height());
-            let mut coeffs_single = pcs.dft.idft_batch(evals.clone());
-            coeffs_single
-                .rows_mut()
-                .zip(domain.shift_inverse().powers())
-                .for_each(|(row, weight)| {
-                    row.iter_mut().for_each(|coeff| {
-                        *coeff *= weight;
-                    })
-                });
-            let commitment_single = vec![coeffs_single.values.clone()];
-            let prover_data_single = vec![coeffs_single];
+            // Use trait interface for commit_single_matrix (optimized single-matrix version)
+            let (commitment_single, prover_data_single) =
+                <TrivialPcs<Val, Dft> as Pcs<Challenge, Challenger>>::commit_single_matrix(
+                    &pcs,
+                    &evaluation
+                );
 
             // Compare commitments
             assert_eq!(
