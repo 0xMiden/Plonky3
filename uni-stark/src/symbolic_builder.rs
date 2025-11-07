@@ -1,7 +1,6 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_air::BaseAir;
 use p3_air::{
     Air, AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder,
     PermutationAirBuilder,
@@ -26,7 +25,7 @@ pub fn get_log_quotient_degree<F, A>(
 ) -> usize
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>> + BaseAir<F>,
+    A: Air<SymbolicAirBuilder<F>>,
 {
     assert!(is_zk <= 1, "is_zk must be either 0 or 1");
     // We pad to at least degree 2, since a quotient argument doesn't make sense with smaller degrees.
@@ -55,7 +54,7 @@ pub fn get_max_constraint_degree<F, A>(
 ) -> usize
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>> + BaseAir<F>,
+    A: Air<SymbolicAirBuilder<F>>,
 {
     get_symbolic_constraints(
         air,
@@ -80,7 +79,7 @@ pub fn get_symbolic_constraints<F, A>(
 ) -> Vec<SymbolicExpression<F>>
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>> + BaseAir<F>,
+    A: Air<SymbolicAirBuilder<F>>,
 {
     let mut builder = SymbolicAirBuilder::new(
         preprocessed_width,

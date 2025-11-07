@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 
 use itertools::Itertools;
 use p3_air::Air;
+
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, PackedValue, PrimeCharacteristicRing};
@@ -18,12 +19,16 @@ use crate::{
     get_symbolic_constraints,
 };
 
+#[cfg(debug_assertions)]
+use crate::{DebugConstraintBuilder, check_constraints};
+#[cfg(debug_assertions)]
+use p3_air::BaseAir;
+
 #[instrument(skip_all)]
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove_single_matrix_pcs<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>>
-        + p3_air::BaseAir<Val<SC>>,
+    #[cfg(debug_assertions)] A: for<'a> Air<DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>> + BaseAir<Val<SC>>,
     #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
@@ -42,8 +47,7 @@ where
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>>
-        + p3_air::BaseAir<Val<SC>>,
+    #[cfg(debug_assertions)] A: for<'a> Air<DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>>,
     #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
@@ -62,8 +66,7 @@ where
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 fn prove_internal<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>>
-        + p3_air::BaseAir<Val<SC>>,
+    #[cfg(debug_assertions)] A: for<'a> Air<DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>>,
     #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
@@ -86,7 +89,7 @@ where
     let num_randomness_base = config.aux_challenges() * SC::Challenge::DIMENSION;
     let symbolic_constraints = get_symbolic_constraints(
         air,
-        0,
+        0, // pre-processed col = 0
         public_values.len(),
         aux_width_base,
         num_randomness_base,
@@ -161,7 +164,7 @@ where
     //      trace_data contains the entire tree.
     //          - trace_data.leaves is the matrix containing `ET`.
     let (trace_commit, trace_data) = info_span!("commit to trace data")
-        .in_scope(|| pcs.commit([(ext_trace_domain, trace.clone())]));
+        .in_scope(|| pcs.commit([(ext_trace_domain, trace.clone())])); // TODO: avoid cloning the whole trace
 
     // Observe the instance.
     // degree < 2^255 so we can safely cast log_degree to a u8.
@@ -211,7 +214,7 @@ where
         };
 
     #[cfg(debug_assertions)]
-    crate::check_constraints::check_constraints::<Val<SC>, SC::Challenge, _>(
+    check_constraints::<Val<SC>, SC::Challenge, _>(
         air,
         &trace,
         &_aux_trace_opt,

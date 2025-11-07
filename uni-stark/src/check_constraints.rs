@@ -1,11 +1,14 @@
-use alloc::vec::Vec;
-
 use p3_air::{AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder};
-use p3_field::{BasedVectorSpace, ExtensionField, Field};
+
+use p3_field::{ExtensionField, Field};
 use p3_matrix::stack::ViewPair;
 
 #[cfg(debug_assertions)]
+use alloc::vec::Vec;
+#[cfg(debug_assertions)]
 use p3_air::Air;
+#[cfg(debug_assertions)]
+use p3_field::BasedVectorSpace;
 #[cfg(debug_assertions)]
 use p3_matrix::Matrix;
 #[cfg(debug_assertions)]
@@ -56,18 +59,19 @@ pub(crate) fn check_constraints<F, EF, A>(
 
         // Keep these Vecs in the outer scope so their backing memory lives
         // long enough for the `RowMajorMatrixView` references stored in `aux`.
-        let (aux_local_ext, aux_next_ext);
+        let aux_local_ext;
+        let aux_next_ext;
 
         let aux = if let Some(aux_matrix) = aux_trace.as_ref() {
             let aux_local = unsafe { aux_matrix.row_slice_unchecked(row_index) };
-            aux_local_ext = row_to_ext::<F, EF>(&*aux_local);
+            aux_local_ext = row_to_ext::<F, EF>(&aux_local);
 
             let aux_next = unsafe { aux_matrix.row_slice_unchecked(row_index_next) };
-            aux_next_ext = row_to_ext::<F, EF>(&*aux_next);
+            aux_next_ext = row_to_ext::<F, EF>(&aux_next);
 
             Some(VerticalPair::new(
-                RowMajorMatrixView::new_row(aux_local_ext.as_ref()),
-                RowMajorMatrixView::new_row(aux_next_ext.as_ref()),
+                RowMajorMatrixView::new_row(&aux_local_ext),
+                RowMajorMatrixView::new_row(&aux_next_ext),
             ))
         } else {
             None
@@ -282,8 +286,7 @@ mod tests {
             //
             // ZZ note:
             // This is practically LogUp with univariate. This requires 3 extension columns = 12 base columns.
-            // - Potentially even less: the extension fields for aux1 and aux2 are identical. So we should be able to save another 3 base columns.
-            // - It is better than checking \prod(r-xi) == \prod(r-yi) which requires 4 extension columns (the last two store the running product)
+            // It is better than checking \prod(r-xi) == \prod(r-yi) which requires 4 extension columns (the last two store the running product)
 
             // aux row computation is correct
             let xi = main.top.get(0, 0).unwrap();

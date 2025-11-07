@@ -82,6 +82,7 @@ use p3_matrix::dense::DenseMatrix;
 /// The soundness error of this protocol is approximately `n/|F|` where `n` is the trace
 /// length and `|F|` is the size of the extension field. The random challenge `r` ensures
 /// that a malicious prover cannot construct fake witnesses that pass verification.
+#[allow(clippy::doc_overindented_list_items)]
 pub fn generate_logup_trace<EF, F>(main_trace: &DenseMatrix<F>, randomness: &EF) -> DenseMatrix<F>
 where
     EF: ExtensionField<F>,

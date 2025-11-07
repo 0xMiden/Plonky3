@@ -27,7 +27,6 @@ where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>>
         + for<'a> Air<VerifierConstraintFolder<'a, SC>>
-        + p3_air::BaseAir<Val<SC>>,
 {
     verify_internal(config, air, proof, public_values, true)
 }
@@ -43,7 +42,6 @@ where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>>
         + for<'a> Air<VerifierConstraintFolder<'a, SC>>
-        + p3_air::BaseAir<Val<SC>>,
 {
     verify_internal(config, air, proof, public_values, false)
 }
@@ -60,7 +58,6 @@ where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>>
         + for<'a> Air<VerifierConstraintFolder<'a, SC>>
-        + p3_air::BaseAir<Val<SC>>,
 {
     let Proof {
         commitments,
