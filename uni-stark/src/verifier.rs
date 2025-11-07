@@ -30,7 +30,7 @@ where
     let Proof {
         commitments,
         opened_values,
-        opening_proofs,
+        opening_proof,
         degree_bits,
     } = proof;
 
@@ -149,7 +149,7 @@ where
         ),
     ]);
 
-    pcs.verify(coms_to_verify, opening_proofs, &mut challenger)
+    pcs.verify(coms_to_verify, opening_proof, &mut challenger)
         .map_err(VerificationError::InvalidOpeningArgument)?;
 
     let zps = quotient_chunks_domains

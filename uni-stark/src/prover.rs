@@ -320,7 +320,7 @@ where
     Proof {
         commitments,
         opened_values,
-        opening_proofs: opening_proof,
+        opening_proof,
         degree_bits: log_ext_degree,
     }
 }
