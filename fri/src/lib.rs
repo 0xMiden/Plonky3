@@ -8,12 +8,10 @@ mod config;
 mod hiding_pcs;
 mod proof;
 pub mod prover;
-// mod single_matrix_pcs;
 mod two_adic_pcs;
 pub mod verifier;
 
 pub use config::*;
 pub use hiding_pcs::*;
 pub use proof::*;
-// pub use single_matrix_pcs::*;
 pub use two_adic_pcs::*;

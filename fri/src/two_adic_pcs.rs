@@ -281,9 +281,9 @@ impl<InputProof, InputError: Debug> TwoAdicFriFolding<InputProof, InputError> {
                 for i in 0..folding_factor {
                     // Compute Lagrange basis numerator: \prod(beta - xs[j]) for j \neq i
                     let mut numerator = EF::ONE;
-                    for j in 0..folding_factor {
+                    for (j, &x_j) in xs.iter().enumerate().take(folding_factor) {
                         if i != j {
-                            numerator *= beta - xs[j];
+                            numerator *= beta - x_j;
                         }
                     }
 
