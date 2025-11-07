@@ -64,6 +64,12 @@ where
         evaluations: impl IntoIterator<Item = (Self::Domain, RowMajorMatrix<Val<Self::Domain>>)>,
     ) -> (Self::Commitment, Self::ProverData);
 
+    #[allow(clippy::type_complexity)]
+    fn commit_single_matrix(
+        &self,
+        evaluation: &(Self::Domain, RowMajorMatrix<Val<Self::Domain>>),
+    ) -> (Self::Commitment, Self::ProverData);
+
     /// Commit to the quotient polynomial. We first decompose the quotient polynomial into
     /// `num_chunks` many smaller polynomials each of degree `degree / num_chunks`.
     /// This can have minor performance benefits, but is not strictly necessary in the non `zk` case.

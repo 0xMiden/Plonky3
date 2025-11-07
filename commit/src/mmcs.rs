@@ -44,7 +44,10 @@ pub trait Mmcs<T: Send + Sync + Clone>: Clone {
     ///
     /// # Returns
     /// A tuple `(commitment, prover_data)` as in [`commit`].
-    fn commit_matrix<M: Matrix<T>>(&self, input: M) -> (Self::Commitment, Self::ProverData<M>) {
+    fn commit_matrix<M: Matrix<T> + Clone>(
+        &self,
+        input: M,
+    ) -> (Self::Commitment, Self::ProverData<M>) {
         self.commit(vec![input])
     }
 

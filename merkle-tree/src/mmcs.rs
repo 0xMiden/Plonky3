@@ -127,6 +127,16 @@ where
         (root, tree)
     }
 
+    fn commit_matrix<M: Matrix<P::Value> + Clone>(
+        &self,
+        input: M,
+    ) -> (Self::Commitment, Self::ProverData<M>) {
+        let tree = MerkleTree::new_single_matrix::<P, PW, H, C>(&self.hash, &self.compress, input);
+
+        let root = tree.root();
+        (root, tree)
+    }
+
     /// Opens a batch of rows from committed matrices.
     ///
     /// Returns `(openings, proof)` where `openings` is a vector whose `i`th element is

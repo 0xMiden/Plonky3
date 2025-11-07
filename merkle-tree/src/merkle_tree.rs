@@ -150,6 +150,60 @@ impl<F: Clone + Send + Sync, W: Clone, M: Matrix<F>, const DIGEST_ELEMS: usize>
         }
     }
 
+    /// Build a tree from a **single matrix** (optimized version).
+    ///
+    /// * `h` – hashing function used on raw rows.
+    /// * `c` – 2-to-1 compression function used on digests.
+    /// * `leaves` – reference to a single matrix to commit to.
+    ///
+    /// This is a specialized, more efficient version of [`Self::new`] for the case
+    /// when there is only one matrix. It avoids the overhead of checking multiple
+    /// matrix heights and injection logic.
+    ///
+    /// All rows are hashed row-by-row with `h`. The resulting digests are
+    /// then folded upwards with `c` until a single root remains.
+    ///
+    /// # Panics
+    /// * If the packing widths of `P` and `PW` differ.
+    #[instrument(name = "build merkle tree (single matrix)", level = "debug", skip_all,
+                 fields(dimensions = alloc::format!("{:?}", leaves.dimensions())))]
+    pub fn new_single_matrix<P, PW, H, C>(h: &H, c: &C, leaves: M) -> Self
+    where
+        M: Clone,
+        P: PackedValue<Value = F>,
+        PW: PackedValue<Value = W>,
+        H: CryptographicHasher<F, [W; DIGEST_ELEMS]>
+            + CryptographicHasher<P, [PW; DIGEST_ELEMS]>
+            + Sync,
+        C: PseudoCompressionFunction<[W; DIGEST_ELEMS], 2>
+            + PseudoCompressionFunction<[PW; DIGEST_ELEMS], 2>
+            + Sync,
+    {
+        const {
+            assert!(P::WIDTH == PW::WIDTH, "Packing widths must match");
+        }
+
+        // Hash all rows to create the first digest layer
+        let mut digest_layers = vec![first_digest_layer::<P, _, _, _, DIGEST_ELEMS>(
+            h,
+            vec![&leaves],
+        )];
+
+        // Compress layers until we reach the root (single digest)
+        while digest_layers.last().unwrap().len() > 1 {
+            // compared with many matrices, this single matrix version skips matrix injection
+            let prev_layer = digest_layers.last().unwrap().as_slice();
+            let next_digests = compress::<PW, _, DIGEST_ELEMS>(prev_layer, c);
+            digest_layers.push(next_digests);
+        }
+
+        Self {
+            leaves: vec![leaves.clone()],
+            digest_layers,
+            _phantom: PhantomData,
+        }
+    }
+
     /// Return the root digest of the tree.
     #[must_use]
     pub fn root(&self) -> Hash<F, W, DIGEST_ELEMS>
@@ -507,7 +561,7 @@ mod tests {
         // Validate that `unpack_array` emits WIDTH (= 4) scalar arrays in the
         // right order when the packed words are `[u8; 4]`.
 
-        // Two packed “words”, each four lanes wide
+        // Two packed "words", each four lanes wide
         let packed: [[u8; 4]; 2] = [
             [0, 1, 2, 3], // first word
             [4, 5, 6, 7], // second word
@@ -526,5 +580,81 @@ mod tests {
                 [3, 7], // lane-3
             ]
         );
+    }
+
+    #[test]
+    fn test_new_single_matrix_matches_new() {
+        use p3_baby_bear::BabyBear;
+        use p3_blake3::Blake3;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_symmetric::{CompressionFunctionFromHasher, SerializingHasher};
+
+        type F = BabyBear;
+        type H = SerializingHasher<Blake3>;
+        type C = CompressionFunctionFromHasher<Blake3, 2, 32>;
+
+        let h = H::new(Blake3 {});
+        let c = C::new(Blake3 {});
+
+        // Test with various matrix sizes
+        let test_sizes = vec![
+            (1, 10),   // Single row
+            (2, 10),   // Two rows
+            (8, 135),  // Power of two rows
+            (15, 100), // Non-power of two rows
+            (100, 50), // Larger matrix
+        ];
+
+        for (rows, cols) in test_sizes {
+            let mut rng = SmallRng::seed_from_u64(42 + rows as u64);
+            let matrix = RowMajorMatrix::<F>::rand(&mut rng, rows, cols);
+
+            // Build tree using the general `new` function
+            let tree_new = MerkleTree::<F, u8, RowMajorMatrix<F>, 32>::new::<F, u8, H, C>(
+                &h,
+                &c,
+                vec![matrix.clone()],
+            );
+
+            // Build tree using the optimized `new_single_matrix` function
+            let tree_single = MerkleTree::<F, u8, RowMajorMatrix<F>, 32>::new_single_matrix::<
+                F,
+                u8,
+                H,
+                C,
+            >(&h, &c, matrix.clone());
+
+            // Compare roots
+            assert_eq!(
+                tree_new.root(),
+                tree_single.root(),
+                "Roots differ for matrix size {}x{}",
+                rows,
+                cols
+            );
+
+            // Compare digest layer counts
+            assert_eq!(
+                tree_new.digest_layers.len(),
+                tree_single.digest_layers.len(),
+                "Digest layer counts differ for matrix size {}x{}",
+                rows,
+                cols
+            );
+
+            // Compare each digest layer
+            for (i, (layer_new, layer_single)) in tree_new
+                .digest_layers
+                .iter()
+                .zip(tree_single.digest_layers.iter())
+                .enumerate()
+            {
+                assert_eq!(
+                    layer_new, layer_single,
+                    "Digest layer {} differs for matrix size {}x{}",
+                    i, rows, cols
+                );
+            }
+        }
     }
 }

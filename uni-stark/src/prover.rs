@@ -145,8 +145,12 @@ where
     //      trace_commit contains the root of the tree
     //      trace_data contains the entire tree.
     //          - trace_data.leaves is the matrix containing `ET`.
-    let (trace_commit, trace_data) =
-        info_span!("commit to trace data").in_scope(|| pcs.commit([(ext_trace_domain, trace)]));
+    let (trace_commit, trace_data) = if with_single_matrix_pcs {
+        info_span!("commit to trace data")
+            .in_scope(|| pcs.commit_single_matrix(&(ext_trace_domain, trace)))
+    } else {
+        info_span!("commit to trace data").in_scope(|| pcs.commit([(ext_trace_domain, trace)]))
+    };
 
     // Observe the instance.
     // degree < 2^255 so we can safely cast log_degree to a u8.
@@ -285,90 +289,39 @@ where
 
     let is_random = opt_r_data.is_some();
 
-    if !with_single_matrix_pcs {
-        let (opened_values, opening_proof) = info_span!("open").in_scope(|| {
-            let round0 = opt_r_data.as_ref().map(|r_data| (r_data, vec![vec![zeta]]));
-            let round1 = (&trace_data, vec![vec![zeta, zeta_next]]);
-            let round2 = (&quotient_data, vec![vec![zeta]; quotient_degree]); // open every chunk at zeta
+    let (opened_values, opening_proof) = info_span!("open").in_scope(|| {
+        let round0 = opt_r_data.as_ref().map(|r_data| (r_data, vec![vec![zeta]]));
+        let round1 = (&trace_data, vec![vec![zeta, zeta_next]]);
+        let round2 = (&quotient_data, vec![vec![zeta]; quotient_degree]); // open every chunk at zeta
 
-            let rounds = round0.into_iter().chain([round1, round2]).collect();
+        let rounds = round0.into_iter().chain([round1, round2]).collect();
 
-            pcs.open(rounds, &mut challenger)
-        });
-        let trace_idx = SC::Pcs::TRACE_IDX;
-        let quotient_idx = SC::Pcs::QUOTIENT_IDX;
-        let trace_local = opened_values[trace_idx][0][0].clone();
-        let trace_next = opened_values[trace_idx][0][1].clone();
-        let quotient_chunks = opened_values[quotient_idx]
-            .iter()
-            .map(|v| v[0].clone())
-            .collect_vec();
-        let random = if is_random {
-            Some(opened_values[0][0][0].clone())
-        } else {
-            None
-        };
-        let opened_values = OpenedValues {
-            trace_local,
-            trace_next,
-            quotient_chunks,
-            random,
-        };
-        Proof {
-            commitments,
-            opened_values,
-            opening_proofs: vec![opening_proof],
-            degree_bits: log_ext_degree,
-        }
+        pcs.open(rounds, &mut challenger)
+    });
+    let trace_idx = SC::Pcs::TRACE_IDX;
+    let quotient_idx = SC::Pcs::QUOTIENT_IDX;
+    let trace_local = opened_values[trace_idx][0][0].clone();
+    let trace_next = opened_values[trace_idx][0][1].clone();
+    let quotient_chunks = opened_values[quotient_idx]
+        .iter()
+        .map(|v| v[0].clone())
+        .collect_vec();
+    let random = if is_random {
+        Some(opened_values[0][0][0].clone())
     } else {
-        // let (opened_values, opening_proof)
-        let (opened_values, opening_proofs): (Vec<_>, Vec<_>) = info_span!("open").in_scope(|| {
-            let round0 = opt_r_data.as_ref().map(|r_data| (r_data, vec![vec![zeta]]));
-            let round1 = (&trace_data, vec![vec![zeta, zeta_next]]);
-            let round2 = (&quotient_data, vec![vec![zeta]; quotient_degree]); // open every chunk at zeta
-
-            round0
-                .into_iter()
-                .chain([round1, round2])
-                .map(|round| pcs.open(vec![round], &mut challenger))
-                .unzip()
-        });
-
-        let trace_idx = SC::Pcs::TRACE_IDX;
-        let quotient_idx = SC::Pcs::QUOTIENT_IDX;
-
-        // let trace_local = opened_values[trace_idx][0][0].clone();
-        // let trace_next = opened_values[trace_idx][0][1].clone();
-        let trace_local = opened_values[trace_idx][0][0][0].clone();
-        let trace_next = opened_values[trace_idx][0][0][1].clone();
-
-        // let quotient_chunks = opened_values[quotient_idx]
-        //     .iter()
-        //     .map(|v| v[0].clone())
-        //     .collect_vec();
-        let quotient_chunks = opened_values[quotient_idx][0]
-            .iter()
-            .map(|v| v[0].clone())
-            .collect_vec();
-
-        let random = if is_random {
-            // Some(opened_values[0][0][0].clone())
-            Some(opened_values[0][0][0][0].clone())
-        } else {
-            None
-        };
-        let opened_values = OpenedValues {
-            trace_local,
-            trace_next,
-            quotient_chunks,
-            random,
-        };
-        Proof {
-            commitments,
-            opened_values,
-            opening_proofs,
-            degree_bits: log_ext_degree,
-        }
+        None
+    };
+    let opened_values = OpenedValues {
+        trace_local,
+        trace_next,
+        quotient_chunks,
+        random,
+    };
+    Proof {
+        commitments,
+        opened_values,
+        opening_proofs: vec![opening_proof],
+        degree_bits: log_ext_degree,
     }
 }
 

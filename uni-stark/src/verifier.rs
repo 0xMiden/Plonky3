@@ -17,40 +17,11 @@ use crate::symbolic_builder::{SymbolicAirBuilder, get_log_quotient_degree};
 use crate::{PcsError, Proof, StarkGenericConfig, Val, VerifierConstraintFolder};
 
 #[instrument(skip_all)]
-pub fn verify_single_matrix_pcs<SC, A>(
-    config: &SC,
-    air: &A,
-    proof: &Proof<SC>,
-    public_values: &Vec<Val<SC>>,
-) -> Result<(), VerificationError<PcsError<SC>>>
-where
-    SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
-{
-    verify_internal(config, air, proof, public_values, true)
-}
-
-#[instrument(skip_all)]
 pub fn verify<SC, A>(
     config: &SC,
     air: &A,
     proof: &Proof<SC>,
     public_values: &Vec<Val<SC>>,
-) -> Result<(), VerificationError<PcsError<SC>>>
-where
-    SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
-{
-    verify_internal(config, air, proof, public_values, false)
-}
-
-#[instrument(skip_all)]
-fn verify_internal<SC, A>(
-    config: &SC,
-    air: &A,
-    proof: &Proof<SC>,
-    public_values: &Vec<Val<SC>>,
-    with_single_matrix_pcs: bool,
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
     SC: StarkGenericConfig,
@@ -141,103 +112,45 @@ where
     let zeta = challenger.sample_algebra_element();
     let zeta_next = init_trace_domain.next_point(zeta).unwrap();
 
-    if !with_single_matrix_pcs {
-        // We've already checked that commitments.random and opened_values.random are present if and only if ZK is enabled.
-        let mut coms_to_verify = if let Some(random_commit) = &commitments.random {
-            let random_values = opened_values
-                .random
-                .as_ref()
-                .ok_or(VerificationError::RandomizationError)?;
-            vec![(
-                random_commit.clone(),
-                vec![(trace_domain, vec![(zeta, random_values.clone())])],
-            )]
-        } else {
-            vec![]
-        };
-        coms_to_verify.extend(vec![
-            (
-                commitments.trace.clone(),
-                vec![(
-                    trace_domain,
-                    vec![
-                        (zeta, opened_values.trace_local.clone()),
-                        (zeta_next, opened_values.trace_next.clone()),
-                    ],
-                )],
-            ),
-            (
-                commitments.quotient_chunks.clone(),
-                // Check the commitment on the randomized domains.
-                zip_eq(
-                    randomized_quotient_chunks_domains.iter(),
-                    &opened_values.quotient_chunks,
-                    VerificationError::InvalidProofShape,
-                )?
-                .map(|(domain, values)| (*domain, vec![(zeta, values.clone())]))
-                .collect_vec(),
-            ),
-        ]);
-
-        pcs.verify(coms_to_verify, &opening_proofs[0], &mut challenger)
-            .map_err(VerificationError::InvalidOpeningArgument)?;
+    // We've already checked that commitments.random and opened_values.random are present if and only if ZK is enabled.
+    let mut coms_to_verify = if let Some(random_commit) = &commitments.random {
+        let random_values = opened_values
+            .random
+            .as_ref()
+            .ok_or(VerificationError::RandomizationError)?;
+        vec![(
+            random_commit.clone(),
+            vec![(trace_domain, vec![(zeta, random_values.clone())])],
+        )]
     } else {
-        // We've already checked that commitments.random and opened_values.random are present if and only if ZK is enabled.
-        let mut opening_proofs_index = match &commitments.random {
-            Some(random_commit) => {
-                let random_values = opened_values
-                    .random
-                    .as_ref()
-                    .ok_or(VerificationError::RandomizationError)?;
-
-                pcs.verify(
-                    vec![(
-                        random_commit.clone(),
-                        vec![(trace_domain, vec![(zeta, random_values.clone())])],
-                    )],
-                    &opening_proofs[0],
-                    &mut challenger,
-                )
-                .map_err(VerificationError::InvalidOpeningArgument)?;
-                1
-            }
-            None => 0,
-        };
-
-        pcs.verify(
+        vec![]
+    };
+    coms_to_verify.extend(vec![
+        (
+            commitments.trace.clone(),
             vec![(
-                commitments.trace.clone(),
-                vec![(
-                    trace_domain,
-                    vec![
-                        (zeta, opened_values.trace_local.clone()),
-                        (zeta_next, opened_values.trace_next.clone()),
-                    ],
-                )],
+                trace_domain,
+                vec![
+                    (zeta, opened_values.trace_local.clone()),
+                    (zeta_next, opened_values.trace_next.clone()),
+                ],
             )],
-            &opening_proofs[opening_proofs_index],
-            &mut challenger,
-        )
-        .map_err(VerificationError::InvalidOpeningArgument)?;
-        opening_proofs_index += 1;
+        ),
+        (
+            commitments.quotient_chunks.clone(),
+            // Check the commitment on the randomized domains.
+            zip_eq(
+                randomized_quotient_chunks_domains.iter(),
+                &opened_values.quotient_chunks,
+                VerificationError::InvalidProofShape,
+            )?
+            .map(|(domain, values)| (*domain, vec![(zeta, values.clone())]))
+            .collect_vec(),
+        ),
+    ]);
 
-        pcs.verify(
-            vec![(
-                commitments.quotient_chunks.clone(),
-                // Check the commitment on the randomized domains.
-                zip_eq(
-                    randomized_quotient_chunks_domains.iter(),
-                    &opened_values.quotient_chunks,
-                    VerificationError::InvalidProofShape,
-                )?
-                .map(|(domain, values)| (*domain, vec![(zeta, values.clone())]))
-                .collect_vec(),
-            )],
-            &opening_proofs[opening_proofs_index],
-            &mut challenger,
-        )
+    pcs.verify(coms_to_verify, &opening_proofs[0], &mut challenger)
         .map_err(VerificationError::InvalidOpeningArgument)?;
-    }
 
     let zps = quotient_chunks_domains
         .iter()

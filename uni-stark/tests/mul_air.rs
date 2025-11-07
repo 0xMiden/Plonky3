@@ -20,10 +20,7 @@ use p3_mersenne_31::Mersenne31;
 use p3_symmetric::{
     CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher, TruncatedPermutation,
 };
-use p3_uni_stark::{
-    StarkConfig, StarkGenericConfig, Val, prove, prove_single_matrix_pcs, verify,
-    verify_single_matrix_pcs,
-};
+use p3_uni_stark::{StarkConfig, StarkGenericConfig, Val, prove, prove_single_matrix_pcs, verify};
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -148,7 +145,7 @@ where
         let deserialized_proof =
             postcard::from_bytes(&serialized_proof).expect("unable to deserialize proof");
 
-        verify_single_matrix_pcs(&config, &air, &deserialized_proof, &vec![])
+        verify(&config, &air, &deserialized_proof, &vec![])
     }
 }
 
