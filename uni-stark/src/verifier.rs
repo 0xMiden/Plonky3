@@ -149,7 +149,7 @@ where
         ),
     ]);
 
-    pcs.verify(coms_to_verify, &opening_proofs[0], &mut challenger)
+    pcs.verify(coms_to_verify, &opening_proofs, &mut challenger)
         .map_err(VerificationError::InvalidOpeningArgument)?;
 
     let zps = quotient_chunks_domains
