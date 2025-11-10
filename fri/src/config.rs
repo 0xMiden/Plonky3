@@ -10,7 +10,7 @@ pub struct FriParameters<M> {
     pub log_blowup: usize,
     // TODO: This parameter and FRI early stopping are not yet implemented in `CirclePcs`.
     /// Log of the size of the final polynomial.
-    /// Since we fold `log_folding_factor` bits in each iteration, it much be that
+    /// Since we fold `log_folding_factor` bits in each iteration, it must be that
     ///   log_final_poly_len \equiv log_original_poly_len \pmod log_folding_factor
     pub log_final_poly_len: usize,
     pub num_queries: usize,
@@ -42,6 +42,10 @@ impl<M> FriParameters<M> {
         mmcs: M,
         log_folding_factor: usize,
     ) -> Self {
+        assert!(
+            log_folding_factor >= 1,
+            "log_folding_factor must be at least 1"
+        );
         Self {
             log_blowup,
             log_final_poly_len,
