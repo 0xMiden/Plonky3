@@ -127,7 +127,7 @@ where
         (root, tree)
     }
 
-    fn commit_matrix<M: Matrix<P::Value> + Clone>(
+    fn commit_matrix<M: Matrix<P::Value>>(
         &self,
         input: M,
     ) -> (Self::Commitment, Self::ProverData<M>) {

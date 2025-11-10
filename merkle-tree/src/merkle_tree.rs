@@ -169,7 +169,6 @@ impl<F: Clone + Send + Sync, W: Clone, M: Matrix<F>, const DIGEST_ELEMS: usize>
                  fields(dimensions = alloc::format!("{:?}", leaves.dimensions())))]
     pub fn new_single_matrix<P, PW, H, C>(h: &H, c: &C, leaves: M) -> Self
     where
-        M: Clone,
         P: PackedValue<Value = F>,
         PW: PackedValue<Value = W>,
         H: CryptographicHasher<F, [W; DIGEST_ELEMS]>
@@ -198,7 +197,7 @@ impl<F: Clone + Send + Sync, W: Clone, M: Matrix<F>, const DIGEST_ELEMS: usize>
         }
 
         Self {
-            leaves: vec![leaves.clone()],
+            leaves: vec![leaves],
             digest_layers,
             _phantom: PhantomData,
         }

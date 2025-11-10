@@ -247,14 +247,14 @@ mod tests {
             let (commitment_general, prover_data_general) =
                 <TrivialPcs<Val, Dft> as Pcs<Challenge, Challenger>>::commit(
                     &pcs,
-                    vec![evaluation.clone()]
+                    vec![evaluation.clone()],
                 );
 
             // Use trait interface for commit_single_matrix (optimized single-matrix version)
             let (commitment_single, prover_data_single) =
                 <TrivialPcs<Val, Dft> as Pcs<Challenge, Challenger>>::commit_single_matrix(
                     &pcs,
-                    &evaluation
+                    &evaluation,
                 );
 
             // Compare commitments
