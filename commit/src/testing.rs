@@ -90,31 +90,6 @@ where
         )
     }
 
-    fn commit_single_matrix(
-        &self,
-        evaluation: &(Self::Domain, RowMajorMatrix<crate::Val<Self::Domain>>),
-    ) -> (Self::Commitment, Self::ProverData) {
-        let (domain, evals) = evaluation;
-        let log_domain_size = log2_strict_usize(domain.size());
-
-        // for now, only commit on larger domain than natural
-        assert!(log_domain_size >= self.log_n);
-        assert_eq!(domain.size(), evals.height());
-
-        // coset_idft_batch
-        let mut coeffs = self.dft.idft_batch(evals.clone());
-        coeffs
-            .rows_mut()
-            .zip(domain.shift_inverse().powers())
-            .for_each(|(row, weight)| {
-                row.iter_mut().for_each(|coeff| {
-                    *coeff *= weight;
-                })
-            });
-
-        (vec![coeffs.values.clone()], vec![coeffs])
-    }
-
     fn get_evaluations_on_domain<'a>(
         &self,
         prover_data: &'a Self::ProverData,
@@ -198,86 +173,5 @@ where
             }
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
-    use p3_challenger::DuplexChallenger;
-    use p3_dft::Radix2DitParallel;
-    use p3_field::PrimeCharacteristicRing;
-    use p3_field::extension::BinomialExtensionField;
-
-    #[test]
-    fn test_commit_single_matrix_matches_commit() {
-        type Val = BabyBear;
-        type Dft = Radix2DitParallel<Val>;
-        type Challenge = BinomialExtensionField<Val, 4>;
-        type Perm = Poseidon2BabyBear<16>;
-        type Challenger = DuplexChallenger<Val, Perm, 16, 8>;
-
-        let log_n = 4;
-        let dft = Dft::default();
-        let pcs = TrivialPcs::<Val, Dft> {
-            dft,
-            log_n,
-            _phantom: PhantomData,
-        };
-
-        // Create test matrices of various sizes
-        let test_sizes = vec![
-            (16, 1),  // Minimum size (degree = 2^4)
-            (16, 10), // Multiple columns
-            (32, 5),  // Larger domain
-            (64, 20), // Even larger
-        ];
-
-        for (height, width) in test_sizes {
-            // Create a test matrix with simple sequential values
-            let values: Vec<Val> = (0..height * width).map(|i| Val::new(i as u32)).collect();
-            let matrix = RowMajorMatrix::new(values, width);
-
-            let domain =
-                TwoAdicMultiplicativeCoset::new(Val::ONE, log2_strict_usize(height)).unwrap();
-            let evaluation = (domain, matrix.clone());
-
-            // Use trait interface for commit (multi-matrix version)
-            let (commitment_general, prover_data_general) =
-                <TrivialPcs<Val, Dft> as Pcs<Challenge, Challenger>>::commit(
-                    &pcs,
-                    vec![evaluation.clone()]
-                );
-
-            // Use trait interface for commit_single_matrix (optimized single-matrix version)
-            let (commitment_single, prover_data_single) =
-                <TrivialPcs<Val, Dft> as Pcs<Challenge, Challenger>>::commit_single_matrix(
-                    &pcs,
-                    &evaluation
-                );
-
-            // Compare commitments
-            assert_eq!(
-                commitment_general, commitment_single,
-                "Commitments differ for matrix size {}x{}",
-                height, width
-            );
-
-            // Compare prover data
-            assert_eq!(
-                prover_data_general.len(),
-                prover_data_single.len(),
-                "Prover data lengths differ for matrix size {}x{}",
-                height,
-                width
-            );
-
-            assert_eq!(
-                prover_data_general[0].values, prover_data_single[0].values,
-                "Prover data differs for matrix size {}x{}",
-                height, width
-            );
-        }
     }
 }

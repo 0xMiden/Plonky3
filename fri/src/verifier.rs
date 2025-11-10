@@ -244,8 +244,8 @@ where
     }
     let mut folded_eval = ro_iter.next().unwrap().1;
 
-    let log_folding_factor = params.log_folding_factor;
-    let folding_factor = params.folding_factor();
+    let log_folding_factor = folding.log_folding_factor();
+    let folding_factor = 1 << log_folding_factor;
 
     // We start with evaluations over a domain of size (1 << log_global_max_height). We fold
     // using FRI until the domain size reaches (1 << log_final_height).
@@ -305,7 +305,6 @@ where
             log_folded_height,
             beta,
             evals.into_iter(),
-            folding_factor,
         );
 
         // If there are new polynomials to roll in at the folded height, do so.

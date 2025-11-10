@@ -164,7 +164,7 @@ where
             .map_err(FriError::CommitPhaseMmcsError)?;
 
         // Fold the pair of evaluations of sibling nodes into the evaluation of the parent fri node.
-        folded_eval = folding.fold_row(index, log_folded_height, beta, evals.into_iter(), 2);
+        folded_eval = folding.fold_row(index, log_folded_height, beta, evals.into_iter());
     }
 
     // If ro_iter is not empty, we failed to fold in some polynomial evaluations.

@@ -111,23 +111,6 @@ where
         Pcs::<Challenge, Challenger>::commit(&self.inner, randomized_evaluations)
     }
 
-    fn commit_single_matrix(
-        &self,
-        evaluation: &(Self::Domain, RowMajorMatrix<p3_commit::Val<Self::Domain>>),
-    ) -> (Self::Commitment, Self::ProverData) {
-        let (domain, mat) = evaluation;
-        let mat_width = mat.width();
-        let mut random_evaluation = add_random_cols(
-            mat.clone(),
-            mat_width + 2 * self.num_random_codewords,
-            &mut *self.rng.borrow_mut(),
-        );
-        random_evaluation.width = mat_width + self.num_random_codewords;
-        let randomized_evaluation = (*domain, random_evaluation);
-
-        Pcs::<Challenge, Challenger>::commit_single_matrix(&self.inner, &randomized_evaluation)
-    }
-
     /// Commit to the quotient polynomial. We first decompose the quotient polynomial into
     /// `num_chunks` many smaller polynomials each of degree `degree / num_chunks`.
     /// These quotient polynomials are then randomized as explained in Section 4.2 of

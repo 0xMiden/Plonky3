@@ -130,24 +130,6 @@ where
         (comm, mmcs_data)
     }
 
-    fn commit_single_matrix(
-        &self,
-        evaluation: &(Self::Domain, RowMajorMatrix<p3_commit::Val<Self::Domain>>),
-    ) -> (Self::Commitment, Self::ProverData) {
-        let (domain, evals) = evaluation;
-        assert!(
-            domain.log_n >= 2,
-            "CirclePcs cannot commit to a matrix with fewer than 4 rows.",
-            // (because we bivariate fold one bit, and fri needs one more bit)
-        );
-        let lde = CircleEvaluations::from_natural_order(*domain, evals.clone())
-            .extrapolate(CircleDomain::standard(
-                domain.log_n + self.fri_params.log_blowup,
-            ))
-            .to_cfft_order();
-        self.mmcs.commit_matrix(lde)
-    }
-
     fn get_evaluations_on_domain<'a>(
         &self,
         data: &'a Self::ProverData,
