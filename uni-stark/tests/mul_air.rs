@@ -125,6 +125,7 @@ where
     StandardUniform: Distribution<Val<SC>>,
 {
     let trace = air.random_valid_trace(log_height, true);
+
     let proof = prove(&config, &air, trace, &vec![]);
 
     let serialized_proof = postcard::to_allocvec(&proof).expect("unable to serialize proof");

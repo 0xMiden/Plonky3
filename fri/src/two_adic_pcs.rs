@@ -426,24 +426,6 @@ where
         self.mmcs.commit(ldes)
     }
 
-    fn commit_single_matrix(
-        &self,
-        evaluation: &(Self::Domain, RowMajorMatrix<p3_commit::Val<Self::Domain>>),
-    ) -> (Self::Commitment, Self::ProverData) {
-        let (domain, evals) = evaluation;
-        assert_eq!(domain.size(), evals.height());
-
-        // Compute LDE and bit reverse
-        let shift = Val::GENERATOR / domain.shift();
-        let lde = self
-            .dft
-            .coset_lde_batch(evals.clone(), self.fri.log_blowup, shift)
-            .bit_reverse_rows()
-            .to_row_major_matrix();
-
-        // Commit to the single matrix
-        self.mmcs.commit(vec![lde])
-    }
 
     /// Given the evaluations on a domain `gH`, return the evaluations on a different domain `g'K`.
     ///

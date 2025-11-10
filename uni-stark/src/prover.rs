@@ -246,7 +246,6 @@ where
     let zeta_next = trace_domain.next_point(zeta).unwrap();
 
     let is_random = opt_r_data.is_some();
-
     let (opened_values, opening_proof) = info_span!("open").in_scope(|| {
         let round0 = opt_r_data.as_ref().map(|r_data| (r_data, vec![vec![zeta]]));
         let round1 = (&trace_data, vec![vec![zeta, zeta_next]]);
