@@ -95,7 +95,7 @@ where
 
     while folded.len() > params.blowup() {
         let leaves = RowMajorMatrix::new(folded, 2);
-        let (commit, prover_data) = params.mmcs.commit_matrix(leaves);
+        let (commit, prover_data) = params.mmcs.commit(vec![leaves]);
         challenger.observe(commit.clone());
 
         let beta: Challenge = challenger.sample_algebra_element();

@@ -35,19 +35,6 @@ pub trait Mmcs<T: Send + Sync + Clone>: Clone {
     /// - `prover_data` is auxiliary data used by the prover open the commitment.
     fn commit<M: Matrix<T>>(&self, inputs: Vec<M>) -> (Self::Commitment, Self::ProverData<M>);
 
-    /// Convenience method to commit to a single matrix.
-    ///
-    /// Internally wraps the matrix in a singleton vector and delegates to [`commit`].
-    ///
-    /// # Parameters
-    /// - `input`: The matrix to commit to.
-    ///
-    /// # Returns
-    /// A tuple `(commitment, prover_data)` as in [`commit`].
-    fn commit_matrix<M: Matrix<T>>(&self, input: M) -> (Self::Commitment, Self::ProverData<M>) {
-        self.commit(vec![input])
-    }
-
     /// Convenience method to commit to a single column vector, treated as a column matrix.
     ///
     /// Automatically wraps the vector into a column matrix using [`RowMajorMatrix::new_col`].
@@ -61,7 +48,7 @@ pub trait Mmcs<T: Send + Sync + Clone>: Clone {
     where
         T: Clone + Send + Sync,
     {
-        self.commit_matrix(RowMajorMatrix::new_col(input))
+        self.commit(vec![RowMajorMatrix::new_col(input)])
     }
 
     /// Opens a specific row (identified by `index`) from each matrix in the batch.

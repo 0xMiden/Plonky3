@@ -145,7 +145,7 @@ where
                 domain.log_n + self.fri_params.log_blowup,
             ))
             .to_cfft_order();
-        self.mmcs.commit_matrix(lde)
+        self.mmcs.commit(vec![lde])
     }
 
     fn get_evaluations_on_domain<'a>(

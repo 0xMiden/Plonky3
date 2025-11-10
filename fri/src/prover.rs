@@ -178,7 +178,7 @@ where
         let leaves = RowMajorMatrix::new(folded, folding_factor);
 
         // Commit to these evaluations and observe the commitment.
-        let (commit, prover_data) = params.mmcs.commit_matrix(leaves);
+        let (commit, prover_data) = params.mmcs.commit(vec![leaves]);
         challenger.observe(commit.clone());
         commits.push(commit);
 

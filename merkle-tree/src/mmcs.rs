@@ -120,19 +120,18 @@ where
 
     fn commit<M: Matrix<P::Value>>(
         &self,
-        inputs: Vec<M>,
+        mut inputs: Vec<M>,
     ) -> (Self::Commitment, Self::ProverData<M>) {
-        let tree = MerkleTree::new::<P, PW, H, C>(&self.hash, &self.compress, inputs);
-        let root = tree.root();
-        (root, tree)
-    }
-
-    fn commit_matrix<M: Matrix<P::Value>>(
-        &self,
-        input: M,
-    ) -> (Self::Commitment, Self::ProverData<M>) {
-        let tree = MerkleTree::new_single_matrix::<P, PW, H, C>(&self.hash, &self.compress, input);
-
+        let tree = if inputs.len() == 1 {
+            // Optimized path for single matrix: skip height checking and injection logic
+            MerkleTree::new_single_matrix::<P, PW, H, C>(
+                &self.hash,
+                &self.compress,
+                inputs.pop().unwrap(),
+            )
+        } else {
+            MerkleTree::new::<P, PW, H, C>(&self.hash, &self.compress, inputs)
+        };
         let root = tree.root();
         (root, tree)
     }

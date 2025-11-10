@@ -442,7 +442,7 @@ where
             .to_row_major_matrix();
 
         // Commit to the single matrix
-        self.mmcs.commit_matrix(lde)
+        self.mmcs.commit(vec![lde])
     }
 
     /// Given the evaluations on a domain `gH`, return the evaluations on a different domain `g'K`.

@@ -68,7 +68,9 @@ where
     fn commit_single_matrix(
         &self,
         evaluation: &(Self::Domain, RowMajorMatrix<Val<Self::Domain>>),
-    ) -> (Self::Commitment, Self::ProverData);
+    ) -> (Self::Commitment, Self::ProverData) {
+        self.commit(core::iter::once(evaluation.clone()))
+    }
 
     /// Commit to the quotient polynomial. We first decompose the quotient polynomial into
     /// `num_chunks` many smaller polynomials each of degree `degree / num_chunks`.
