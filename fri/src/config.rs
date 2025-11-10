@@ -72,6 +72,11 @@ pub trait FriFoldingStrategy<F: Field, EF: ExtensionField<F>> {
     /// They will be passed to our callbacks, but ignored (shifted off) by FRI.
     fn extra_query_index_bits(&self) -> usize;
 
+    /// Log of the folding factor (arity). Defaults to 1 (folding factor of 2).
+    fn log_folding_factor(&self) -> usize {
+        1
+    }
+
     /// Fold a row, returning a single column.
     /// Supporting arbitrary folding width that is a power of 2.
     fn fold_row(
@@ -80,11 +85,10 @@ pub trait FriFoldingStrategy<F: Field, EF: ExtensionField<F>> {
         log_height: usize,
         beta: EF,
         evals: impl Iterator<Item = EF>,
-        folding_factor: usize,
     ) -> EF;
 
     /// Same as applying fold_row to every row, possibly faster.
-    fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, m: M, folding_factor: usize) -> Vec<EF>;
+    fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, m: M) -> Vec<EF>;
 }
 
 /// Creates a minimal set of `FriParameters` for testing purposes.
