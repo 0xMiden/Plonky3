@@ -19,25 +19,6 @@ use crate::{
 
 #[instrument(skip_all)]
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
-pub fn prove_single_matrix_pcs<
-    SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
-    #[cfg(not(debug_assertions))] A,
->(
-    config: &SC,
-    air: &A,
-    trace: RowMajorMatrix<Val<SC>>,
-    public_values: &Vec<Val<SC>>,
-) -> Proof<SC>
-where
-    SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
-{
-    prove_internal(config, air, trace, public_values, true)
-}
-
-#[instrument(skip_all)]
-#[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove<
     SC,
     #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
@@ -47,26 +28,6 @@ pub fn prove<
     air: &A,
     trace: RowMajorMatrix<Val<SC>>,
     public_values: &Vec<Val<SC>>,
-) -> Proof<SC>
-where
-    SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
-{
-    prove_internal(config, air, trace, public_values, false)
-}
-
-#[instrument(skip_all)]
-#[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
-fn prove_internal<
-    SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
-    #[cfg(not(debug_assertions))] A,
->(
-    config: &SC,
-    air: &A,
-    trace: RowMajorMatrix<Val<SC>>,
-    public_values: &Vec<Val<SC>>,
-    with_single_matrix_pcs: bool,
 ) -> Proof<SC>
 where
     SC: StarkGenericConfig,
@@ -145,12 +106,9 @@ where
     //      trace_commit contains the root of the tree
     //      trace_data contains the entire tree.
     //          - trace_data.leaves is the matrix containing `ET`.
-    let (trace_commit, trace_data) = if with_single_matrix_pcs {
-        info_span!("commit to trace data")
-            .in_scope(|| pcs.commit_single_matrix(&(ext_trace_domain, trace)))
-    } else {
-        info_span!("commit to trace data").in_scope(|| pcs.commit([(ext_trace_domain, trace)]))
-    };
+    // Note: commit() automatically uses the optimized single-matrix path when given a single matrix
+    let (trace_commit, trace_data) =
+        info_span!("commit to trace data").in_scope(|| pcs.commit([(ext_trace_domain, trace)]));
 
     // Observe the instance.
     // degree < 2^255 so we can safely cast log_degree to a u8.
