@@ -151,6 +151,8 @@ where
             // Ask config (VM) to build the aux trace if available.
             let aux_trace_opt = config.build_aux_trace(&trace, &randomness);
 
+            // At the moment, it panics if the aux trace is not available.
+            // In a future PR, we will introduce LogUp based permutation as a fall back if aux trace is not available.
             let aux_trace = aux_trace_opt
                 .expect("aux_challenges > 0 but no aux trace was provided or generated");
 
