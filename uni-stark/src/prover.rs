@@ -3,7 +3,6 @@ use alloc::vec::Vec;
 
 use itertools::Itertools;
 use p3_air::Air;
-
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, PackedValue, PrimeCharacteristicRing};
@@ -15,14 +14,10 @@ use tracing::{debug_span, info_span, instrument};
 
 use crate::{
     Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
-    StarkGenericConfig, SymbolicAirBuilder, Val, generate_logup_trace, get_log_quotient_degree,
-    get_symbolic_constraints,
+    StarkGenericConfig, SymbolicAirBuilder, Val, get_log_quotient_degree, get_symbolic_constraints,
 };
-
 #[cfg(debug_assertions)]
 use crate::{DebugConstraintBuilder, check_constraints};
-#[cfg(debug_assertions)]
-use p3_air::BaseAir;
 
 #[instrument(skip_all)]
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
@@ -40,8 +35,9 @@ where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
 {
-    #[cfg(debug_assertions)]
-    crate::check_constraints::check_constraints(air, &trace, public_values);
+    // Note: constraint checking is done after aux trace generation (see line ~173)
+    // #[cfg(debug_assertions)]
+    // crate::check_constraints::check_constraints(air, &trace, public_values);
 
     // Compute the height `N = 2^n` and `log_2(height)`, `n`, of the trace.
     let degree = trace.height();
@@ -152,13 +148,8 @@ where
                 .map(|_| challenger.sample_algebra_element())
                 .collect();
 
-            // Ask config (VM) to build the aux trace if available; otherwise, fall back to legacy LogUp generator.
-            let aux_trace_opt = config.build_aux_trace(&trace, &randomness).or_else(|| {
-                Some(generate_logup_trace::<SC::Challenge, _>(
-                    &trace,
-                    &randomness[0],
-                ))
-            });
+            // Ask config (VM) to build the aux trace if available.
+            let aux_trace_opt = config.build_aux_trace(&trace, &randomness);
 
             let aux_trace = aux_trace_opt
                 .expect("aux_challenges > 0 but no aux trace was provided or generated");
