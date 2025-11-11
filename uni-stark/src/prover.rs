@@ -26,25 +26,6 @@ use p3_air::BaseAir;
 
 #[instrument(skip_all)]
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
-pub fn prove_single_matrix_pcs<
-    SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>> + BaseAir<Val<SC>>,
-    #[cfg(not(debug_assertions))] A,
->(
-    config: &SC,
-    air: &A,
-    trace: RowMajorMatrix<Val<SC>>,
-    public_values: &Vec<Val<SC>>,
-) -> Proof<SC>
-where
-    SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
-{
-    prove_internal(config, air, trace, public_values, true)
-}
-
-#[instrument(skip_all)]
-#[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove<
     SC,
     #[cfg(debug_assertions)] A: for<'a> Air<DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>>,
@@ -59,26 +40,9 @@ where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
 {
-    prove_internal(config, air, trace, public_values, false)
-}
+    #[cfg(debug_assertions)]
+    crate::check_constraints::check_constraints(air, &trace, public_values);
 
-#[instrument(skip_all)]
-#[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
-fn prove_internal<
-    SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>>,
-    #[cfg(not(debug_assertions))] A,
->(
-    config: &SC,
-    air: &A,
-    trace: RowMajorMatrix<Val<SC>>,
-    public_values: &Vec<Val<SC>>,
-    with_single_matrix_pcs: bool,
-) -> Proof<SC>
-where
-    SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
-{
     // Compute the height `N = 2^n` and `log_2(height)`, `n`, of the trace.
     let degree = trace.height();
     let log_degree = log2_strict_usize(degree);
@@ -163,8 +127,9 @@ where
     //      trace_commit contains the root of the tree
     //      trace_data contains the entire tree.
     //          - trace_data.leaves is the matrix containing `ET`.
+    // Note: commit() automatically uses the optimized single-matrix path when given a single matrix
     let (trace_commit, trace_data) = info_span!("commit to trace data")
-        .in_scope(|| pcs.commit([(ext_trace_domain, trace.clone())])); // TODO: avoid cloning the whole trace
+        .in_scope(|| pcs.commit([(ext_trace_domain, trace.clone())]));
 
     // Observe the instance.
     // degree < 2^255 so we can safely cast log_degree to a u8.
@@ -352,112 +317,52 @@ where
     let zeta_next = trace_domain.next_point(zeta).unwrap();
 
     let is_random = opt_r_data.is_some();
-
-    if !with_single_matrix_pcs {
-        let (opened_values, opening_proof) = info_span!("open").in_scope(|| {
-            let mut rounds = vec![];
-            if let Some(r_data) = opt_r_data.as_ref() {
-                rounds.push((r_data, vec![vec![zeta]]));
-            }
-            rounds.push((&trace_data, vec![vec![zeta, zeta_next]]));
-            rounds.push((&quotient_data, vec![vec![zeta]; quotient_degree])); // open every chunk at zeta
-            if let Some(aux_data) = aux_trace_data_opt.as_ref() {
-                rounds.push((aux_data, vec![vec![zeta, zeta_next]]));
-            }
-
-            pcs.open(rounds, &mut challenger)
-        });
-        let trace_idx = SC::Pcs::TRACE_IDX;
-        let quotient_idx = SC::Pcs::QUOTIENT_IDX;
-        let trace_local = opened_values[trace_idx][0][0].clone();
-        let trace_next = opened_values[trace_idx][0][1].clone();
-        let quotient_chunks = opened_values[quotient_idx]
-            .iter()
-            .map(|v| v[0].clone())
-            .collect_vec();
-
-        let (aux_trace_local, aux_trace_next) = if aux_trace_data_opt.is_some() {
-            let aux_local = opened_values[quotient_idx + 1][0][0].clone();
-            let aux_next = opened_values[quotient_idx + 1][0][1].clone();
-            (Some(aux_local), Some(aux_next))
-        } else {
-            (None, None)
-        };
-        let random = if is_random {
-            Some(opened_values[0][0][0].clone())
-        } else {
-            None
-        };
-        let opened_values = OpenedValues {
-            trace_local,
-            trace_next,
-            quotient_chunks,
-            aux_trace_local,
-            aux_trace_next,
-            random,
-        };
-        Proof {
-            commitments,
-            opened_values,
-            opening_proofs: vec![opening_proof],
-            degree_bits: log_ext_degree,
+    let (opened_values, opening_proof) = info_span!("open").in_scope(|| {
+        let mut rounds = vec![];
+        if let Some(r_data) = opt_r_data.as_ref() {
+            rounds.push((r_data, vec![vec![zeta]]));
         }
+        rounds.push((&trace_data, vec![vec![zeta, zeta_next]]));
+        rounds.push((&quotient_data, vec![vec![zeta]; quotient_degree])); // open every chunk at zeta
+        if let Some(aux_data) = aux_trace_data_opt.as_ref() {
+            rounds.push((aux_data, vec![vec![zeta, zeta_next]]));
+        }
+
+        pcs.open(rounds, &mut challenger)
+    });
+    let trace_idx = SC::Pcs::TRACE_IDX;
+    let quotient_idx = SC::Pcs::QUOTIENT_IDX;
+    let trace_local = opened_values[trace_idx][0][0].clone();
+    let trace_next = opened_values[trace_idx][0][1].clone();
+    let quotient_chunks = opened_values[quotient_idx]
+        .iter()
+        .map(|v| v[0].clone())
+        .collect_vec();
+    let (aux_trace_local, aux_trace_next) = if aux_trace_data_opt.is_some() {
+        let aux_local = opened_values[quotient_idx + 1][0][0].clone();
+        let aux_next = opened_values[quotient_idx + 1][0][1].clone();
+        (Some(aux_local), Some(aux_next))
     } else {
-        let (opened_values, opening_proofs): (Vec<_>, Vec<_>) = info_span!("open").in_scope(|| {
-            let mut rounds = vec![];
-            if let Some(r_data) = opt_r_data.as_ref() {
-                rounds.push((r_data, vec![vec![zeta]]));
-            }
-            rounds.push((&trace_data, vec![vec![zeta, zeta_next]]));
-            rounds.push((&quotient_data, vec![vec![zeta]; quotient_degree])); // open every chunk at zeta
-            if let Some(aux_data) = aux_trace_data_opt.as_ref() {
-                rounds.push((aux_data, vec![vec![zeta, zeta_next]]));
-            }
-
-            rounds
-                .into_iter()
-                .map(|round| pcs.open(vec![round], &mut challenger))
-                .unzip()
-        });
-
-        let trace_idx = SC::Pcs::TRACE_IDX;
-        let quotient_idx = SC::Pcs::QUOTIENT_IDX;
-
-        let trace_local = opened_values[trace_idx][0][0][0].clone();
-        let trace_next = opened_values[trace_idx][0][0][1].clone();
-
-        let quotient_chunks = opened_values[quotient_idx][0]
-            .iter()
-            .map(|v| v[0].clone())
-            .collect_vec();
-
-        let (aux_trace_local, aux_trace_next) = if aux_trace_data_opt.is_some() {
-            let aux_local = opened_values[quotient_idx + 1][0][0][0].clone();
-            let aux_next = opened_values[quotient_idx + 1][0][0][1].clone();
-            (Some(aux_local), Some(aux_next))
-        } else {
-            (None, None)
-        };
-
-        let random = if is_random {
-            Some(opened_values[0][0][0][0].clone())
-        } else {
-            None
-        };
-        let opened_values = OpenedValues {
-            trace_local,
-            trace_next,
-            quotient_chunks,
-            aux_trace_local,
-            aux_trace_next,
-            random,
-        };
-        Proof {
-            commitments,
-            opened_values,
-            opening_proofs,
-            degree_bits: log_ext_degree,
-        }
+        (None, None)
+    };
+    let random = if is_random {
+        Some(opened_values[0][0][0].clone())
+    } else {
+        None
+    };
+    let opened_values = OpenedValues {
+        trace_local,
+        trace_next,
+        aux_trace_local,
+        aux_trace_next,
+        quotient_chunks,
+        random,
+    };
+    Proof {
+        commitments,
+        opened_values,
+        opening_proof,
+        degree_bits: log_ext_degree,
     }
 }
 

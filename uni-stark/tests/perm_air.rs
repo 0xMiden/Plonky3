@@ -14,10 +14,7 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-use p3_uni_stark::{
-    StarkConfig, StarkGenericConfig, prove, prove_single_matrix_pcs, verify,
-    verify_single_matrix_pcs,
-};
+use p3_uni_stark::{StarkConfig, StarkGenericConfig, prove, verify};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
@@ -204,11 +201,8 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
     );
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
-    let proof = prove(&config, &FibPermAir {}, trace.clone(), &pis);
+    let proof = prove(&config, &FibPermAir {}, trace, &pis);
     verify(&config, &FibPermAir {}, &proof, &pis).expect("verification failed");
-
-    let proof = prove_single_matrix_pcs(&config, &FibPermAir {}, trace, &pis);
-    verify_single_matrix_pcs(&config, &FibPermAir {}, &proof, &pis).expect("verification failed");
 }
 
 #[test]

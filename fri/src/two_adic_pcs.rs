@@ -88,7 +88,10 @@ pub type CommitmentWithOpeningPoints<Challenge, Commitment, Domain> = (
     )>,
 );
 
-pub struct TwoAdicFriFolding<InputProof, InputError>(pub PhantomData<(InputProof, InputError)>);
+pub struct TwoAdicFriFolding<InputProof, InputError> {
+    pub log_folding_factor: usize,
+    pub _phantom: PhantomData<(InputProof, InputError)>,
+}
 
 pub type TwoAdicFriFoldingForMmcs<F, M> =
     TwoAdicFriFolding<Vec<BatchOpening<F, M>>, <M as Mmcs<F>>::Error>;
@@ -103,6 +106,10 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
         0
     }
 
+    fn log_folding_factor(&self) -> usize {
+        self.log_folding_factor
+    }
+
     fn fold_row(
         &self,
         index: usize,
@@ -110,6 +117,36 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
         beta: EF,
         evals: impl Iterator<Item = EF>,
     ) -> EF {
+        let folding_factor = 1 << self.log_folding_factor;
+        if folding_factor == 2 {
+            self.fold_row_2(index, log_height, beta, evals)
+        } else {
+            self.fold_row_arbitrary(index, log_height, beta, evals, folding_factor)
+        }
+    }
+
+    fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, m: M) -> Vec<EF> {
+        let folding_factor = 1 << self.log_folding_factor;
+        if folding_factor == 2 {
+            self.fold_matrix_2(beta, m)
+        } else {
+            self.fold_matrix_arbitrary(beta, m, folding_factor)
+        }
+    }
+}
+
+impl<InputProof, InputError: Debug> TwoAdicFriFolding<InputProof, InputError> {
+    fn fold_row_2<EF, F>(
+        &self,
+        index: usize,
+        log_height: usize,
+        beta: EF,
+        evals: impl Iterator<Item = EF>,
+    ) -> EF
+    where
+        EF: ExtensionField<F>,
+        F: TwoAdicField,
+    {
         let arity = 2;
         let log_arity = 1;
         let (e0, e1) = evals
@@ -131,18 +168,18 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
         // Note we do not want to do an EF division as that is far more expensive.
     }
 
-    fn fold_row_arbitrary(
+    fn fold_row_arbitrary<EF, F>(
         &self,
         index: usize,
         log_height: usize,
         beta: EF,
         evals: impl ParallelIterator<Item = EF>,
         folding_factor: usize,
-    ) -> EF {
-        if folding_factor == 2 {
-            return self.fold_row(index, log_height, beta, evals);
-        }
-
+    ) -> EF
+    where
+        EF: ExtensionField<F>,
+        F: TwoAdicField,
+    {
         let arity = folding_factor;
         let log_arity = log2_strict_usize(arity); // panics if arity is not a power of 2
 
@@ -170,7 +207,11 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
         lagrange_interpolate_at_point(&xs, &evals, beta)
     }
 
-    fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, m: M) -> Vec<EF> {
+    fn fold_matrix_2<EF, F, M: Matrix<EF>>(&self, beta: EF, m: M) -> Vec<EF>
+    where
+        EF: ExtensionField<F>,
+        F: TwoAdicField,
+    {
         // We use the fact that
         //     p_e(x^2) = (p(x) + p(-x)) / 2
         //     p_o(x^2) = (p(x) - p(-x)) / (2 x)
@@ -201,16 +242,16 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
     }
 
     /// Same as applying fold_row to every row, possibly faster.
-    fn fold_matrix_arbitrary<M: Matrix<EF>>(
+    fn fold_matrix_arbitrary<EF, F, M: Matrix<EF>>(
         &self,
         beta: EF,
         m: M,
         folding_factor: usize,
-    ) -> Vec<EF> {
-        if folding_factor == 2 {
-            return self.fold_matrix(beta, m);
-        }
-
+    ) -> Vec<EF>
+    where
+        EF: ExtensionField<F>,
+        F: TwoAdicField,
+    {
         let log_arity = log2_strict_usize(folding_factor);
         let log_height = log2_strict_usize(m.height());
 
@@ -248,7 +289,7 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
                 for i in 0..folding_factor {
                     // Compute Lagrange basis numerator: \prod(beta - xs[j]) for j \neq i
                     let mut numerator = EF::ONE;
-                    for (j, &x_j) in xs.iter().enumerate() {
+                    for (j, &x_j) in xs.iter().enumerate().take(folding_factor) {
                         if i != j {
                             numerator *= beta - x_j;
                         }
@@ -667,7 +708,10 @@ where
         // low degree functions.
         let fri_input = reduced_openings.into_iter().rev().flatten().collect_vec();
 
-        let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding(PhantomData);
+        let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding {
+            log_folding_factor: self.fri.log_folding_factor,
+            _phantom: PhantomData,
+        };
 
         // Produce the FRI proof.
         let fri_proof = prover::prove_fri(
@@ -704,7 +748,10 @@ where
             }
         }
 
-        let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding(PhantomData);
+        let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding {
+            log_folding_factor: self.fri.log_folding_factor,
+            _phantom: PhantomData,
+        };
 
         verifier::verify_fri(
             &folding,

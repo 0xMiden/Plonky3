@@ -19,7 +19,7 @@ type PcsProof<SC> = <<SC as StarkGenericConfig>::Pcs as Pcs<
 pub struct Proof<SC: StarkGenericConfig> {
     pub commitments: Commitments<Com<SC>>,
     pub opened_values: OpenedValues<SC::Challenge>,
-    pub opening_proofs: Vec<PcsProof<SC>>,
+    pub opening_proof: PcsProof<SC>,
     pub degree_bits: usize,
 }
 

@@ -10,7 +10,7 @@ pub struct FriParameters<M> {
     pub log_blowup: usize,
     // TODO: This parameter and FRI early stopping are not yet implemented in `CirclePcs`.
     /// Log of the size of the final polynomial.
-    /// Since we fold `log_folding_factor` bits in each iteration, it much be that
+    /// Since we fold `log_folding_factor` bits in each iteration, it must be that
     ///   log_final_poly_len \equiv log_original_poly_len \pmod log_folding_factor
     pub log_final_poly_len: usize,
     pub num_queries: usize,
@@ -42,6 +42,10 @@ impl<M> FriParameters<M> {
         mmcs: M,
         log_folding_factor: usize,
     ) -> Self {
+        assert!(
+            log_folding_factor >= 1,
+            "log_folding_factor must be at least 1"
+        );
         Self {
             log_blowup,
             log_final_poly_len,
@@ -72,9 +76,13 @@ pub trait FriFoldingStrategy<F: Field, EF: ExtensionField<F>> {
     /// They will be passed to our callbacks, but ignored (shifted off) by FRI.
     fn extra_query_index_bits(&self) -> usize;
 
+    /// Log of the folding factor (arity). Defaults to 1 (folding factor of 2).
+    fn log_folding_factor(&self) -> usize {
+        1
+    }
+
     /// Fold a row, returning a single column.
-    /// Right now the input row will always be 2 columns wide,
-    /// but we may support higher folding arity in the future.
+    /// Supporting arbitrary folding width that is a power of 2.
     fn fold_row(
         &self,
         index: usize,
@@ -83,39 +91,8 @@ pub trait FriFoldingStrategy<F: Field, EF: ExtensionField<F>> {
         evals: impl Iterator<Item = EF>,
     ) -> EF;
 
-    /// Fold a row, returning a single column.
-    /// Supporting arbitrary folding width that is a power of 2.
-    fn fold_row_arbitrary(
-        &self,
-        index: usize,
-        log_height: usize,
-        beta: EF,
-        evals: impl Iterator<Item = EF>,
-        folding_factor: usize,
-    ) -> EF {
-        if folding_factor == 2 {
-            self.fold_row(index, log_height, beta, evals)
-        } else {
-            panic!("folding for parameters != 2 is not implemented")
-        }
-    }
-
     /// Same as applying fold_row to every row, possibly faster.
     fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, m: M) -> Vec<EF>;
-
-    /// Same as applying fold_row to every row, possibly faster.
-    fn fold_matrix_arbitrary<M: Matrix<EF>>(
-        &self,
-        beta: EF,
-        m: M,
-        folding_factor: usize,
-    ) -> Vec<EF> {
-        if folding_factor == 2 {
-            self.fold_matrix(beta, m)
-        } else {
-            panic!("folding for parameters != 2 is not implemented")
-        }
-    }
 }
 
 /// Creates a minimal set of `FriParameters` for testing purposes.

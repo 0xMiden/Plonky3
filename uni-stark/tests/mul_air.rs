@@ -20,10 +20,7 @@ use p3_mersenne_31::Mersenne31;
 use p3_symmetric::{
     CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher, TruncatedPermutation,
 };
-use p3_uni_stark::{
-    StarkConfig, StarkGenericConfig, Val, prove, prove_single_matrix_pcs, verify,
-    verify_single_matrix_pcs,
-};
+use p3_uni_stark::{StarkConfig, StarkGenericConfig, Val, prove, verify};
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -127,28 +124,16 @@ where
     StandardUniform: Distribution<Val<SC>>,
 {
     let trace = air.random_valid_trace(log_height, true);
-    {
-        let proof = prove(&config, &air, trace.clone(), &vec![]);
 
-        let serialized_proof = postcard::to_allocvec(&proof).expect("unable to serialize proof");
-        tracing::debug!("serialized_proof len: {} bytes", serialized_proof.len());
+    let proof = prove(&config, &air, trace, &vec![]);
 
-        let deserialized_proof =
-            postcard::from_bytes(&serialized_proof).expect("unable to deserialize proof");
+    let serialized_proof = postcard::to_allocvec(&proof).expect("unable to serialize proof");
+    tracing::debug!("serialized_proof len: {} bytes", serialized_proof.len());
 
-        verify(&config, &air, &deserialized_proof, &vec![])?;
-    }
-    {
-        let proof = prove_single_matrix_pcs(&config, &air, trace, &vec![]);
+    let deserialized_proof =
+        postcard::from_bytes(&serialized_proof).expect("unable to deserialize proof");
 
-        let serialized_proof = postcard::to_allocvec(&proof).expect("unable to serialize proof");
-        tracing::debug!("serialized_proof len: {} bytes", serialized_proof.len());
-
-        let deserialized_proof =
-            postcard::from_bytes(&serialized_proof).expect("unable to deserialize proof");
-
-        verify_single_matrix_pcs(&config, &air, &deserialized_proof, &vec![])
-    }
+    verify(&config, &air, &deserialized_proof, &vec![])
 }
 
 fn do_test_bb_trivial(degree: u64, log_n: usize) -> Result<(), impl Debug> {
