@@ -78,7 +78,7 @@ impl<'a, SC: StarkGenericConfig> EfAuxView<'a, SC> {
         {
             let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
             debug_assert!(
-                inner.width() % d == 0,
+                inner.is_multiple_of(d),
                 "aux trace width must be a multiple of EF dimension"
             );
         }
