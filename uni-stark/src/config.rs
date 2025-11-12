@@ -69,12 +69,7 @@ pub trait StarkGenericConfig {
     /// Load an aux builder.
     ///
     /// An aux builder takes in a main matrix and a randomness, and generate a aux matrix.
-    fn with_aux_builder<Builder>(
-        self,
-        aux_challenges: usize,
-        aux_width: usize,
-        builder: Builder,
-    ) -> Self
+    fn with_aux_builder<Builder>(self, builder: Builder) -> Self
     where
         Builder: Fn(&RowMajorMatrix<Val<Self>>, &[Self::Challenge]) -> RowMajorMatrix<Val<Self>>
             + Send
@@ -100,8 +95,6 @@ where
     challenger: Challenger,
     /// Optional: number of EF challenges used to build aux trace.
     aux_challenges: usize,
-    /// Optional: aux width (flattened in base field elements).
-    aux_width: usize,
     /// Optional: aux trace builder callback.
     aux_builder: Option<Box<AuxBuilder<<Pcs::Domain as PolynomialSpace>::Val, Challenge>>>,
 
@@ -120,7 +113,6 @@ where
             pcs,
             challenger,
             aux_challenges: 0,
-            aux_width: 0,
             aux_builder: None,
             _phantom: PhantomData,
         }
@@ -160,11 +152,7 @@ where
         self.aux_builder.as_ref().map(|f| (f)(main, challenges))
     }
 
-    fn aux_width_in_base_field(&self) -> usize {
-        self.aux_width
-    }
-
-    fn with_aux_builder<F>(mut self, aux_challenges: usize, aux_width: usize, f: F) -> Self
+    fn with_aux_builder<F>(mut self, f: F) -> Self
     where
         F: Fn(
                 &RowMajorMatrix<<Pcs::Domain as PolynomialSpace>::Val>,
@@ -174,8 +162,6 @@ where
             + Sync
             + 'static,
     {
-        self.aux_challenges = aux_challenges;
-        self.aux_width = aux_width;
         self.aux_builder = Some(alloc::boxed::Box::new(f));
         self
     }

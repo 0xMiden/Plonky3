@@ -422,17 +422,20 @@ where
                 trace_on_quotient_domain.vertically_packed_row_pair(i_start, next_step),
                 width,
             );
-            let aux = aux_trace_on_quotient_domain.as_ref().map(|aux_trace| {
+            let aux = if let Some(aux_trace) = aux_trace_on_quotient_domain.as_ref() {
                 RowMajorMatrix::new(
                     aux_trace.vertically_packed_row_pair(i_start, next_step),
                     aux_trace.width(),
                 )
-            });
+            } else {
+                // Create an empty matrix with zero width
+                RowMajorMatrix::new(vec![], 0)
+            };
 
             let accumulator = PackedChallenge::<SC>::ZERO;
             let mut folder = ProverConstraintFolder {
                 main: main.as_view(),
-                aux: aux.as_ref().map(|a| a.as_view()),
+                aux: aux.as_view(),
                 public_values,
                 is_first_row,
                 is_last_row,

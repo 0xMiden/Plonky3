@@ -17,9 +17,9 @@ use crate::{PackedChallenge, PackedVal, StarkGenericConfig, Val};
 pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     /// The matrix containing rows on which the constraint polynomial is to be evaluated
     pub main: RowMajorMatrixView<'a, PackedVal<SC>>,
-    /// Optional: the matrix containing rows on which the aux constraint polynomial is to be evaluated
-    pub aux: Option<RowMajorMatrixView<'a, PackedVal<SC>>>,
-    /// Optional: the randomness used to compute the aux tract
+    /// The matrix containing rows on which the aux constraint polynomial is to be evaluated (may have zero width)
+    pub aux: RowMajorMatrixView<'a, PackedVal<SC>>,
+    /// The randomness used to compute the aux trace; can be zero width.
     /// Cached EF randomness packed from base randomness to avoid temporary leaks
     pub packed_randomness: Vec<PackedChallenge<SC>>,
     /// Public inputs to the AIR
@@ -49,9 +49,9 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
 pub struct VerifierConstraintFolder<'a, SC: StarkGenericConfig> {
     /// Pair of consecutive rows from the committed polynomial evaluations
     pub main: ViewPair<'a, SC::Challenge>,
-    /// Optional: pair of consecutive rows from the committed polynomial evaluations
-    pub aux: Option<ViewPair<'a, SC::Challenge>>,
-    /// Optional: the randomness used to compute the aux tract
+    /// Pair of consecutive rows from the committed polynomial evaluations (may have zero width)
+    pub aux: ViewPair<'a, SC::Challenge>,
+    /// The randomness used to compute the aux tract; can be zero width.
     pub randomness: &'a [SC::Challenge],
     /// Public values that are inputs to the computation
     pub public_values: &'a Vec<Val<SC>>,
@@ -78,7 +78,7 @@ impl<'a, SC: StarkGenericConfig> EfAuxView<'a, SC> {
         {
             let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
             debug_assert!(
-                inner.is_multiple_of(d),
+                inner.width.is_multiple_of(d),
                 "aux trace width must be a multiple of EF dimension"
             );
         }
@@ -290,7 +290,7 @@ impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for ProverConstraintFolde
     type RandomVar = PackedChallenge<SC>;
 
     fn permutation(&self) -> Self::MP {
-        EfAuxView::new(self.aux.expect("permutation called but aux trace is None - AIR should check num_randomness > 0 before using permutation columns"))
+        EfAuxView::new(self.aux)
     }
 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
@@ -361,7 +361,7 @@ impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for VerifierConstraintFol
     type RandomVar = SC::Challenge;
 
     fn permutation(&self) -> Self::MP {
-        VerifierEfAuxView::new(self.aux.expect("permutation called but aux trace is None - AIR should check num_randomness > 0 before using permutation columns"))
+        VerifierEfAuxView::new(self.aux)
     }
 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
