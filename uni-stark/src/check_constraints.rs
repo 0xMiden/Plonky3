@@ -69,12 +69,17 @@ pub(crate) fn check_constraints<F, EF, A>(
             let aux_next = unsafe { aux_matrix.row_slice_unchecked(row_index_next) };
             aux_next_ext = row_to_ext::<F, EF>(&aux_next);
 
-            Some(VerticalPair::new(
+            VerticalPair::new(
                 RowMajorMatrixView::new_row(&aux_local_ext),
                 RowMajorMatrixView::new_row(&aux_next_ext),
-            ))
+            )
         } else {
-            None
+            // Create an empty ViewPair with zero width
+            let empty: &[EF] = &[];
+            VerticalPair::new(
+                RowMajorMatrixView::new_row(empty),
+                RowMajorMatrixView::new_row(empty),
+            )
         };
 
         let mut builder = DebugConstraintBuilder {
@@ -115,7 +120,7 @@ pub struct DebugConstraintBuilder<'a, F: Field, EF: ExtensionField<F>> {
     /// A view of the current and next row as a vertical pair.
     main: ViewPair<'a, F>,
     /// A view of the current and next aux row as a vertical pair.
-    aux: Option<ViewPair<'a, EF>>,
+    aux: ViewPair<'a, EF>,
     /// randomness that is used to compute aux trace
     aux_randomness: &'a [EF],
     /// The public values provided for constraint validation (e.g. inputs or outputs).
@@ -213,7 +218,7 @@ impl<'a, F: Field, EF: ExtensionField<F>> PermutationAirBuilder
     type RandomVar = EF;
 
     fn permutation(&self) -> Self::MP {
-        self.aux.expect("permutation called but aux trace is None - AIR should check num_randomness > 0 before using permutation columns")
+        self.aux
     }
 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {

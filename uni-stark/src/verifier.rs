@@ -253,11 +253,18 @@ where
         &opened_values.aux_trace_local,
         &opened_values.aux_trace_next,
     ) {
-        (Some(local), Some(next)) => Some(VerticalPair::new(
+        (Some(local), Some(next)) => VerticalPair::new(
             RowMajorMatrixView::new_row(local),
             RowMajorMatrixView::new_row(next),
-        )),
-        _ => None,
+        ),
+        _ => {
+            // Create an empty ViewPair with zero width
+            let empty: &[SC::Challenge] = &[];
+            VerticalPair::new(
+                RowMajorMatrixView::new_row(empty),
+                RowMajorMatrixView::new_row(empty),
+            )
+        }
     };
 
     let mut folder = VerifierConstraintFolder {
