@@ -24,6 +24,44 @@ pub trait BaseAirWithPublicValues<F>: BaseAir<F> {
     }
 }
 
+/// An extension of `BaseAir` that includes support for auxiliary traces.
+pub trait BaseAirWithAuxTrace<F, EF>: BaseAir<F>
+where
+    EF: ExtensionField<F>,
+    F: Field,
+{
+    /// Number of challenges (extension fields) that is required to compute the aux trace
+    fn num_randomness(&self) -> usize {
+        0
+    }
+
+    /// Number of columns (in based field) that is required for aux trace
+    fn aux_width(&self) -> usize {
+        0
+    }
+
+    /// Build an aux trace (EF-based) given the main trace and EF challenges.
+    /// Return None to indicate no aux or to fall back to legacy behavior.
+    fn build_aux_trace(
+        &self,
+        _main: &RowMajorMatrix<F>,
+        _challenges: &[EF],
+    ) -> Option<RowMajorMatrix<F>> {
+        // default: do nothing
+        None
+    }
+
+    /// Load an aux builder.
+    ///
+    /// An aux builder takes in a main matrix and a randomness, and generate a aux matrix.
+    fn with_aux_builder<Builder>(&mut self, _builder: Builder)
+    where
+        Builder: Fn(&RowMajorMatrix<F>, &[EF]) -> RowMajorMatrix<F> + Send + Sync + 'static,
+    {
+        // default: do nothing
+    }
+}
+
 /// An algebraic intermediate representation (AIR) definition.
 ///
 /// Contains an evaluation function for computing the constraints of the AIR.

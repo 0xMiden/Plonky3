@@ -1,4 +1,3 @@
-use alloc::boxed::Box;
 use core::marker::PhantomData;
 
 use p3_challenger::{CanObserve, CanSample, FieldChallenger};
@@ -49,37 +48,6 @@ pub trait StarkGenericConfig {
     fn is_zk(&self) -> usize {
         Self::Pcs::ZK as usize
     }
-
-    /// Number of EF challenges used to build the aux trace (LogUp/perm arguments).
-    /// Default is 0 (no aux).
-    fn aux_challenges(&self) -> usize {
-        0
-    }
-
-    /// Optionally build an aux trace (EF-based) given the main trace and EF challenges.
-    /// Return None to indicate no aux or to fall back to legacy behavior.
-    fn build_aux_trace(
-        &self,
-        _main: &RowMajorMatrix<Val<Self>>,
-        _challenges: &[Self::Challenge],
-    ) -> Option<RowMajorMatrix<Val<Self>>> {
-        None
-    }
-
-    /// Load an aux builder.
-    ///
-    /// An aux builder takes in a main matrix and a randomness, and generate a aux matrix.
-    fn with_aux_builder<Builder>(self, builder: Builder) -> Self
-    where
-        Builder: Fn(&RowMajorMatrix<Val<Self>>, &[Self::Challenge]) -> RowMajorMatrix<Val<Self>>
-            + Send
-            + Sync
-            + 'static;
-
-    /// Optional: width of the aux trace when flattened in base field elements.
-    fn aux_width_in_base_field(&self) -> usize {
-        0
-    }
 }
 
 pub struct StarkConfig<Pcs, Challenge, Challenger>
@@ -93,10 +61,6 @@ where
     pcs: Pcs,
     /// An initialised instance of the challenger.
     challenger: Challenger,
-    /// Optional: number of EF challenges used to build aux trace.
-    aux_challenges: usize,
-    /// Optional: aux trace builder callback.
-    aux_builder: Option<Box<AuxBuilder<<Pcs::Domain as PolynomialSpace>::Val, Challenge>>>,
 
     _phantom: PhantomData<Challenge>,
 }
@@ -112,8 +76,6 @@ where
         Self {
             pcs,
             challenger,
-            aux_challenges: 0,
-            aux_builder: None,
             _phantom: PhantomData,
         }
     }
@@ -138,31 +100,5 @@ where
 
     fn initialise_challenger(&self) -> Self::Challenger {
         self.challenger.clone()
-    }
-
-    fn aux_challenges(&self) -> usize {
-        self.aux_challenges
-    }
-
-    fn build_aux_trace(
-        &self,
-        main: &RowMajorMatrix<<Pcs::Domain as PolynomialSpace>::Val>,
-        challenges: &[Challenge],
-    ) -> Option<RowMajorMatrix<<Pcs::Domain as PolynomialSpace>::Val>> {
-        self.aux_builder.as_ref().map(|f| (f)(main, challenges))
-    }
-
-    fn with_aux_builder<F>(mut self, f: F) -> Self
-    where
-        F: Fn(
-                &RowMajorMatrix<<Pcs::Domain as PolynomialSpace>::Val>,
-                &[Challenge],
-            ) -> RowMajorMatrix<<Pcs::Domain as PolynomialSpace>::Val>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.aux_builder = Some(alloc::boxed::Box::new(f));
-        self
     }
 }

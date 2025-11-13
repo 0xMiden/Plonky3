@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use itertools::Itertools;
-use p3_air::Air;
+use p3_air::{Air, BaseAirWithAuxTrace};
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing};
@@ -25,7 +25,9 @@ pub fn verify<SC, A>(
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
     SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>>>
+        + for<'a> Air<VerifierConstraintFolder<'a, SC>>
+        + BaseAirWithAuxTrace<Val<SC>, SC::Challenge>,
 {
     let Proof {
         commitments,
@@ -37,8 +39,8 @@ where
     let pcs = config.pcs();
 
     let degree = 1 << degree_bits;
-    let aux_width_base = config.aux_width_in_base_field();
-    let num_randomness_base = config.aux_challenges() * SC::Challenge::DIMENSION;
+    let aux_width_base = air.aux_width();
+    let num_randomness_base = air.num_randomness() * SC::Challenge::DIMENSION;
     let log_quotient_degree = get_log_quotient_degree::<Val<SC>, A>(
         air,
         0,
@@ -84,7 +86,7 @@ where
     challenger.observe_slice(public_values);
 
     // begin processing aux trace (optional)
-    let num_randomness = config.aux_challenges();
+    let num_randomness = air.num_randomness();
 
     let air_width = A::width(air);
     let valid_shape = opened_values.trace_local.len() == air_width

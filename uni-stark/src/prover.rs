@@ -2,7 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use itertools::Itertools;
-use p3_air::Air;
+use p3_air::{Air, BaseAirWithAuxTrace};
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, PackedValue, PrimeCharacteristicRing};
@@ -33,7 +33,9 @@ pub fn prove<
 ) -> Proof<SC>
 where
     SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>>>
+        + for<'a> Air<ProverConstraintFolder<'a, SC>>
+        + BaseAirWithAuxTrace<Val<SC>, SC::Challenge>,
 {
     // Note: constraint checking is done after aux trace generation (see line ~173)
     // #[cfg(debug_assertions)]
@@ -45,8 +47,8 @@ where
     let log_ext_degree = log_degree + config.is_zk();
 
     // Compute the constraint polynomials as vectors of symbolic expressions.
-    let aux_width_base = config.aux_width_in_base_field();
-    let num_randomness_base = config.aux_challenges() * SC::Challenge::DIMENSION;
+    let aux_width_base = air.aux_width();
+    let num_randomness_base = air.num_randomness() * SC::Challenge::DIMENSION;
     let symbolic_constraints = get_symbolic_constraints(
         air,
         0, // pre-processed col = 0
@@ -140,7 +142,7 @@ where
     challenger.observe_slice(public_values);
 
     // begin aux trace generation (optional)
-    let num_randomness = config.aux_challenges();
+    let num_randomness = air.num_randomness();
 
     let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness) =
         if num_randomness > 0 {
@@ -149,7 +151,7 @@ where
                 .collect();
 
             // Ask config (VM) to build the aux trace if available.
-            let aux_trace_opt = config.build_aux_trace(&trace, &randomness);
+            let aux_trace_opt = air.build_aux_trace(&trace, &randomness);
 
             // At the moment, it panics if the aux trace is not available.
             // In a future PR, we will introduce LogUp based permutation as a fall back if aux trace is not available.
