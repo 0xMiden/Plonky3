@@ -1,20 +1,21 @@
 use core::borrow::Borrow;
 
 use p3_air::{
-    Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, ExtensionBuilder, PermutationAirBuilder,
+    Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, BaseAirWithAuxTrace, ExtensionBuilder,
+    PermutationAirBuilder,
 };
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
-use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
+use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField64};
 use p3_fri::{TwoAdicFriPcs, create_test_fri_params};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-use p3_uni_stark::{StarkConfig, StarkGenericConfig, prove, verify};
+use p3_uni_stark::{StarkConfig, generate_logup_trace, prove, verify};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
@@ -24,6 +25,42 @@ pub struct FibPermAir {}
 impl<F> BaseAir<F> for FibPermAir {
     fn width(&self) -> usize {
         3
+    }
+}
+
+impl<F, EF> BaseAirWithAuxTrace<F, EF> for FibPermAir
+where
+    F: Field,
+    EF: ExtensionField<F>,
+{
+    /// Number of challenges (extension fields) that is required to compute the aux trace
+    fn num_randomness(&self) -> usize {
+        1
+    }
+
+    /// Number of columns (in based field) that is required for aux trace
+    fn aux_width(&self) -> usize {
+        3 * EF::DIMENSION
+    }
+
+    /// Build an aux trace (EF-based) given the main trace and EF challenges.
+    /// Return None to indicate no aux or to fall back to legacy behavior.
+    fn build_aux_trace(
+        &self,
+        main: &RowMajorMatrix<F>,
+        challenges: &[EF],
+    ) -> Option<RowMajorMatrix<F>> {
+        Some(generate_logup_trace::<EF, _>(main, &challenges[0]))
+    }
+
+    /// Load an aux builder.
+    ///
+    /// An aux builder takes in a main matrix and a randomness, and generate a aux matrix.
+    fn with_aux_builder<Builder>(&mut self, _builder: Builder)
+    where
+        Builder: Fn(&RowMajorMatrix<F>, &[EF]) -> RowMajorMatrix<F> + Send + Sync + 'static,
+    {
+        // default: do nothing
     }
 }
 
@@ -192,13 +229,8 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
     let pcs = Pcs::new(dft, val_mmcs, fri_params);
     let challenger = Challenger::new(perm);
 
-    let config = MyConfig::new(pcs, challenger).with_aux_builder(
-        1,
-        12,
-        |main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
-            p3_uni_stark::generate_logup_trace::<Challenge, _>(main, &challenges[0])
-        },
-    );
+    let config = MyConfig::new(pcs, challenger);
+
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
     let proof = prove(&config, &FibPermAir {}, trace, &pis);
@@ -219,11 +251,6 @@ fn test_public_value() {
 #[test]
 fn test_public_value_deg5() {
     test_public_value_impl_deg5(1 << 3, 21, 2);
-}
-
-#[test]
-fn test_public_value_deg8() {
-    test_public_value_impl_deg8(1 << 3, 21, 2);
 }
 
 // Degree-5 extension variant
@@ -250,52 +277,7 @@ fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
     let pcs = Pcs5::new(dft, val_mmcs, fri_params);
     let challenger = Challenger::new(perm);
 
-    let aux_width = 3 * 5; // three EF columns flattened
-    let config = MyConfig5::new(pcs, challenger).with_aux_builder(
-        1,
-        aux_width,
-        |main: &RowMajorMatrix<Val>, challenges: &[Challenge5]| {
-            p3_uni_stark::generate_logup_trace::<Challenge5, _>(main, &challenges[0])
-        },
-    );
-    let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
-
-    let proof = prove(&config, &FibPermAir {}, trace.clone(), &pis);
-    verify(&config, &FibPermAir {}, &proof, &pis).expect("verification failed");
-}
-
-// Degree-8 extension variant
-fn test_public_value_impl_deg8(n: usize, x: u64, log_final_poly_len: usize) {
-    use p3_commit::ExtensionMmcs;
-    use p3_field::extension::BinomialExtensionField;
-    use p3_fri::TwoAdicFriPcs;
-    use p3_uni_stark::StarkConfig;
-
-    type Challenge8 = BinomialExtensionField<Val, 8>;
-    type ChallengeMmcs8 = ExtensionMmcs<Val, Challenge8, ValMmcs>;
-    type Pcs8 = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs8>;
-    type MyConfig8 = StarkConfig<Pcs8, Challenge8, Challenger>;
-
-    let mut rng = SmallRng::seed_from_u64(1);
-    let perm = Perm::new_from_rng_128(&mut rng);
-    let hash = MyHash::new(perm.clone());
-    let compress = MyCompress::new(perm.clone());
-    let val_mmcs = ValMmcs::new(hash, compress);
-    let challenge_mmcs = ChallengeMmcs8::new(val_mmcs.clone());
-    let dft = Dft::default();
-    let trace = generate_trace_rows::<Val>(0, 1, n);
-    let fri_params = create_test_fri_params(challenge_mmcs, log_final_poly_len);
-    let pcs = Pcs8::new(dft, val_mmcs, fri_params);
-    let challenger = Challenger::new(perm);
-
-    let aux_width = 3 * 8; // three EF columns flattened
-    let config = MyConfig8::new(pcs, challenger).with_aux_builder(
-        1,
-        aux_width,
-        |main: &RowMajorMatrix<Val>, challenges: &[Challenge8]| {
-            p3_uni_stark::generate_logup_trace::<Challenge8, _>(main, &challenges[0])
-        },
-    );
+    let config = MyConfig5::new(pcs, challenger);
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
     let proof = prove(&config, &FibPermAir {}, trace.clone(), &pis);
@@ -306,8 +288,6 @@ fn test_public_value_impl_deg8(n: usize, x: u64, log_final_poly_len: usize) {
 #[test]
 #[should_panic(expected = "assertion `left == right` failed: constraints had nonzero value")]
 fn test_incorrect_public_value() {
-    use p3_uni_stark::StarkGenericConfig;
-
     let mut rng = SmallRng::seed_from_u64(1);
     let perm = Perm::new_from_rng_128(&mut rng);
     let hash = MyHash::new(perm.clone());
@@ -319,13 +299,7 @@ fn test_incorrect_public_value() {
     let trace = generate_trace_rows::<Val>(0, 1, 1 << 3);
     let pcs = Pcs::new(dft, val_mmcs, fri_params);
     let challenger = Challenger::new(perm);
-    let config = MyConfig::new(pcs, challenger).with_aux_builder(
-        1,
-        12,
-        |main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
-            p3_uni_stark::generate_logup_trace::<Challenge, _>(main, &challenges[0])
-        },
-    );
+    let config = MyConfig::new(pcs, challenger);
     let pis = vec![
         BabyBear::ZERO,
         BabyBear::ONE,

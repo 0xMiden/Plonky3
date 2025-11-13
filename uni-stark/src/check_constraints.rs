@@ -262,7 +262,7 @@ mod tests {
     {
         fn eval(&self, builder: &mut DebugConstraintBuilder<'_, F, EF>) {
             let main = builder.main();
-            let aux = builder.aux;
+            let aux_pair = builder.aux;
 
             // ======================
             // main trace
@@ -297,7 +297,6 @@ mod tests {
             let xi = main.top.get(0, 0).unwrap();
             let yi = main.top.get(0, 1).unwrap();
 
-            let aux_pair = aux.expect("test expects aux trace");
             // let aux_ef = DebugEfView::<F, EF>::new(aux_pair);
             let r = builder.aux_randomness[0];
 

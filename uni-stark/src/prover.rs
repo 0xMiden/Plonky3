@@ -2,8 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use itertools::Itertools;
-use p3_air::Air;
-
+use p3_air::{Air, BaseAirWithAuxTrace};
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, PackedValue, PrimeCharacteristicRing};
@@ -21,8 +20,6 @@ use crate::{
 
 #[cfg(debug_assertions)]
 use crate::{DebugConstraintBuilder, check_constraints};
-#[cfg(debug_assertions)]
-use p3_air::BaseAir;
 
 #[instrument(skip_all)]
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
@@ -38,10 +35,13 @@ pub fn prove<
 ) -> Proof<SC>
 where
     SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>>>
+        + for<'a> Air<ProverConstraintFolder<'a, SC>>
+        + BaseAirWithAuxTrace<Val<SC>, SC::Challenge>,
 {
-    #[cfg(debug_assertions)]
-    crate::check_constraints::check_constraints(air, &trace, public_values);
+    // Note: constraint checking is done after aux trace generation (see line ~173)
+    // #[cfg(debug_assertions)]
+    // crate::check_constraints::check_constraints(air, &trace, public_values);
 
     // Compute the height `N = 2^n` and `log_2(height)`, `n`, of the trace.
     let degree = trace.height();
@@ -49,8 +49,8 @@ where
     let log_ext_degree = log_degree + config.is_zk();
 
     // Compute the constraint polynomials as vectors of symbolic expressions.
-    let aux_width_base = config.aux_width_in_base_field();
-    let num_randomness_base = config.aux_challenges() * SC::Challenge::DIMENSION;
+    let aux_width_base = air.aux_width();
+    let num_randomness_base = air.num_randomness() * SC::Challenge::DIMENSION;
     let symbolic_constraints = get_symbolic_constraints(
         air,
         0, // pre-processed col = 0
@@ -144,7 +144,7 @@ where
     challenger.observe_slice(public_values);
 
     // begin aux trace generation (optional)
-    let num_randomness = config.aux_challenges();
+    let num_randomness = air.num_randomness();
 
     let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness) =
         if num_randomness > 0 {
@@ -153,7 +153,7 @@ where
                 .collect();
 
             // Ask config (VM) to build the aux trace if available; otherwise, fall back to legacy LogUp generator.
-            let aux_trace_opt = config.build_aux_trace(&trace, &randomness).or_else(|| {
+            let aux_trace_opt = air.build_aux_trace(&trace, &randomness).or_else(|| {
                 Some(generate_logup_trace::<SC::Challenge, _>(
                     &trace,
                     &randomness[0],
