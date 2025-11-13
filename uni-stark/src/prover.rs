@@ -13,11 +13,8 @@ use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{
-    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
-    StarkGenericConfig, SymbolicAirBuilder, Val, generate_logup_trace, get_log_quotient_degree,
-    get_symbolic_constraints,
+    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder, StarkGenericConfig, SymbolicAirBuilder, Val, generate_logup_trace, get_log_quotient_degree, get_symbolic_constraints
 };
-
 #[cfg(debug_assertions)]
 use crate::{DebugConstraintBuilder, check_constraints};
 
@@ -160,6 +157,8 @@ where
                 ))
             });
 
+            // At the moment, it panics if the aux trace is not available.
+            // In a future PR, we will introduce LogUp based permutation as a fall back if aux trace is not available.
             let aux_trace = aux_trace_opt
                 .expect("aux_challenges > 0 but no aux trace was provided or generated");
 
