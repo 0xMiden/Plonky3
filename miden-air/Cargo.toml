@@ -1,0 +1,15 @@
+[package]
+name = "miden-air"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+p3-air = { path = "../air" }
+p3-field = { path = "../field" }
+p3-matrix = { path = "../matrix" }

@@ -24,6 +24,7 @@ members = [
     "mds",
     "merkle-tree",
     "mersenne-31",
+    "miden-air",
     "monolith",
     "monty-31",
     "multilinear-util",
