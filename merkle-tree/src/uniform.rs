@@ -200,31 +200,38 @@ where
     for matrix in matrices {
         let height = matrix.height();
 
-        // Use scalar path when height < packing width to avoid vertically_packed_row
-        // reading beyond matrix bounds (it uses modulo wrapping).
-        if height < P::WIDTH {
-            for (state, row) in zip(states.iter_mut(), matrix.rows()) {
-                sponge.absorb(state, row);
-            }
-        } else {
+        // Upsample states when height increases (applies to both scalar and packed paths).
+        // Duplicate each existing state to fill the expanded height.
+        // E.g., [s0, s1] with scaling_factor=2 → [s0, s0, s1, s1]
+        if height > active_height {
             let scaling_factor = height / active_height;
 
-            // Upsample states: duplicate each state to fill new rows.
-            // E.g., [s0, s1] with scaling_factor=2 → [s0, s0, s1, s1]
             // Copy `states` into `scratch_states`, repeating each entry `scaling_factor` times
             scratch_states[..height]
                 .par_chunks_mut(scaling_factor)
                 .zip(states[..active_height].par_iter())
                 .for_each(|(chunk, state)| chunk.fill(*state));
 
-            // Pack the replicated scalar states into SIMD-friendly buffers.
+            // Copy upsampled states back to canonical buffer
+            states[..height].copy_from_slice(&scratch_states[..height]);
+        }
+
+        // Use scalar path when height < packing width to avoid vertically_packed_row
+        // reading beyond matrix bounds (it uses modulo wrapping).
+        if height < P::WIDTH {
+            // Scalar absorption: simple loop over rows
+            for (state, row) in zip(states[..height].iter_mut(), matrix.rows()) {
+                sponge.absorb(state, row);
+            }
+        } else {
+            // Pack the scalar states into SIMD-friendly buffers.
             let packed_height = height.div_ceil(P::WIDTH);
             packed_states[..packed_height]
                 .par_iter_mut()
                 .enumerate()
                 .for_each(|(packed_idx, packed_state)| {
                     let base_row_idx = packed_idx * P::WIDTH;
-                    let states_chunk = &scratch_states[base_row_idx..base_row_idx + P::WIDTH];
+                    let states_chunk = &states[base_row_idx..base_row_idx + P::WIDTH];
                     pack_arrays_into(states_chunk, packed_state);
                 });
 
@@ -349,8 +356,8 @@ mod tests {
     use p3_matrix::Matrix;
     use p3_matrix::dense::RowMajorMatrix;
     use p3_symmetric::{PaddingFreeSponge, StatefulSponge, TruncatedPermutation};
-    use rand::SeedableRng;
     use rand::rngs::SmallRng;
+    use rand::{RngCore, SeedableRng};
 
     use super::*;
 
@@ -395,25 +402,22 @@ mod tests {
         for matrix in matrices.iter() {
             let height = matrix.height();
 
-            if height < PACK_WIDTH {
-                // Scalar path: directly copy states to scratch
-                scratch[..height].copy_from_slice(&states[..height]);
-            } else {
-                // Packed path: upsample states
+            // Upsample states when height increases (always, regardless of PACK_WIDTH)
+            if height > active_height {
                 let growth = height / active_height;
                 for (row, scratch_state) in scratch.iter_mut().enumerate().take(height) {
                     *scratch_state = states[row / growth];
                 }
+                // Copy upsampled states back to canonical buffer
+                states[..height].copy_from_slice(&scratch[..height]);
             }
 
-            // Absorb matrix rows into scratch states
-            for (row, scratch_state) in scratch.iter_mut().enumerate().take(height) {
+            // Absorb matrix rows into states
+            for (row, state) in states.iter_mut().enumerate().take(height) {
                 let row_iter = matrix.row(row).expect("row exists").into_iter();
-                sponge.absorb(scratch_state, row_iter);
+                sponge.absorb(state, row_iter);
             }
 
-            // Copy updated scratch back to canonical states
-            states[..height].copy_from_slice(&scratch[..height]);
             active_height = height;
         }
 
@@ -440,6 +444,147 @@ mod tests {
 
         let expected = reference_uniform_leaves(matrices, &sponge);
         assert_eq!(leaves, expected);
+    }
+
+    #[test]
+    fn small_heights_regression() {
+        // Regression test: all heights below PACK_WIDTH should still upsample correctly
+        let (sponge, _) = poseidon_components();
+
+        // Generate test heights that are all below PACK_WIDTH
+        let mut heights = Vec::new();
+        let mut h = 1;
+        while h < PACK_WIDTH && h <= 64 {
+            heights.push(h);
+            h *= 2;
+        }
+
+        // If PACK_WIDTH is 1 (no packing), add at least one test case
+        if heights.is_empty() {
+            heights.push(1);
+        }
+
+        let matrices: Vec<_> = heights
+            .iter()
+            .enumerate()
+            .map(|(i, &h)| field_matrix(h, 3, i as u32 * 100))
+            .collect();
+
+        let leaves = build_uniform_leaves::<Packed, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
+        let expected = reference_uniform_leaves(matrices, &sponge);
+
+        assert_eq!(leaves, expected, "small heights should match reference");
+    }
+
+    /// Build a single reference matrix by padding, upsampling, and concatenating.
+    /// Each input matrix is:
+    /// 1. Padded with zero columns until width is multiple of RATE
+    /// 2. Upsampled to max_height by repeating rows
+    /// 3. Concatenated horizontally with other upsampled matrices
+    fn build_reference_matrix(
+        matrices: &[RowMajorMatrix<F>],
+        max_height: usize,
+    ) -> RowMajorMatrix<F> {
+        let mut total_width = 0;
+
+        // Calculate total width after padding each matrix
+        for matrix in matrices {
+            let padded_width = matrix.width().next_multiple_of(RATE);
+            total_width += padded_width;
+        }
+
+        let mut result_data = vec![F::ZERO; max_height * total_width];
+
+        let mut col_offset = 0;
+        for matrix in matrices {
+            let height = matrix.height();
+            let width = matrix.width();
+            let padded_width = width.next_multiple_of(RATE);
+            let scaling_factor = max_height / height;
+
+            // Copy each row of the matrix, repeating it scaling_factor times
+            for src_row in 0..height {
+                for repeat in 0..scaling_factor {
+                    let dst_row = src_row * scaling_factor + repeat;
+                    for col in 0..width {
+                        let dst_idx = dst_row * total_width + col_offset + col;
+                        result_data[dst_idx] =
+                            matrix.get(src_row, col).expect("row and col in bounds");
+                    }
+                }
+            }
+
+            col_offset += padded_width;
+        }
+
+        RowMajorMatrix::new(result_data, total_width)
+    }
+
+    /// Compute leaves of a single matrix using standard sponge absorption.
+    fn reference_leaves_from_single_matrix(
+        matrix: &RowMajorMatrix<F>,
+        sponge: &PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
+    ) -> Vec<[F; DIGEST]> {
+        let mut leaves = Vec::with_capacity(matrix.height());
+        for row_idx in 0..matrix.height() {
+            let mut state = [F::ZERO; WIDTH];
+            let row = matrix.row(row_idx).expect("row exists");
+            sponge.absorb(&mut state, row.into_iter());
+            leaves.push(sponge.squeeze::<DIGEST>(&mut state));
+        }
+        leaves
+    }
+
+    #[test]
+    fn random_matrices_match_concatenated_reference() {
+        let (sponge, _) = poseidon_components();
+        let mut rng = SmallRng::seed_from_u64(42);
+
+        // Test multiple scenarios with different height progressions
+        let test_cases = [
+            vec![1, 2, 4, 8],
+            vec![2, 4, 8, 16],
+            vec![1, 1, 2, 4, 8],      // duplicate heights
+            vec![4, 8, 8, 16],        // more duplicates
+            vec![1, 2, 4, 8, 16, 32], // longer sequence
+        ];
+
+        for (test_idx, heights) in test_cases.iter().enumerate() {
+            // Skip if any height exceeds reasonable bounds
+            let max_height = *heights.iter().max().unwrap();
+            if max_height > 64 {
+                continue;
+            }
+
+            // Generate random matrices with varying widths
+            let mut matrices: Vec<RowMajorMatrix<F>> = heights
+                .iter()
+                .enumerate()
+                .map(|(i, &h)| {
+                    // Vary the width to test different padding scenarios
+                    let width = (i % 5) + 1; // widths from 1 to 5
+                    let data: Vec<F> = (0..h * width).map(|_| F::new(rng.next_u32())).collect();
+                    RowMajorMatrix::new(data, width)
+                })
+                .collect();
+
+            // Sort by height for build_uniform_leaves
+            matrices.sort_by_key(|m| m.height());
+
+            // Compute using build_uniform_leaves
+            let leaves =
+                build_uniform_leaves::<Packed, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
+
+            // Build reference matrix and compute leaves
+            let reference_matrix = build_reference_matrix(&matrices, max_height);
+            let expected = reference_leaves_from_single_matrix(&reference_matrix, &sponge);
+
+            assert_eq!(
+                leaves, expected,
+                "test case {} with heights {:?} should match concatenated reference",
+                test_idx, heights
+            );
+        }
     }
 
     #[test]
