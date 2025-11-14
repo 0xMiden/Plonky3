@@ -77,6 +77,7 @@ where
     where
         I: IntoIterator<Item = T>,
     {
+        const { assert!(RATE < WIDTH) }
         let mut input = input.into_iter();
         let p = self.permutation();
 
@@ -86,9 +87,7 @@ where
                     state[i] = x;
                 } else {
                     if i != 0 {
-                        for j in i..RATE {
-                            state[j] = T::default();
-                        }
+                        state[i..RATE].fill(T::default());
                         p.permute_mut(state);
                     }
                     break 'outer;
@@ -102,6 +101,7 @@ where
     ///
     /// Extracts the first OUT elements from the state.
     fn squeeze<const OUT: usize>(&self, state: &[T; WIDTH]) -> [T; OUT] {
+        const { assert!(OUT < WIDTH) }
         state[..OUT].try_into().unwrap()
     }
 }
