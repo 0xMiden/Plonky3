@@ -10,3 +10,4 @@ pub mod uniform;
 pub use hiding_mmcs::*;
 pub use merkle_tree::*;
 pub use mmcs::*;
+pub use uniform::UniformMerkleTree;

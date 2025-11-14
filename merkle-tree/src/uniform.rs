@@ -2,65 +2,125 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::array;
 use core::iter::zip;
+use core::marker::PhantomData;
 
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
-use p3_symmetric::{PseudoCompressionFunction, StatefulSponge};
+use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulSponge};
+use serde::{Deserialize, Serialize};
 
-/// Build all digest layers of a uniform Merkle tree from matrices.
+/// A uniform binary Merkle tree whose leaves are constructed from matrices with power-of-two heights.
 ///
-/// Constructs a complete Merkle tree by first building leaf digests from the input matrices,
-/// then repeatedly compressing pairs of digests until reaching a single root digest.
+/// * `F` – scalar field element type used in both matrices and digests.
+/// * `M` – matrix type. Must implement [`Matrix<F>`].
+/// * `DIGEST_ELEMS` – number of `F` elements in one digest.
 ///
-/// # Preconditions
-/// - `matrices` must be sorted by height (shortest to tallest)
-/// - All matrix heights must be powers of two
-/// - `P::WIDTH` must be a power of two
+/// Unlike the standard `MerkleTree`, this uniform variant requires:
+/// - **All matrix heights must be powers of two**
+/// - **Matrices must be sorted by height** (shortest to tallest)
+/// - Uses incremental hashing via [`StatefulSponge`] instead of one-shot hashing
 ///
-/// # Parameters
-/// - `matrices`: Input matrices to hash into leaf digests, pre-sorted by height
-/// - `h`: Stateful sponge for incremental hashing of matrix rows
-/// - `c`: Compression function for pair-wise digest compression
+/// The tree construction uses state upsampling: as matrices grow in height, sponge states
+/// duplicate to match the new height before absorbing additional rows. This ensures
+/// uniform tree structure where all leaves at the same level have consistent hash state history.
 ///
-/// # Returns
-/// Vector of digest layers, where:
-/// - `result[0]` contains all leaf digests (one per row of the tallest matrix)
-/// - `result[i+1]` contains half as many digests as `result[i]`
-/// - `result[last]` contains a single root digest
+/// Since [`StatefulSponge`] operates on a single field type, this tree uses the same type `F`
+/// for both matrix elements and digest words, unlike `MerkleTree` which can hash `F → W`.
 ///
-/// # Example
-/// ```ignore
-/// let layers = build_matrix_digest_layers::<Packed, _, _, _, WIDTH, RATE, DIGEST>(
-///     &[small_matrix, large_matrix],
-///     &sponge,
-///     &compressor
-/// );
-/// let root = layers.last().unwrap()[0];
-/// ```
-pub fn build_matrix_digest_layers<
-    P,
-    M,
-    C,
-    H,
-    const WIDTH: usize,
-    const RATE: usize,
-    const DIGEST_ELEMS: usize,
->(
-    matrices: &[M],
-    h: &H,
-    c: &C,
-) -> Vec<Vec<[P::Value; DIGEST_ELEMS]>>
-where
-    P: PackedValue + Default,
-    M: Matrix<P::Value>,
-    H: StatefulSponge<P, WIDTH, RATE> + StatefulSponge<P::Value, WIDTH, RATE> + Sync,
-    C: PseudoCompressionFunction<[P::Value; DIGEST_ELEMS], 2>
-        + PseudoCompressionFunction<[P; DIGEST_ELEMS], 2>
-        + Sync,
+/// Use [`root`](Self::root) to fetch the final digest once the tree is built.
+///
+/// This generally shouldn't be used directly. If you're using a Merkle tree as an MMCS,
+/// see the MMCS wrapper types.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UniformMerkleTree<F, M, const DIGEST_ELEMS: usize> {
+    /// All leaf matrices in insertion order.
+    ///
+    /// Matrices must be sorted by height (shortest to tallest) and all heights must be
+    /// powers of two. Each matrix's rows are absorbed into sponge states that are
+    /// maintained and upsampled across matrices of increasing height.
+    ///
+    /// This vector is retained for inspection or re-opening of the tree; it is not used
+    /// after construction time.
+    pub(crate) leaves: Vec<M>,
+
+    /// All intermediate digest layers, index 0 being the leaf digest layer
+    /// and the last layer containing exactly one root digest.
+    ///
+    /// Every inner vector holds contiguous digests. Higher layers are built by
+    /// compressing pairs from the previous layer.
+    ///
+    /// Serialization requires that `[F; DIGEST_ELEMS]` implements `Serialize` and
+    /// `Deserialize`. This is automatically satisfied when `F` is a fixed-size type.
+    #[serde(
+        bound(serialize = "[F; DIGEST_ELEMS]: Serialize"),
+        bound(deserialize = "[F; DIGEST_ELEMS]: Deserialize<'de>")
+    )]
+    pub(crate) digest_layers: Vec<Vec<[F; DIGEST_ELEMS]>>,
+
+    /// Zero-sized marker for type safety.
+    _phantom: PhantomData<M>,
+}
+
+impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: usize>
+    UniformMerkleTree<F, M, DIGEST_ELEMS>
 {
-    let leaves = build_uniform_leaves::<P, M, H, WIDTH, RATE, DIGEST_ELEMS>(matrices, h);
-    build_digest_layers::<P, C, DIGEST_ELEMS>(leaves, c)
+    /// Build a uniform tree from **one or more matrices** with power-of-two heights.
+    ///
+    /// * `h` – stateful sponge used for incremental hashing of matrix rows.
+    /// * `c` – 2-to-1 compression function used on digests.
+    /// * `leaves` – matrices to commit to. Must be non-empty, sorted by height (shortest
+    ///   to tallest), and all heights must be powers of two.
+    ///
+    /// Matrices are processed from shortest to tallest. For each matrix, sponge states
+    /// are maintained per final leaf row, upsampling (duplicating) as matrices grow.
+    /// This ensures uniform state evolution across all leaves.
+    ///
+    /// After leaf digests are built, they are repeatedly compressed pair-wise with `c`
+    /// until a single root remains.
+    ///
+    /// # Panics
+    /// * If `leaves` is empty.
+    /// * If matrices are not sorted by height.
+    /// * If any matrix height is not a power of two.
+    pub fn new<P, H, C, const WIDTH: usize, const RATE: usize>(h: &H, c: &C, leaves: Vec<M>) -> Self
+    where
+        P: PackedValue<Value = F> + Default,
+        H: StatefulSponge<P, WIDTH, RATE> + StatefulSponge<F, WIDTH, RATE> + Sync,
+        C: PseudoCompressionFunction<[F; DIGEST_ELEMS], 2>
+            + PseudoCompressionFunction<[P; DIGEST_ELEMS], 2>
+            + Sync,
+    {
+        assert!(!leaves.is_empty(), "No matrices given");
+
+        // Build leaf digests from matrices using the sponge
+        let leaf_digests = build_uniform_leaves::<P, M, H, WIDTH, RATE, DIGEST_ELEMS>(&leaves, h);
+
+        // Build digest layers by repeatedly compressing until we reach the root
+        let mut digest_layers = vec![leaf_digests];
+
+        loop {
+            let prev_layer = digest_layers.last().unwrap();
+            if prev_layer.len() == 1 {
+                break;
+            }
+
+            let next_layer = compress_uniform::<P, C, DIGEST_ELEMS>(prev_layer, c);
+            digest_layers.push(next_layer);
+        }
+
+        Self {
+            leaves,
+            digest_layers,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Return the root digest of the tree.
+    #[must_use]
+    pub fn root(&self) -> Hash<F, F, DIGEST_ELEMS> {
+        self.digest_layers.last().unwrap()[0].into()
+    }
 }
 
 /// Build the leaf digests that would appear at the base of a uniform Merkle tree.
@@ -194,40 +254,6 @@ where
         .par_iter_mut()
         .map(|state| sponge.squeeze::<DIGEST_ELEMS>(state))
         .collect()
-}
-
-/// Build all digest layers from leaf digests up to the root.
-///
-/// Repeatedly compresses each layer until a single root digest remains. Returns all layers
-/// including the input leaf layer and the final root layer.
-///
-/// # Panics
-/// Panics if `leaf_digests` is empty.
-fn build_digest_layers<P, C, const DIGEST_ELEMS: usize>(
-    leaf_digests: Vec<[P::Value; DIGEST_ELEMS]>,
-    c: &C,
-) -> Vec<Vec<[P::Value; DIGEST_ELEMS]>>
-where
-    P: PackedValue,
-    C: PseudoCompressionFunction<[P::Value; DIGEST_ELEMS], 2>
-        + PseudoCompressionFunction<[P; DIGEST_ELEMS], 2>
-        + Sync,
-{
-    assert!(!leaf_digests.is_empty(), "leaf_digests cannot be empty");
-
-    let mut digest_layers = vec![leaf_digests];
-
-    loop {
-        let prev_layer = digest_layers.last().unwrap();
-        if prev_layer.len() == 1 {
-            break;
-        }
-
-        let next_layer = compress_uniform::<P, C, DIGEST_ELEMS>(prev_layer, c);
-        digest_layers.push(next_layer);
-    }
-
-    digest_layers
 }
 
 /// Compress a layer of digests in a uniform Merkle tree.
@@ -438,7 +464,17 @@ mod tests {
             current = next;
         }
 
-        let actual_layers = build_digest_layers::<Packed, _, DIGEST>(leaves, &compressor);
+        // Build digest layers using compress_uniform
+        let mut actual_layers = vec![leaves];
+        loop {
+            let prev_layer = actual_layers.last().unwrap();
+            if prev_layer.len() == 1 {
+                break;
+            }
+            let next_layer = compress_uniform::<Packed, _, DIGEST>(prev_layer, &compressor);
+            actual_layers.push(next_layer);
+        }
+
         assert_eq!(actual_layers, naive_layers);
     }
 }
