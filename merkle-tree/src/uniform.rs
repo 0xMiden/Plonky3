@@ -263,6 +263,109 @@ where
         .collect()
 }
 
+/// Build the leaf digests that would appear at the base of a uniform Merkle tree.
+///
+/// Every matrix is virtually lifted to the tallest height by cycling through its rows until the
+/// target height is reached. For each final row index `r`, we absorb the row `r % h` from each
+/// matrix of height `h` into a shared sponge state, keeping the matrices logically aligned.
+///
+/// # Preconditions
+/// - Matrices must be pre-sorted by height (shortest to tallest). Verified at runtime.
+/// - Every matrix height must be a non-zero power of two.
+///
+/// # Panics
+/// Panics if `matrices` is empty or if the ordering/height invariants are violated.
+#[allow(dead_code)]
+fn build_lifted_leaves<P, M, H, const WIDTH: usize, const RATE: usize, const DIGEST_ELEMS: usize>(
+    matrices: &[M],
+    sponge: &H,
+) -> Vec<[P::Value; DIGEST_ELEMS]>
+where
+    P: PackedValue + Default,
+    M: Matrix<P::Value>,
+    H: StatefulSponge<P, WIDTH, RATE> + StatefulSponge<P::Value, WIDTH, RATE> + Sync,
+{
+    assert!(!matrices.is_empty(), "matrices cannot be empty");
+    assert!(P::WIDTH.is_power_of_two());
+
+    let mut prev_height = 0usize;
+    for (idx, matrix) in matrices.iter().enumerate() {
+        let height = matrix.height();
+        assert!(height > 0, "matrix {idx} has zero height");
+        assert!(
+            height.is_power_of_two(),
+            "matrix {idx} height {height} must be a power of two"
+        );
+        assert!(
+            prev_height <= height,
+            "matrices must be sorted by non-decreasing height"
+        );
+        prev_height = height;
+    }
+
+    let final_height = matrices.last().unwrap().height();
+    assert!(
+        final_height.is_power_of_two(),
+        "final height must be a power of two"
+    );
+    let final_height_packed = final_height.div_ceil(P::WIDTH);
+
+    let mut states = vec![[P::Value::default(); WIDTH]; final_height];
+    let packed_default = [P::default(); WIDTH];
+    let mut packed_states = vec![packed_default; final_height_packed];
+
+    for (matrix_idx, matrix) in matrices.iter().enumerate() {
+        let height = matrix.height();
+        let height_mask = height - 1;
+
+        if height < P::WIDTH {
+            for (row_idx, state) in states.iter_mut().enumerate() {
+                let wrapped_row = row_idx & height_mask;
+                let row = matrix.row(wrapped_row).unwrap_or_else(|| {
+                    panic!(
+                        "row {} missing from matrix {} (height {})",
+                        wrapped_row, matrix_idx, height
+                    )
+                });
+                sponge.absorb(state, row);
+            }
+            continue;
+        }
+
+        // Pack scalar states into SIMD-friendly buffers.
+        packed_states
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(packed_idx, packed_state)| {
+                let base_row_idx = packed_idx * P::WIDTH;
+                let states_chunk = &states[base_row_idx..base_row_idx + P::WIDTH];
+                pack_arrays_into(states_chunk, packed_state);
+            });
+
+        packed_states
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(packed_idx, packed_state)| {
+                let base_row_idx = packed_idx * P::WIDTH;
+                let start = base_row_idx & height_mask;
+                let row = matrix.vertically_packed_row(start);
+                sponge.absorb(packed_state, row);
+            });
+
+        states
+            .par_chunks_mut(P::WIDTH)
+            .zip(packed_states.par_iter())
+            .for_each(|(states_chunk, packed_chunk)| {
+                unpack_array_into(packed_chunk, states_chunk);
+            });
+    }
+
+    states
+        .into_iter()
+        .map(|mut state| sponge.squeeze::<DIGEST_ELEMS>(&mut state))
+        .collect()
+}
+
 /// Compress a layer of digests in a uniform Merkle tree.
 ///
 /// Takes a layer of digests and compresses pairs into a new layer with half as many elements.
@@ -354,8 +457,10 @@ mod tests {
     use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
     use p3_field::{Field, PrimeCharacteristicRing};
     use p3_matrix::Matrix;
+    use p3_matrix::bitrev::BitReversibleMatrix;
     use p3_matrix::dense::RowMajorMatrix;
     use p3_symmetric::{PaddingFreeSponge, StatefulSponge, TruncatedPermutation};
+    use p3_util::reverse_slice_index_bits;
     use rand::rngs::SmallRng;
     use rand::{RngCore, SeedableRng};
 
@@ -425,6 +530,240 @@ mod tests {
             .iter_mut()
             .map(|state| sponge.squeeze::<DIGEST>(state))
             .collect()
+    }
+
+    fn reference_lifted_leaves(
+        mut matrices: Vec<RowMajorMatrix<F>>,
+        sponge: &PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
+    ) -> Vec<[F; DIGEST]> {
+        matrices.sort_by_key(|m| m.height());
+        assert!(!matrices.is_empty());
+
+        let final_height = matrices.last().unwrap().height();
+        let mut leaves = Vec::with_capacity(final_height);
+
+        for row_idx in 0..final_height {
+            let mut state = [F::ZERO; WIDTH];
+            for (matrix_idx, matrix) in matrices.iter().enumerate() {
+                let height = matrix.height();
+                let wrapped_row = row_idx % height;
+                let row = matrix
+                    .row(wrapped_row)
+                    .unwrap_or_else(|| panic!("row {wrapped_row} missing in matrix {matrix_idx}"));
+                sponge.absorb(&mut state, row.into_iter());
+            }
+            leaves.push(sponge.squeeze::<DIGEST>(&mut state));
+        }
+
+        leaves
+    }
+
+    fn upsample_matrix(matrix: &RowMajorMatrix<F>, target_height: usize) -> RowMajorMatrix<F> {
+        assert!(target_height.is_power_of_two());
+        assert!(target_height >= matrix.height());
+        assert_eq!(target_height % matrix.height(), 0);
+        assert!(matrix.height().is_power_of_two());
+
+        let width = matrix.width();
+        let scaling = target_height / matrix.height();
+        let mut data = Vec::with_capacity(target_height * width);
+
+        for row_idx in 0..target_height {
+            let src = matrix
+                .row(row_idx / scaling)
+                .expect("source row exists")
+                .into_iter();
+            data.extend(src);
+        }
+
+        RowMajorMatrix::new(data, width)
+    }
+
+    fn lift_matrix(matrix: &RowMajorMatrix<F>, target_height: usize) -> RowMajorMatrix<F> {
+        assert!(target_height.is_power_of_two());
+        assert!(target_height >= matrix.height());
+        assert_eq!(target_height % matrix.height(), 0);
+        assert!(matrix.height().is_power_of_two());
+
+        let width = matrix.width();
+        let mut data = Vec::with_capacity(target_height * width);
+
+        for row_idx in 0..target_height {
+            let src = matrix
+                .row(row_idx % matrix.height())
+                .expect("source row exists")
+                .into_iter();
+            data.extend(src);
+        }
+
+        RowMajorMatrix::new(data, width)
+    }
+
+    #[test]
+    fn lifted_leaves_match_reference() {
+        let (sponge, _) = poseidon_components();
+
+        let mut matrices = vec![field_matrix(2, 3, 10), field_matrix(4, 5, 1_000)];
+        matrices.sort_by_key(|m| m.height());
+
+        let leaves = build_lifted_leaves::<Packed, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
+        let expected = reference_lifted_leaves(matrices.clone(), &sponge);
+
+        assert_eq!(leaves, expected);
+    }
+
+    #[test]
+    fn lifted_small_heights_regression() {
+        let (sponge, _) = poseidon_components();
+
+        let mut heights = Vec::new();
+        let mut h = 1;
+        while h <= 32 {
+            heights.push(h);
+            h *= 2;
+        }
+
+        let mut matrices: Vec<_> = heights
+            .iter()
+            .enumerate()
+            .map(|(i, &height)| field_matrix(height, 3, i as u32 * 200))
+            .collect();
+        matrices.sort_by_key(|m| m.height());
+
+        let leaves = build_lifted_leaves::<Packed, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
+        let expected = reference_lifted_leaves(matrices.clone(), &sponge);
+
+        assert_eq!(leaves, expected, "lifted leaves should match reference");
+    }
+
+    #[test]
+    fn lifted_random_matrices_match_reference() {
+        let (sponge, _) = poseidon_components();
+        let mut rng = SmallRng::seed_from_u64(1337);
+
+        let scenarios = [vec![1, 2, 4, 8], vec![2, 2, 4, 8, 8], vec![1, 4, 16]];
+
+        for (case_idx, heights) in scenarios.iter().enumerate() {
+            let max_height = *heights.iter().max().unwrap();
+
+            let mut matrices: Vec<RowMajorMatrix<F>> = heights
+                .iter()
+                .enumerate()
+                .map(|(col_idx, &height)| {
+                    let width = (col_idx % 4) + 1;
+                    let data: Vec<F> = (0..height * width)
+                        .map(|_| F::new(rng.next_u32()))
+                        .collect();
+                    RowMajorMatrix::new(data, width)
+                })
+                .collect();
+            matrices.sort_by_key(|m| m.height());
+
+            let leaves =
+                build_lifted_leaves::<Packed, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
+            let expected = reference_lifted_leaves(matrices.clone(), &sponge);
+
+            assert_eq!(
+                leaves, expected,
+                "scenario {case_idx} with heights {heights:?} failed"
+            );
+
+            assert_eq!(
+                leaves.len(),
+                max_height,
+                "scenario {case_idx} should produce max_height leaves"
+            );
+        }
+    }
+
+    #[test]
+    fn lifted_uniform_leaves_bit_reverse_equivalence() {
+        let (sponge, _) = poseidon_components();
+        let mut rng = SmallRng::seed_from_u64(404);
+
+        let scenarios = [
+            vec![1, 2, 4, 8],
+            vec![2, 4, 8, 16],
+            vec![1, 1, 2, 4, 8],
+            vec![4, 8, 8, 16],
+        ];
+
+        for (case_idx, heights) in scenarios.iter().enumerate() {
+            let mut matrices: Vec<RowMajorMatrix<F>> = heights
+                .iter()
+                .enumerate()
+                .map(|(i, &height)| {
+                    let width = (i % 5) + 1;
+                    let data = (0..height * width)
+                        .map(|_| F::new(rng.next_u32()))
+                        .collect::<Vec<_>>();
+                    RowMajorMatrix::new(data, width)
+                })
+                .collect();
+            matrices.sort_by_key(|m| m.height());
+
+            let lifted =
+                build_lifted_leaves::<Packed, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
+            let uniform =
+                build_uniform_leaves::<Packed, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
+
+            // Bit-reverse each matrix, maintaining sorted order.
+            let mut bitrev_matrices: Vec<RowMajorMatrix<F>> = matrices
+                .iter()
+                .map(|m| m.clone().bit_reverse_rows().to_row_major_matrix())
+                .collect();
+            bitrev_matrices.sort_by_key(|m| m.height());
+
+            let lifted_from_bitrev =
+                build_lifted_leaves::<Packed, _, _, WIDTH, RATE, DIGEST>(&bitrev_matrices, &sponge);
+            let uniform_from_bitrev = build_uniform_leaves::<Packed, _, _, WIDTH, RATE, DIGEST>(
+                &bitrev_matrices,
+                &sponge,
+            );
+
+            let mut uniform_bitrev = uniform.clone();
+            reverse_slice_index_bits(&mut uniform_bitrev);
+            assert_eq!(
+                uniform_bitrev, lifted_from_bitrev,
+                "scenario {case_idx} (uniform -> lifted via input bit-reversal) mismatch"
+            );
+
+            let mut lifted_bitrev = lifted.clone();
+            reverse_slice_index_bits(&mut lifted_bitrev);
+            assert_eq!(
+                lifted_bitrev, uniform_from_bitrev,
+                "scenario {case_idx} (lifted -> uniform via input bit-reversal) mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn lifted_upsampled_bit_reverse_equivalence() {
+        let mut rng = SmallRng::seed_from_u64(2024);
+        let base_height = 2;
+        let width = 5;
+        let scaling = 8;
+        let target_height = base_height * scaling;
+
+        let data = (0..base_height * width)
+            .map(|_| F::new(rng.next_u32()))
+            .collect::<Vec<_>>();
+        let base_matrix = RowMajorMatrix::new(data, width);
+
+        let upsampled = upsample_matrix(&base_matrix, target_height);
+        let lifted = lift_matrix(&base_matrix, target_height);
+
+        let upsampled_br = upsampled.clone().bit_reverse_rows().to_row_major_matrix();
+        let lifted_br = lifted.clone().bit_reverse_rows().to_row_major_matrix();
+
+        assert_eq!(
+            upsampled_br, lifted,
+            "bit-reversed upsampling should match lifting"
+        );
+        assert_eq!(
+            lifted_br, upsampled,
+            "bit-reversed lifting should match upsampling"
+        );
     }
 
     #[test]
