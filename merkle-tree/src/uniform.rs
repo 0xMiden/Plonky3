@@ -231,37 +231,36 @@ fn build_leaves_upsampled<
                 .for_each(|(state, row)| {
                     sponge.absorb(state, row);
                 });
-            continue;
+        } else {
+            // Pack the scalar states into SIMD-friendly buffers so we can absorb packed rows.
+            let packed_height = height.div_ceil(P::WIDTH);
+            packed_states[..packed_height]
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(packed_idx, packed_state)| {
+                    let base_row_idx = packed_idx * P::WIDTH;
+                    let states_chunk = &states[base_row_idx..base_row_idx + P::WIDTH];
+                    pack_arrays_into(states_chunk, packed_state);
+                });
+
+            // Absorb matrix packed matrix rows
+            packed_states[..packed_height]
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(packed_idx, packed_state)| {
+                    let idx = packed_idx * P::WIDTH;
+                    let row = matrix.vertically_packed_row(idx);
+                    sponge.absorb(packed_state, row);
+                });
+
+            // Scatter packed scalar states so the next matrix sees scalar layout.
+            states[..height]
+                .par_chunks_mut(P::WIDTH)
+                .zip(packed_states[..packed_height].par_iter())
+                .for_each(|(states_chunk, packed_chunk)| {
+                    unpack_array_into(packed_chunk, states_chunk);
+                });
         }
-
-        // Pack the scalar states into SIMD-friendly buffers so we can absorb packed rows.
-        let packed_height = height.div_ceil(P::WIDTH);
-        packed_states[..packed_height]
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(packed_idx, packed_state)| {
-                let base_row_idx = packed_idx * P::WIDTH;
-                let states_chunk = &states[base_row_idx..base_row_idx + P::WIDTH];
-                pack_arrays_into(states_chunk, packed_state);
-            });
-
-        // Absorb matrix packed matrix rows
-        packed_states[..packed_height]
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(packed_idx, packed_state)| {
-                let idx = packed_idx * P::WIDTH;
-                let row = matrix.vertically_packed_row(idx);
-                sponge.absorb(packed_state, row);
-            });
-
-        // Scatter packed scalar states so the next matrix sees scalar layout.
-        states[..height]
-            .par_chunks_mut(P::WIDTH)
-            .zip(packed_states[..packed_height].par_iter())
-            .for_each(|(states_chunk, packed_chunk)| {
-                unpack_array_into(packed_chunk, states_chunk);
-            });
 
         active_height = height;
     }
@@ -485,49 +484,29 @@ mod tests {
     const DIGEST: usize = 8;
     const PACK_WIDTH: usize = <Packed as PackedValue>::WIDTH;
 
-    #[derive(Clone, Copy, Debug)]
-    enum BuildMode {
-        Upsampled,
-        Cyclic,
+    type Sponge = PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>;
+
+    struct Mode {
+        name: &'static str,
+        build: fn(&[RowMajorMatrix<F>], &Sponge) -> Vec<[F; DIGEST]>,
+        reference: fn(Vec<RowMajorMatrix<F>>, &Sponge) -> Vec<[F; DIGEST]>,
     }
 
-    impl BuildMode {
-        fn name(self) -> &'static str {
-            match self {
-                BuildMode::Upsampled => "upsampled",
-                BuildMode::Cyclic => "cyclic",
-            }
-        }
-
-        fn build(
-            self,
-            matrices: &[RowMajorMatrix<F>],
-            sponge: &PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
-        ) -> Vec<[F; DIGEST]> {
-            match self {
-                BuildMode::Upsampled => {
-                    build_leaves_upsampled::<Packed, _, _, WIDTH, RATE, DIGEST>(matrices, sponge)
-                }
-                BuildMode::Cyclic => {
-                    build_leaves_cyclic::<Packed, _, _, WIDTH, RATE, DIGEST>(matrices, sponge)
-                }
-            }
-        }
-
-        fn reference(
-            self,
-            matrices: Vec<RowMajorMatrix<F>>,
-            sponge: &PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
-        ) -> Vec<[F; DIGEST]> {
-            match self {
-                BuildMode::Upsampled => reference_leaves_upsampled(matrices, sponge),
-                BuildMode::Cyclic => reference_leaves_cyclic(matrices, sponge),
-            }
-        }
-    }
+    const MODES: [Mode; 2] = [
+        Mode {
+            name: "upsampled",
+            build: build_upsampled,
+            reference: reference_leaves_upsampled,
+        },
+        Mode {
+            name: "cyclic",
+            build: build_cyclic,
+            reference: reference_leaves_cyclic,
+        },
+    ];
 
     fn poseidon_components() -> (
-        PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
+        Sponge,
         TruncatedPermutation<Poseidon2BabyBear<WIDTH>, 2, DIGEST, WIDTH>,
     ) {
         let mut rng = SmallRng::seed_from_u64(1);
@@ -537,11 +516,23 @@ mod tests {
         (sponge, compressor)
     }
 
-    fn field_matrix(rows: usize, cols: usize, offset: u32) -> RowMajorMatrix<F> {
-        let data = (0..rows * cols)
-            .map(|i| F::new(offset + i as u32))
-            .collect::<Vec<_>>();
-        RowMajorMatrix::new(data, cols)
+    fn build_upsampled(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
+        build_leaves_upsampled::<Packed, _, _, WIDTH, RATE, DIGEST>(matrices, sponge)
+    }
+
+    fn build_cyclic(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
+        build_leaves_cyclic::<Packed, _, _, WIDTH, RATE, DIGEST>(matrices, sponge)
+    }
+
+    fn random_matrix(height: usize, width: usize, rng: &mut SmallRng) -> RowMajorMatrix<F> {
+        assert!(height.is_power_of_two(), "height must be power of two");
+        let mut data = Vec::with_capacity(height * width);
+        for _ in 0..height {
+            for _ in 0..width {
+                data.push(F::new(rng.next_u32()));
+            }
+        }
+        RowMajorMatrix::new(data, width)
     }
 
     fn reference_leaves_upsampled(
@@ -552,33 +543,12 @@ mod tests {
         assert!(!matrices.is_empty());
 
         let final_height = matrices.last().unwrap().height();
-        let mut states = vec![[F::ZERO; WIDTH]; final_height];
-        let mut scratch = states.clone();
-        let mut active_height = matrices.first().unwrap().height();
-
-        for matrix in matrices.iter() {
-            let height = matrix.height();
-
-            if height > active_height {
-                let growth = height / active_height;
-                for (row, scratch_state) in scratch.iter_mut().enumerate().take(height) {
-                    *scratch_state = states[row / growth];
-                }
-                states[..height].copy_from_slice(&scratch[..height]);
-            }
-
-            for (row, state) in states.iter_mut().enumerate().take(height) {
-                let row_iter = matrix.row(row).expect("row exists").into_iter();
-                sponge.absorb(state, row_iter);
-            }
-
-            active_height = height;
-        }
-
-        states
-            .iter_mut()
-            .map(|state| sponge.squeeze::<DIGEST>(state))
-            .collect()
+        let lifted: Vec<RowMajorMatrix<F>> = matrices
+            .iter()
+            .map(|matrix| lift_matrix_upsampled(matrix, final_height))
+            .collect();
+        let concatenated = concatenate_matrices_with_padding(&lifted);
+        reference_leaves_from_single_matrix(&concatenated, sponge)
     }
 
     fn reference_leaves_cyclic(
@@ -589,25 +559,41 @@ mod tests {
         assert!(!matrices.is_empty());
 
         let final_height = matrices.last().unwrap().height();
-        let mut leaves = Vec::with_capacity(final_height);
-
-        for row_idx in 0..final_height {
-            let mut state = [F::ZERO; WIDTH];
-            for (matrix_idx, matrix) in matrices.iter().enumerate() {
-                let height = matrix.height();
-                let wrapped_row = row_idx % height;
-                let row = matrix
-                    .row(wrapped_row)
-                    .unwrap_or_else(|| panic!("row {wrapped_row} missing in matrix {matrix_idx}"));
-                sponge.absorb(&mut state, row.into_iter());
-            }
-            leaves.push(sponge.squeeze::<DIGEST>(&mut state));
-        }
-
-        leaves
+        let lifted: Vec<RowMajorMatrix<F>> = matrices
+            .iter()
+            .map(|matrix| lift_matrix_cyclic(matrix, final_height))
+            .collect();
+        let concatenated = concatenate_matrices_with_padding(&lifted);
+        reference_leaves_from_single_matrix(&concatenated, sponge)
     }
 
-    fn upsample_matrix(matrix: &RowMajorMatrix<F>, target_height: usize) -> RowMajorMatrix<F> {
+    fn pad_matrix(matrix: &RowMajorMatrix<F>) -> RowMajorMatrix<F> {
+        let height = matrix.height();
+        let width = matrix.width();
+        let padded_width = width.next_multiple_of(RATE);
+        if padded_width == width {
+            return matrix.clone();
+        }
+
+        let mut data = Vec::with_capacity(height * padded_width);
+        for row in 0..height {
+            for col in 0..padded_width {
+                if col < width {
+                    let value = matrix.get(row, col).expect("row in bounds");
+                    data.push(value);
+                } else {
+                    data.push(F::ZERO);
+                }
+            }
+        }
+
+        RowMajorMatrix::new(data, padded_width)
+    }
+
+    fn lift_matrix_upsampled(
+        matrix: &RowMajorMatrix<F>,
+        target_height: usize,
+    ) -> RowMajorMatrix<F> {
         assert!(target_height.is_power_of_two());
         assert!(target_height >= matrix.height());
         assert_eq!(target_height % matrix.height(), 0);
@@ -628,7 +614,7 @@ mod tests {
         RowMajorMatrix::new(data, width)
     }
 
-    fn lift_matrix(matrix: &RowMajorMatrix<F>, target_height: usize) -> RowMajorMatrix<F> {
+    fn lift_matrix_cyclic(matrix: &RowMajorMatrix<F>, target_height: usize) -> RowMajorMatrix<F> {
         assert!(target_height.is_power_of_two());
         assert!(target_height >= matrix.height());
         assert_eq!(target_height % matrix.height(), 0);
@@ -648,41 +634,40 @@ mod tests {
         RowMajorMatrix::new(data, width)
     }
 
-    fn build_reference_matrix(
-        mode: BuildMode,
-        matrices: &[RowMajorMatrix<F>],
-        max_height: usize,
-    ) -> RowMajorMatrix<F> {
-        let mut total_width = 0;
+    fn concatenate_matrices_with_padding(matrices: &[RowMajorMatrix<F>]) -> RowMajorMatrix<F> {
+        assert!(!matrices.is_empty());
+        let height = matrices[0].height();
+        let padded: Vec<RowMajorMatrix<F>> = matrices
+            .iter()
+            .map(|matrix| {
+                assert_eq!(
+                    matrix.height(),
+                    height,
+                    "all matrices must share a height after lifting"
+                );
+                pad_matrix(matrix)
+            })
+            .collect();
 
-        for matrix in matrices {
-            total_width += matrix.width().next_multiple_of(RATE);
-        }
-
-        let mut result_data = vec![F::ZERO; max_height * total_width];
+        let total_width: usize = padded.iter().map(|matrix| matrix.width()).sum();
+        let mut data = vec![F::ZERO; height * total_width];
         let mut col_offset = 0;
 
-        for matrix in matrices {
-            let height = matrix.height();
-            let width = matrix.width();
-            let padded_width = width.next_multiple_of(RATE);
-            let scaling = max_height / height;
-
-            for dst_row in 0..max_height {
-                let src_row = match mode {
-                    BuildMode::Upsampled => dst_row / scaling,
-                    BuildMode::Cyclic => dst_row % height,
-                };
-                for col in 0..width {
-                    let dst_idx = dst_row * total_width + col_offset + col;
-                    result_data[dst_idx] = matrix.get(src_row, col).expect("row and col in bounds");
+        for matrix in &padded {
+            for row in 0..height {
+                for col in 0..matrix.width() {
+                    let value = matrix
+                        .get(row, col)
+                        .expect("row and column should be in bounds");
+                    let dst_idx = row * total_width + col_offset + col;
+                    data[dst_idx] = value;
                 }
             }
 
-            col_offset += padded_width;
+            col_offset += matrix.width();
         }
 
-        RowMajorMatrix::new(result_data, total_width)
+        RowMajorMatrix::new(data, total_width)
     }
 
     fn reference_leaves_from_single_matrix(
@@ -699,109 +684,90 @@ mod tests {
         leaves
     }
 
-    #[test]
-    fn leaves_match_reference() {
-        let (sponge, _) = poseidon_components();
+    #[derive(Clone)]
+    struct MatrixSpec {
+        height: usize,
+        width: usize,
+        pad: bool,
+    }
 
-        for mode in [BuildMode::Upsampled, BuildMode::Cyclic] {
-            let mut matrices = vec![field_matrix(2, 3, 10), field_matrix(4, 5, 1_000)];
-            matrices.sort_by_key(|m| m.height());
+    fn spec(height: usize, width: usize, pad: bool) -> MatrixSpec {
+        MatrixSpec { height, width, pad }
+    }
 
-            let actual = mode.build(&matrices, &sponge);
-            let expected = mode.reference(matrices.clone(), &sponge);
-
-            assert_eq!(
-                actual,
-                expected,
-                "{} leaves should match reference construction",
-                mode.name()
-            );
-        }
+    /// Common scenarios parameterized by both heights and widths.
+    fn matrix_scenarios() -> Vec<Vec<MatrixSpec>> {
+        vec![
+            vec![spec(1, 1, false)],
+            vec![spec(1, RATE - 1, true)],
+            vec![spec(2, 3, false), spec(4, 5, true), spec(8, RATE, false)],
+            vec![
+                spec(1, 5, true),
+                spec(1, 3, false),
+                spec(2, 7, true),
+                spec(4, 1, false),
+                spec(8, RATE + 1, true),
+            ],
+            vec![
+                spec(PACK_WIDTH / 2, RATE - 1, true),
+                spec(PACK_WIDTH, RATE, false),
+                spec(PACK_WIDTH * 2, RATE + 3, true),
+            ],
+            vec![
+                spec(PACK_WIDTH, RATE + 5, true),
+                spec(PACK_WIDTH * 2, 25, true),
+            ],
+            vec![
+                spec(1, RATE * 2, false),
+                spec(PACK_WIDTH / 2, RATE * 2 - 1, true),
+                spec(PACK_WIDTH, RATE * 2, false),
+                spec(PACK_WIDTH * 2, RATE * 3 - 2, true),
+            ],
+            vec![
+                spec(4, RATE - 1, true),
+                spec(4, RATE, false),
+                spec(8, RATE + 3, true),
+                spec(8, RATE * 2, false),
+            ],
+            vec![spec(PACK_WIDTH * 2, RATE - 1, true)],
+        ]
     }
 
     #[test]
-    fn small_heights_regression() {
-        let (sponge, _) = poseidon_components();
-
-        let mut heights = Vec::new();
-        let mut h = 1;
-        while h < PACK_WIDTH && h <= 64 {
-            heights.push(h);
-            h *= 2;
-        }
-
-        if heights.is_empty() {
-            heights.push(1);
-        }
-
-        let mut matrices: Vec<_> = heights
-            .iter()
-            .enumerate()
-            .map(|(i, &height)| field_matrix(height, 3, i as u32 * 200))
-            .collect();
-        matrices.sort_by_key(|m| m.height());
-
-        for mode in [BuildMode::Upsampled, BuildMode::Cyclic] {
-            let actual = mode.build(&matrices, &sponge);
-            let expected = mode.reference(matrices.clone(), &sponge);
-
-            assert_eq!(
-                actual,
-                expected,
-                "small heights should match reference ({})",
-                mode.name()
-            );
-        }
-    }
-
-    #[test]
-    fn random_matrices_match_reference() {
+    fn modes_match_reference_across_scenarios() {
         let (sponge, _) = poseidon_components();
         let mut rng = SmallRng::seed_from_u64(42);
 
-        let test_cases = [
-            vec![1, 2, 4, 8],
-            vec![2, 4, 8, 16],
-            vec![1, 1, 2, 4, 8],
-            vec![4, 8, 8, 16],
-            vec![1, 2, 4, 8, 16, 32],
-        ];
+        let scenarios = matrix_scenarios();
+        for (test_idx, specs) in scenarios.iter().enumerate() {
+            let max_height = specs.iter().map(|spec| spec.height).max().unwrap();
 
-        for (test_idx, heights) in test_cases.iter().enumerate() {
-            let max_height = *heights.iter().max().unwrap();
-            if max_height > 64 {
-                continue;
-            }
+            for sample_idx in 0..3 {
+                let mut matrices: Vec<RowMajorMatrix<F>> = specs
+                    .iter()
+                    .map(|spec| {
+                        let base = random_matrix(spec.height, spec.width, &mut rng);
+                        if spec.pad { pad_matrix(&base) } else { base }
+                    })
+                    .collect();
+                matrices.sort_by_key(|m| m.height());
 
-            let mut matrices: Vec<RowMajorMatrix<F>> = heights
-                .iter()
-                .enumerate()
-                .map(|(i, &h)| {
-                    let width = (i % 5) + 1;
-                    let data: Vec<F> = (0..h * width).map(|_| F::new(rng.next_u32())).collect();
-                    RowMajorMatrix::new(data, width)
-                })
-                .collect();
-            matrices.sort_by_key(|m| m.height());
+                for mode in &MODES {
+                    let actual = (mode.build)(&matrices, &sponge);
+                    let expected = (mode.reference)(matrices.clone(), &sponge);
 
-            for mode in [BuildMode::Upsampled, BuildMode::Cyclic] {
-                let actual = mode.build(&matrices, &sponge);
-                let expected = mode.reference(matrices.clone(), &sponge);
-
-                assert_eq!(
-                    actual,
-                    expected,
-                    "test case {} (mode {}) should match reference",
-                    test_idx,
-                    mode.name()
-                );
-                assert_eq!(
-                    actual.len(),
-                    max_height,
-                    "test case {} (mode {}) should produce max_height leaves",
-                    test_idx,
-                    mode.name()
-                );
+                    assert_eq!(
+                        actual, expected,
+                        "scenario {test_idx} sample {sample_idx} (mode {}) should match reference",
+                        mode.name
+                    );
+                    assert_eq!(
+                        actual.len(),
+                        max_height,
+                        "scenario {test_idx} sample {sample_idx} (mode {}) should produce max_height leaves",
+                        mode.name
+                    );
+                }
             }
         }
     }
@@ -811,29 +777,18 @@ mod tests {
         let (sponge, _) = poseidon_components();
         let mut rng = SmallRng::seed_from_u64(404);
 
-        let scenarios = [
-            vec![1, 2, 4, 8],
-            vec![2, 4, 8, 16],
-            vec![1, 1, 2, 4, 8],
-            vec![4, 8, 8, 16],
-        ];
-
-        for (case_idx, heights) in scenarios.iter().enumerate() {
-            let mut matrices: Vec<RowMajorMatrix<F>> = heights
-                .iter()
-                .enumerate()
-                .map(|(i, &height)| {
-                    let width = (i % 5) + 1;
-                    let data = (0..height * width)
-                        .map(|_| F::new(rng.next_u32()))
-                        .collect::<Vec<_>>();
-                    RowMajorMatrix::new(data, width)
-                })
-                .collect();
+        let scenarios = matrix_scenarios();
+        for (case_idx, specs) in scenarios.iter().enumerate() {
+            let mut matrices = Vec::with_capacity(specs.len());
+            for spec in specs {
+                let base = random_matrix(spec.height, spec.width, &mut rng);
+                let matrix = if spec.pad { pad_matrix(&base) } else { base };
+                matrices.push(matrix);
+            }
             matrices.sort_by_key(|m| m.height());
 
-            let upsampled = BuildMode::Upsampled.build(&matrices, &sponge);
-            let cyclic = BuildMode::Cyclic.build(&matrices, &sponge);
+            let upsampled = build_upsampled(&matrices, &sponge);
+            let cyclic = build_cyclic(&matrices, &sponge);
 
             let mut bitrev_matrices: Vec<RowMajorMatrix<F>> = matrices
                 .iter()
@@ -841,8 +796,8 @@ mod tests {
                 .collect();
             bitrev_matrices.sort_by_key(|m| m.height());
 
-            let upsampled_from_bitrev = BuildMode::Upsampled.build(&bitrev_matrices, &sponge);
-            let cyclic_from_bitrev = BuildMode::Cyclic.build(&bitrev_matrices, &sponge);
+            let upsampled_from_bitrev = build_upsampled(&bitrev_matrices, &sponge);
+            let cyclic_from_bitrev = build_cyclic(&bitrev_matrices, &sponge);
 
             let mut upsampled_bitrev = upsampled.clone();
             reverse_slice_index_bits(&mut upsampled_bitrev);
@@ -859,85 +814,12 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn bit_reverse_equivalence_single_matrix() {
-        let mut rng = SmallRng::seed_from_u64(2024);
-        let base_height = 2;
-        let width = 5;
-        let scaling = 8;
-        let target_height = base_height * scaling;
-
-        let data = (0..base_height * width)
-            .map(|_| F::new(rng.next_u32()))
-            .collect::<Vec<_>>();
-        let base_matrix = RowMajorMatrix::new(data, width);
-
-        let upsampled = upsample_matrix(&base_matrix, target_height);
-        let lifted = lift_matrix(&base_matrix, target_height);
-
-        let upsampled_br = upsampled.clone().bit_reverse_rows().to_row_major_matrix();
-        let lifted_br = lifted.clone().bit_reverse_rows().to_row_major_matrix();
-
-        assert_eq!(
-            upsampled_br, lifted,
-            "bit-reversed upsampling should match cyclic lifting"
-        );
-        assert_eq!(
-            lifted_br, upsampled,
-            "bit-reversed lifting should match upsampling"
-        );
-    }
-
-    #[test]
-    fn reference_matrix_comparison() {
-        let (sponge, _) = poseidon_components();
-        let mut rng = SmallRng::seed_from_u64(1337);
-
-        let scenarios = [vec![1, 2, 4, 8], vec![2, 2, 4, 8, 8], vec![1, 4, 16]];
-
-        for (case_idx, heights) in scenarios.iter().enumerate() {
-            let max_height = *heights.iter().max().unwrap();
-
-            let mut matrices: Vec<RowMajorMatrix<F>> = heights
-                .iter()
-                .enumerate()
-                .map(|(col_idx, &height)| {
-                    let width = (col_idx % 4) + 1;
-                    let data: Vec<F> = (0..height * width)
-                        .map(|_| F::new(rng.next_u32()))
-                        .collect();
-                    RowMajorMatrix::new(data, width)
-                })
-                .collect();
-            matrices.sort_by_key(|m| m.height());
-
-            for mode in [BuildMode::Upsampled, BuildMode::Cyclic] {
-                let leaves = mode.build(&matrices, &sponge);
-                let reference_matrix = build_reference_matrix(mode, &matrices, max_height);
-                let expected = reference_leaves_from_single_matrix(&reference_matrix, &sponge);
-
-                assert_eq!(
-                    leaves,
-                    expected,
-                    "scenario {case_idx} (mode {}) should match reference matrix",
-                    mode.name()
-                );
-                assert_eq!(
-                    leaves.len(),
-                    max_height,
-                    "scenario {case_idx} (mode {}) should produce max_height leaves",
-                    mode.name()
-                );
-            }
-        }
-    }
-
     #[test]
     fn digest_layers_match_truncated_poseidon() {
         let (sponge, compressor) = poseidon_components();
 
-        let matrix = field_matrix(PACK_WIDTH * 2, 4, 10_000);
+        let mut rng = SmallRng::seed_from_u64(10_000);
+        let matrix = random_matrix(PACK_WIDTH * 2, 4, &mut rng);
         let matrices = vec![matrix];
 
         let leaves =
