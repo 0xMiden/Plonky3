@@ -489,7 +489,7 @@ mod tests {
     struct Mode {
         name: &'static str,
         build: fn(&[RowMajorMatrix<F>], &Sponge) -> Vec<[F; DIGEST]>,
-        reference: fn(Vec<RowMajorMatrix<F>>, &Sponge) -> Vec<[F; DIGEST]>,
+        reference: fn(&[RowMajorMatrix<F>], &Sponge) -> Vec<[F; DIGEST]>,
     }
 
     const MODES: [Mode; 2] = [
@@ -517,31 +517,24 @@ mod tests {
     }
 
     fn build_upsampled(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
-        build_leaves_upsampled::<Packed, _, _, WIDTH, RATE, DIGEST>(matrices, sponge)
+        build_leaves_upsampled::<Packed, _, _, _, _, _>(matrices, sponge)
     }
 
     fn build_cyclic(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
-        build_leaves_cyclic::<Packed, _, _, WIDTH, RATE, DIGEST>(matrices, sponge)
+        build_leaves_cyclic::<Packed, _, _, _, _, _>(matrices, sponge)
     }
 
     fn random_matrix(height: usize, width: usize, rng: &mut SmallRng) -> RowMajorMatrix<F> {
-        assert!(height.is_power_of_two(), "height must be power of two");
-        let mut data = Vec::with_capacity(height * width);
-        for _ in 0..height {
-            for _ in 0..width {
-                data.push(F::new(rng.next_u32()));
-            }
-        }
+        let data = (0..height * width)
+            .map(|_| F::new(rng.next_u32()))
+            .collect();
         RowMajorMatrix::new(data, width)
     }
 
     fn reference_leaves_upsampled(
-        mut matrices: Vec<RowMajorMatrix<F>>,
+        matrices: &[RowMajorMatrix<F>],
         sponge: &PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
     ) -> Vec<[F; DIGEST]> {
-        matrices.sort_by_key(|m| m.height());
-        assert!(!matrices.is_empty());
-
         let final_height = matrices.last().unwrap().height();
         let lifted: Vec<RowMajorMatrix<F>> = matrices
             .iter()
@@ -552,12 +545,9 @@ mod tests {
     }
 
     fn reference_leaves_cyclic(
-        mut matrices: Vec<RowMajorMatrix<F>>,
+        matrices: &[RowMajorMatrix<F>],
         sponge: &PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
     ) -> Vec<[F; DIGEST]> {
-        matrices.sort_by_key(|m| m.height());
-        assert!(!matrices.is_empty());
-
         let final_height = matrices.last().unwrap().height();
         let lifted: Vec<RowMajorMatrix<F>> = matrices
             .iter()
@@ -594,23 +584,12 @@ mod tests {
         matrix: &RowMajorMatrix<F>,
         target_height: usize,
     ) -> RowMajorMatrix<F> {
-        assert!(target_height.is_power_of_two());
-        assert!(target_height >= matrix.height());
-        assert_eq!(target_height % matrix.height(), 0);
-        assert!(matrix.height().is_power_of_two());
-
         let width = matrix.width();
         let scaling = target_height / matrix.height();
-        let mut data = Vec::with_capacity(target_height * width);
 
-        for row_idx in 0..target_height {
-            let src = matrix
-                .row(row_idx / scaling)
-                .expect("source row exists")
-                .into_iter();
-            data.extend(src);
-        }
-
+        let data = (0..target_height)
+            .flat_map(|row_idx| matrix.row(row_idx / scaling).unwrap())
+            .collect();
         RowMajorMatrix::new(data, width)
     }
 
@@ -754,7 +733,7 @@ mod tests {
 
                 for mode in &MODES {
                     let actual = (mode.build)(&matrices, &sponge);
-                    let expected = (mode.reference)(matrices.clone(), &sponge);
+                    let expected = (mode.reference)(&matrices, &sponge);
 
                     assert_eq!(
                         actual, expected,
@@ -824,7 +803,7 @@ mod tests {
 
         let leaves =
             build_leaves_upsampled::<Packed, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
-        let reference = reference_leaves_upsampled(matrices, &sponge);
+        let reference = reference_leaves_upsampled(&matrices, &sponge);
         assert_eq!(leaves, reference);
 
         let mut naive_layers = vec![reference.clone()];
