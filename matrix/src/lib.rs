@@ -1,6 +1,6 @@
 //! Matrix library.
 
-#![no_std]
+// #![no_std]
 
 extern crate alloc;
 
@@ -22,6 +22,7 @@ pub mod bitrev;
 pub mod dense;
 pub mod extension;
 pub mod horizontally_truncated;
+pub mod lifted;
 pub mod row_index_mapped;
 pub mod stack;
 pub mod strided;
