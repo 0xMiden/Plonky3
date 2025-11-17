@@ -23,12 +23,13 @@ where
 {
     let a_iter = a.into_iter();
     let b_iter = b.into_iter();
-    match a_iter.len() == b_iter.len() {
-        true => Ok(ZipEq {
+    if a_iter.len() == b_iter.len() {
+        Ok(ZipEq {
             a: a_iter,
             b: b_iter,
-        }),
-        false => Err(err),
+        })
+    } else {
+        Err(err)
     }
 }
 
@@ -101,12 +102,10 @@ mod tests {
         let b: [char; 0] = [];
 
         // Zipping two empty iterators should succeed and produce an empty iterator.
-        let zipped = zip_eq(a, b, "mismatch").unwrap();
-
-        let result: Vec<_> = zipped.collect();
+        let mut zipped = zip_eq(a, b, "mismatch").unwrap();
 
         // The result should be an empty vector.
-        assert!(result.is_empty());
+        assert!(zipped.next().is_none());
     }
 
     #[test]

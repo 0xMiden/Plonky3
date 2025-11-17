@@ -1,10 +1,8 @@
-use alloc::vec::Vec;
-
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues};
+use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, PairBuilder};
 use p3_field::Field;
 use p3_matrix::Matrix;
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
-use p3_matrix::stack::{VerticalPair, ViewPair};
+use p3_matrix::stack::ViewPair;
 use tracing::instrument;
 
 /// Runs constraint checks using a given AIR definition and trace matrix.
@@ -18,12 +16,13 @@ use tracing::instrument;
 /// - `main`: The trace matrix (rows of witness values)
 /// - `public_values`: Public values provided to the builder
 #[instrument(name = "check constraints", skip_all)]
-pub(crate) fn check_constraints<F, A>(air: &A, main: &RowMajorMatrix<F>, public_values: &Vec<F>)
+pub(crate) fn check_constraints<F, A>(air: &A, main: &RowMajorMatrix<F>, public_values: &[F])
 where
     F: Field,
     A: for<'a> Air<DebugConstraintBuilder<'a, F>>,
 {
     let height = main.height();
+    let preprocessed = air.preprocessed_trace();
 
     (0..height).for_each(|row_index| {
         let row_index_next = (row_index + 1) % height;
@@ -32,14 +31,28 @@ where
         let local = unsafe { main.row_slice_unchecked(row_index) };
         // row_index_next < height so we can used unchecked indexing.
         let next = unsafe { main.row_slice_unchecked(row_index_next) };
-        let main = VerticalPair::new(
+        let main = ViewPair::new(
             RowMajorMatrixView::new_row(&*local),
             RowMajorMatrixView::new_row(&*next),
         );
 
+        let (prep_local, prep_next);
+        #[allow(clippy::option_if_let_else)]
+        let preprocessed_pair = if let Some(prep) = preprocessed.as_ref() {
+            prep_local = unsafe { prep.row_slice_unchecked(row_index) };
+            prep_next = unsafe { prep.row_slice_unchecked(row_index_next) };
+            Some(ViewPair::new(
+                RowMajorMatrixView::new_row(&*prep_local),
+                RowMajorMatrixView::new_row(&*prep_next),
+            ))
+        } else {
+            None
+        };
+
         let mut builder = DebugConstraintBuilder {
             row_index,
             main,
+            preprocessed: preprocessed_pair,
             public_values,
             is_first_row: F::from_bool(row_index == 0),
             is_last_row: F::from_bool(row_index == height - 1),
@@ -60,6 +73,8 @@ pub struct DebugConstraintBuilder<'a, F: Field> {
     row_index: usize,
     /// A view of the current and next row as a vertical pair.
     main: ViewPair<'a, F>,
+    /// A view of the preprocessed current and next row as a vertical pair (if present).
+    preprocessed: Option<ViewPair<'a, F>>,
     /// The public values provided for constraint validation (e.g. inputs or outputs).
     public_values: &'a [F],
     /// A flag indicating whether this is the first row.
@@ -129,6 +144,13 @@ impl<F: Field> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F> {
     }
 }
 
+impl<'a, F: Field> PairBuilder for DebugConstraintBuilder<'a, F> {
+    fn preprocessed(&self) -> Self::M {
+        self.preprocessed
+            .expect("DebugConstraintBuilder requires preprocessed columns when used as PairBuilder")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;
@@ -193,7 +215,7 @@ mod tests {
             BabyBear::new(4), // Row 3 (last)
         ];
         let main = RowMajorMatrix::new(values, 2);
-        check_constraints(&air, &main, &vec![BabyBear::new(4); 2]);
+        check_constraints(&air, &main, &[BabyBear::new(4); 2]);
     }
 
     #[test]
@@ -212,7 +234,7 @@ mod tests {
             BabyBear::new(6), // Row 3
         ];
         let main = RowMajorMatrix::new(values, 2);
-        check_constraints(&air, &main, &vec![BabyBear::new(6); 2]);
+        check_constraints(&air, &main, &[BabyBear::new(6); 2]);
     }
 
     #[test]
@@ -232,7 +254,7 @@ mod tests {
         ];
         let main = RowMajorMatrix::new(values, 2);
         // Wrong public value on column 1
-        check_constraints(&air, &main, &vec![BabyBear::new(4), BabyBear::new(5)]);
+        check_constraints(&air, &main, &[BabyBear::new(4), BabyBear::new(5)]);
     }
 
     #[test]
@@ -246,6 +268,6 @@ mod tests {
             BabyBear::new(77), // Row 0
         ];
         let main = RowMajorMatrix::new(values, 2);
-        check_constraints(&air, &main, &vec![BabyBear::new(99), BabyBear::new(77)]);
+        check_constraints(&air, &main, &[BabyBear::new(99), BabyBear::new(77)]);
     }
 }
