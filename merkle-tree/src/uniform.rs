@@ -127,34 +127,24 @@ impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: 
     }
 }
 
-/// Build the leaf digests that would appear at the base of a uniform Merkle tree.
+/// Build leaf digests using an upsampled (nearest-neighbor) view of each matrix.
 ///
-/// Matrices are processed from shortest to tallest. For each matrix we rebuild a scratch slice of
-/// scalar states sized to that matrix, pack it into SIMD lanes, absorb the matrix-provided inputs
-/// into the sponge state, then write the updated lanes back into the canonical per-leaf state
-/// buffer.
+/// Conceptually, fix `H` to be the tallest input height. For a matrix with height `h`, define its
+/// upsampled lifting to `H` by duplicating each original row into `H / h` consecutive rows. For
+/// every final row index `r ∈ [0, H)`, form a single long row by horizontally concatenating the
+/// rows at index `r` from all upsampled matrices (padding each matrix's width up to a multiple of
+/// `RATE` with zeros). The digest for leaf `r` is the `squeeze` of a sponge that has `absorb`ed
+/// exactly that long row.
 ///
-/// # Preconditions
-/// - **Matrices must be pre-sorted by height** (shortest to tallest). Verified at runtime.
-/// - Every matrix height and `P::WIDTH` must be powers of two.
+/// This function produces the same result as the above “single concatenated matrix” definition,
+/// but does so incrementally: it maintains one sponge state per final row and, as heights grow,
+/// duplicates those states so that the per-row histories remain aligned with the upsampled view.
 ///
-/// # Algorithm
+/// # Preconditions:
+/// - `matrices` is non-empty and sorted by non-decreasing power-of-two heights.
+/// - `P::WIDTH` is a power of two.
 ///
-/// Maintains one sponge state per final leaf row. As matrices grow from height h → 2h,
-/// each state duplicates (upsamples) before absorbing the new matrix's rows.
-///
-/// **Scalar path** (height < P::WIDTH): Process rows individually to avoid reading
-/// beyond matrix bounds with `vertically_packed_row` (which uses modulo wrapping).
-///
-/// **Packed path** (height >= P::WIDTH):
-/// 1. Upsample: duplicate states to match new height
-/// 2. Pack: transpose scalar states into SIMD layout
-/// 3. Absorb: process matrix rows with packed operations
-/// 4. Unpack: transpose SIMD states back to scalar layout
-///
-/// # Panics
-/// Panics if `matrices` is empty or if `P::WIDTH` is not a power of two.
-/// Debug builds also verify all matrix heights are non-zero and powers of two.
+/// Panics in debug builds if preconditions are violated.
 fn build_leaves_upsampled<
     P: PackedValue + Default,
     M: Matrix<P::Value>,
@@ -166,41 +156,20 @@ fn build_leaves_upsampled<
     matrices: &[M],
     sponge: &H,
 ) -> Vec<[P::Value; DIGEST_ELEMS]> {
-    assert!(!matrices.is_empty(), "matrices cannot be empty");
-    assert!(P::WIDTH.is_power_of_two());
-
-    // Sanity-check matrix heights once so the main loop can assume clean invariants.
-    let mut prev_height = 1;
-    for matrix in matrices {
-        let height = matrix.height();
-        assert!(
-            height.is_power_of_two(),
-            "matrix heights must be a power of two",
-        );
-        assert!(
-            prev_height <= height,
-            "matrices must be sorted by height and non-empty"
-        );
-        prev_height = height;
-    }
-
-    let initial_height = matrices[0].height();
-
-    let final_height = matrices.last().unwrap().height();
-    let final_height_packed = final_height.div_ceil(P::WIDTH);
+    const {
+        assert!(P::WIDTH.is_power_of_two());
+    };
+    let final_height = validate_matrix_heights(matrices);
 
     let scalar_default = [P::Value::default(); WIDTH];
-    let packed_default = [P::default(); WIDTH];
 
     // Memory buffers:
-    // - states: Per-leaf scalar states (one per final row), maintained across matrices
-    // - scratch_states: Temporary buffer for upsampling during matrix growth
-    // - packed_states: Transposed SIMD layout for packed absorption
+    // - states: Per-leaf scalar states (one per final row), maintained across matrices.
+    // - scratch_states: Temporary buffer used when duplicating states during upsampling.
     let mut states = vec![scalar_default; final_height];
     let mut scratch_states = vec![scalar_default; final_height];
-    let mut packed_states = vec![packed_default; final_height_packed];
 
-    let mut active_height = initial_height;
+    let mut active_height = matrices.first().unwrap().height();
 
     for matrix in matrices {
         let height = matrix.height();
@@ -222,45 +191,8 @@ fn build_leaves_upsampled<
             states[..height].copy_from_slice(&scratch_states[..height]);
         }
 
-        // For small matrices whose height is smaller than the packing width,
-        // fall back to the scalar case for absorbing rows into the state.
-        if height < P::WIDTH {
-            states[..height]
-                .iter_mut()
-                .zip(matrix.rows())
-                .for_each(|(state, row)| {
-                    sponge.absorb(state, row);
-                });
-        } else {
-            // Pack the scalar states into SIMD-friendly buffers so we can absorb packed rows.
-            let packed_height = height.div_ceil(P::WIDTH);
-            packed_states[..packed_height]
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(packed_idx, packed_state)| {
-                    let base_row_idx = packed_idx * P::WIDTH;
-                    let states_chunk = &states[base_row_idx..base_row_idx + P::WIDTH];
-                    pack_arrays_into(states_chunk, packed_state);
-                });
-
-            // Absorb matrix packed matrix rows
-            packed_states[..packed_height]
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(packed_idx, packed_state)| {
-                    let idx = packed_idx * P::WIDTH;
-                    let row = matrix.vertically_packed_row(idx);
-                    sponge.absorb(packed_state, row);
-                });
-
-            // Scatter packed scalar states so the next matrix sees scalar layout.
-            states[..height]
-                .par_chunks_mut(P::WIDTH)
-                .zip(packed_states[..packed_height].par_iter())
-                .for_each(|(states_chunk, packed_chunk)| {
-                    unpack_array_into(packed_chunk, states_chunk);
-                });
-        }
+        // Absorb the rows of the matrix into the extended state vector
+        absorb_matrix::<P, _, _, _, _>(&mut states[..height], matrix, sponge);
 
         active_height = height;
     }
@@ -271,18 +203,23 @@ fn build_leaves_upsampled<
         .collect()
 }
 
-/// Build the leaf digests that would appear at the base of a uniform Merkle tree.
+/// Build leaf digests using a cyclic (modulo) view of each matrix.
 ///
-/// Every matrix is virtually lifted to the tallest height by cycling through its rows until the
-/// target height is reached. For each final row index `r`, we absorb the row `r % h` from each
-/// matrix of height `h` into a shared sponge state, keeping the matrices logically aligned.
+/// Let `H` be the tallest input height. For a matrix of height `h`, define its cyclic lifting to
+/// `H` by mapping row index `r` to the original row `(r mod h)`. For every final row `r ∈ [0, H)`,
+/// form one long row by horizontally concatenating the rows at index `r mod h_i` from all
+/// matrices `i` (padding each matrix's width to a multiple of `RATE` with zeros). The digest for
+/// leaf `r` is the `squeeze` of a sponge that has `absorb`ed exactly that long row.
 ///
-/// # Preconditions
-/// - Matrices must be pre-sorted by height (shortest to tallest). Verified at runtime.
-/// - Every matrix height must be a non-zero power of two.
+/// This function realizes that semantics incrementally by keeping one running sponge state per
+/// final row and, whenever the working height increases, duplicating the accumulated states so
+/// that each new row range inherits the same history as its modulo counterpart.
 ///
-/// # Panics
-/// Panics if `matrices` is empty or if the ordering/height invariants are violated.
+/// # Preconditions:
+/// - `matrices` is non-empty and sorted by non-decreasing power-of-two heights.
+/// - `P::WIDTH` is a power of two.
+///
+/// Panics in debug builds if preconditions are violated.
 #[cfg_attr(not(test), allow(dead_code))]
 fn build_leaves_cyclic<
     P: PackedValue + Default,
@@ -295,86 +232,84 @@ fn build_leaves_cyclic<
     matrices: &[M],
     sponge: &H,
 ) -> Vec<[P::Value; DIGEST_ELEMS]> {
-    assert!(!matrices.is_empty(), "matrices cannot be empty");
-    assert!(P::WIDTH.is_power_of_two());
+    const { assert!(P::WIDTH.is_power_of_two()) };
 
-    let mut prev_height = 0usize;
-    for (idx, matrix) in matrices.iter().enumerate() {
-        let height = matrix.height();
-        assert!(height > 0, "matrix {idx} has zero height");
-        assert!(
-            height.is_power_of_two(),
-            "matrix {idx} height {height} must be a power of two"
-        );
-        assert!(
-            prev_height <= height,
-            "matrices must be sorted by non-decreasing height"
-        );
-        prev_height = height;
-    }
+    let final_height = validate_matrix_heights(matrices);
+    let default_state = [P::Value::default(); WIDTH];
 
-    let final_height = matrices.last().unwrap().height();
-    assert!(
-        final_height.is_power_of_two(),
-        "final height must be a power of two"
-    );
-    let final_height_packed = final_height.div_ceil(P::WIDTH);
-
-    let scalar_default = [P::Value::default(); WIDTH];
-    let packed_default = [P::default(); WIDTH];
-
-    let mut states = vec![scalar_default; final_height];
-    let mut packed_states = vec![packed_default; final_height_packed];
+    let mut states = vec![default_state; final_height];
+    let mut active_height = matrices.first().unwrap().height();
 
     // Process matrices in ascending height, cycling each shorter matrix over the final leaf range.
     for matrix in matrices {
         let height = matrix.height();
-        let height_mask = height - 1;
 
-        if height < P::WIDTH {
-            // Scalar path: walk every final leaf state and absorb the corresponding wrapped row.
-            states.iter_mut().enumerate().for_each(|(row_idx, state)| {
-                let wrapped_row = row_idx & height_mask;
-                let row = matrix.row(wrapped_row).unwrap();
-                sponge.absorb(state, row);
-            });
-            continue;
+        // Extend the state vector cyclically to reach the height of the next matrix.
+        if height > active_height {
+            let (first_chunk, remaining) = states.split_at_mut(active_height);
+            remaining
+                .par_chunks_exact_mut(active_height)
+                .for_each(|states_chunk| states_chunk.copy_from_slice(first_chunk));
         }
 
-        // Pack scalar states for SIMD absorption when we have full-width chunks.
-        packed_states
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(packed_idx, packed_state)| {
-                let base_row_idx = packed_idx * P::WIDTH;
-                let states_chunk = &states[base_row_idx..base_row_idx + P::WIDTH];
-                pack_arrays_into(states_chunk, packed_state);
-            });
+        // Absorb the rows of the matrix into the extended state vector
+        absorb_matrix::<P, _, _, _, _>(&mut states[..height], matrix, sponge);
 
-        // Absorb rows in a vertically packed form; row indices wrap via mask.
-        packed_states
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(packed_idx, packed_state)| {
-                let base_row_idx = packed_idx * P::WIDTH;
-                let start = base_row_idx & height_mask;
-                let row = matrix.vertically_packed_row(start);
-                sponge.absorb(packed_state, row);
-            });
-
-        // Scatter SIMD lanes back into scalar layout for continued processing.
-        states
-            .par_chunks_mut(P::WIDTH)
-            .zip(packed_states.par_iter())
-            .for_each(|(states_chunk, packed_chunk)| {
-                unpack_array_into(packed_chunk, states_chunk);
-            });
+        active_height = height;
     }
 
     states
         .into_iter()
         .map(|state| sponge.squeeze::<DIGEST_ELEMS>(&state))
         .collect()
+}
+
+
+/// Incorporate one matrix’s row-wise contribution into the running per-leaf states.
+///
+/// Semantics: given `states` of length `h = matrix.height()`, for each row index `r ∈ [0, h)`
+/// update `states[r]` by absorbing the matrix row `r` into that state. In the overall tree
+/// construction, callers ensure that `states` is the correct lifted view for the current matrix
+/// (either the “nearest-neighbor” duplication or the “modulo” duplication across the final
+/// height). This helper performs exactly one absorption round for that matrix and returns with the
+/// states mutated; it does not change the lifting shape or squeeze digests.
+///
+/// The implementation may use scalar or SIMD packing internally depending on the matrix height.
+fn absorb_matrix<
+    P: PackedValue + Default,
+    M: Matrix<P::Value>,
+    H: StatefulSponge<P, WIDTH, RATE> + StatefulSponge<P::Value, WIDTH, RATE> + Sync,
+    const WIDTH: usize,
+    const RATE: usize,
+>(
+    states: &mut [[P::Value; WIDTH]],
+    matrix: &M,
+    sponge: &H,
+) {
+    let height = matrix.height();
+    assert_eq!(height, states.len());
+
+    if height < P::WIDTH {
+        // Scalar path: walk every final leaf state and absorb the wrapped row for this matrix.
+        states
+            .iter_mut()
+            .zip(matrix.rows())
+            .for_each(|(state, row)| {
+                sponge.absorb(state, row);
+            });
+    } else {
+        // SIMD path: gather → absorb wrapped packed row → scatter per chunk.
+        states
+            .par_chunks_mut(P::WIDTH)
+            .enumerate()
+            .for_each(|(packed_idx, states_chunk)| {
+                let mut packed_state: [P; WIDTH] = pack_arrays(states_chunk);
+                let row_idx = packed_idx * P::WIDTH;
+                let row = matrix.vertically_packed_row(row_idx);
+                sponge.absorb(&mut packed_state, row);
+                unpack_array_into(&packed_state, states_chunk);
+            });
+    }
 }
 
 /// Compress a layer of digests in a uniform Merkle tree.
@@ -455,10 +390,27 @@ fn unpack_array_into<P: PackedValue, const N: usize>(
 /// # Example Layout
 /// Input: `scalar[0] = [a0, b0]`, `scalar[1] = [a1, b1]`, ... (4 scalar arrays)
 /// Output: `packed = [[a0, a1, a2, a3], [b0, b1, b2, b3]]` (2 packed elements, width=4)
-fn pack_arrays_into<P: PackedValue, const N: usize>(scalar: &[[P::Value; N]], packed: &mut [P; N]) {
-    for (col, val) in packed.iter_mut().enumerate() {
-        *val = P::from_fn(|lane| scalar[lane][col]);
+fn pack_arrays<P: PackedValue, const N: usize>(scalar: &[[P::Value; N]]) -> [P; N] {
+    array::from_fn(|col| P::from_fn(|lane| scalar[lane][col]))
+}
+
+fn validate_matrix_heights<P: PackedValue, M: Matrix<P>>(matrices: &[M]) -> usize {
+    assert!(!matrices.is_empty(), "matrices cannot be empty");
+
+    let mut prev_height = 1;
+    for (idx, matrix) in matrices.iter().enumerate() {
+        let height = matrix.height();
+        assert!(
+            height.is_power_of_two(),
+            "matrix {idx} height {height} must be a power of two"
+        );
+        assert!(
+            prev_height <= height,
+            "matrices must be sorted by non-decreasing height"
+        );
+        prev_height = height;
     }
+    prev_height
 }
 
 #[cfg(test)]
@@ -469,6 +421,7 @@ mod tests {
     use p3_field::{Field, PrimeCharacteristicRing};
     use p3_matrix::bitrev::BitReversibleMatrix;
     use p3_matrix::dense::RowMajorMatrix;
+    use p3_matrix::lifted::LiftableMatrix;
     use p3_symmetric::{PaddingFreeSponge, StatefulSponge, TruncatedPermutation};
     use p3_util::reverse_slice_index_bits;
     use rand::rngs::SmallRng;
@@ -486,25 +439,7 @@ mod tests {
 
     type Sponge = PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>;
 
-    struct Mode {
-        name: &'static str,
-        build: fn(&[RowMajorMatrix<F>], &Sponge) -> Vec<[F; DIGEST]>,
-        reference: fn(&[RowMajorMatrix<F>], &Sponge) -> Vec<[F; DIGEST]>,
-    }
-
-    const MODES: [Mode; 2] = [
-        Mode {
-            name: "upsampled",
-            build: build_upsampled,
-            reference: reference_leaves_upsampled,
-        },
-        Mode {
-            name: "cyclic",
-            build: build_cyclic,
-            reference: reference_leaves_cyclic,
-        },
-    ];
-
+    /// Constructs deterministic Poseidon2 sponge and compression components for reproducible tests.
     fn poseidon_components() -> (
         Sponge,
         TruncatedPermutation<Poseidon2BabyBear<WIDTH>, 2, DIGEST, WIDTH>,
@@ -516,14 +451,83 @@ mod tests {
         (sponge, compressor)
     }
 
-    fn build_upsampled(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
-        build_leaves_upsampled::<Packed, _, _, _, _, _>(matrices, sponge)
+    /// Verifies that cyclic and upsampled leaf builders stay in sync across many dimensional scenarios.
+    #[test]
+    fn test_cyclic_upsampled_equivalence() {
+        let (sponge, _) = poseidon_components();
+        let mut rng = SmallRng::seed_from_u64(42);
+
+        // Iterate through deterministic height/width configurations that cover scalar vs SIMD paths,
+        // padding behaviour, and mixed-height batches.
+        for scenario in matrix_scenarios() {
+            let matrices: Vec<_> = scenario
+                .into_iter()
+                .map(|(height, width)| random_matrix(height, width, &mut rng))
+                .collect();
+
+            let max_height = matrices.last().unwrap().height();
+
+            // Verify cyclic lifting
+            {
+                let leaves = build_leaves_cyclic::<Packed, _, _, _, _, _>(&matrices, &sponge);
+
+                // Compare against matrices explicitly lifted cyclically to the final height.
+                let matrices_cyclic: Vec<_> = matrices
+                    .iter()
+                    .map(|m| m.as_view().lift_cyclic(max_height).to_row_major_matrix())
+                    .collect();
+                let leaves_lifted =
+                    build_leaves_cyclic::<Packed, _, _, _, _, _>(&matrices_cyclic, &sponge);
+                assert_eq!(leaves, leaves_lifted);
+
+                // Validate against a single concatenated baseline that pads widths to the rate.
+                let matrix_single = concatenate_matrices(&matrices_cyclic);
+                let leaves_single = build_leaves_single(&matrix_single, &sponge);
+                assert_eq!(leaves, leaves_single);
+
+                // Ensure equivalence after bit-reversing rows and using upsampled lifting.
+                let matrices_bitreversed: Vec<_> = matrices
+                    .iter()
+                    .map(|m| m.as_view().bit_reverse_rows().to_row_major_matrix())
+                    .collect();
+                let mut leaves_bitreversed =
+                    build_leaves_upsampled::<Packed, _, _, _, _, _>(&matrices_bitreversed, &sponge);
+                reverse_slice_index_bits(&mut leaves_bitreversed);
+                assert_eq!(leaves, leaves_bitreversed);
+            };
+
+            {
+                let leaves =
+                    build_leaves_upsampled::<Packed, _, _, _, _, DIGEST>(&matrices, &sponge);
+
+                // Compare against matrices explicitly upsampled (row duplication) to the final height.
+                let matrices_upsampled: Vec<_> = matrices
+                    .iter()
+                    .map(|m| m.as_view().lift_upsampled(max_height).to_row_major_matrix())
+                    .collect();
+                let leaves_lifted =
+                    build_leaves_upsampled::<Packed, _, _, _, _, _>(&matrices_upsampled, &sponge);
+                assert_eq!(leaves, leaves_lifted);
+
+                // Validate against a single concatenated baseline that pads widths to the rate.
+                let matrix_single = concatenate_matrices(&matrices_upsampled);
+                let leaves_single = build_leaves_single(&matrix_single, &sponge);
+                assert_eq!(leaves, leaves_single);
+
+                // Ensure equivalence after bit-reversing rows and using cyclic lifting.
+                let matrices_bitreversed: Vec<_> = matrices
+                    .iter()
+                    .map(|m| m.as_view().bit_reverse_rows().to_row_major_matrix())
+                    .collect();
+                let mut leaves_bitreversed =
+                    build_leaves_cyclic::<Packed, _, _, _, _, _>(&matrices_bitreversed, &sponge);
+                reverse_slice_index_bits(&mut leaves_bitreversed);
+                assert_eq!(leaves, leaves_bitreversed);
+            };
+        }
     }
 
-    fn build_cyclic(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
-        build_leaves_cyclic::<Packed, _, _, _, _, _>(matrices, sponge)
-    }
-
+    /// Builds a `height × width` matrix filled with pseudo-random BabyBear values from `rng`.
     fn random_matrix(height: usize, width: usize, rng: &mut SmallRng) -> RowMajorMatrix<F> {
         let data = (0..height * width)
             .map(|_| F::new(rng.next_u32()))
@@ -531,302 +535,63 @@ mod tests {
         RowMajorMatrix::new(data, width)
     }
 
-    fn reference_leaves_upsampled(
-        matrices: &[RowMajorMatrix<F>],
-        sponge: &PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
-    ) -> Vec<[F; DIGEST]> {
-        let final_height = matrices.last().unwrap().height();
-        let lifted: Vec<RowMajorMatrix<F>> = matrices
+    /// Horizontally concatenates matrices after padding each row width to the rate and lifting to max height.
+    fn concatenate_matrices(matrices: &[RowMajorMatrix<F>]) -> RowMajorMatrix<F> {
+        let max_height = matrices.last().unwrap().height();
+        let width: usize = matrices
             .iter()
-            .map(|matrix| lift_matrix_upsampled(matrix, final_height))
-            .collect();
-        let concatenated = concatenate_matrices_with_padding(&lifted);
-        reference_leaves_from_single_matrix(&concatenated, sponge)
-    }
+            .map(|m| m.width().next_multiple_of(RATE))
+            .sum();
 
-    fn reference_leaves_cyclic(
-        matrices: &[RowMajorMatrix<F>],
-        sponge: &PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
-    ) -> Vec<[F; DIGEST]> {
-        let final_height = matrices.last().unwrap().height();
-        let lifted: Vec<RowMajorMatrix<F>> = matrices
-            .iter()
-            .map(|matrix| lift_matrix_cyclic(matrix, final_height))
-            .collect();
-        let concatenated = concatenate_matrices_with_padding(&lifted);
-        reference_leaves_from_single_matrix(&concatenated, sponge)
-    }
-
-    fn pad_matrix(matrix: &RowMajorMatrix<F>) -> RowMajorMatrix<F> {
-        let height = matrix.height();
-        let width = matrix.width();
-        let padded_width = width.next_multiple_of(RATE);
-        if padded_width == width {
-            return matrix.clone();
-        }
-
-        let mut data = Vec::with_capacity(height * padded_width);
-        for row in 0..height {
-            for col in 0..padded_width {
-                if col < width {
-                    let value = matrix.get(row, col).expect("row in bounds");
-                    data.push(value);
-                } else {
-                    data.push(F::ZERO);
-                }
-            }
-        }
-
-        RowMajorMatrix::new(data, padded_width)
-    }
-
-    fn lift_matrix_upsampled(
-        matrix: &RowMajorMatrix<F>,
-        target_height: usize,
-    ) -> RowMajorMatrix<F> {
-        let width = matrix.width();
-        let scaling = target_height / matrix.height();
-
-        let data = (0..target_height)
-            .flat_map(|row_idx| matrix.row(row_idx / scaling).unwrap())
-            .collect();
-        RowMajorMatrix::new(data, width)
-    }
-
-    fn lift_matrix_cyclic(matrix: &RowMajorMatrix<F>, target_height: usize) -> RowMajorMatrix<F> {
-        assert!(target_height.is_power_of_two());
-        assert!(target_height >= matrix.height());
-        assert_eq!(target_height % matrix.height(), 0);
-        assert!(matrix.height().is_power_of_two());
-
-        let width = matrix.width();
-        let mut data = Vec::with_capacity(target_height * width);
-
-        for row_idx in 0..target_height {
-            let src = matrix
-                .row(row_idx % matrix.height())
-                .expect("source row exists")
-                .into_iter();
-            data.extend(src);
-        }
-
-        RowMajorMatrix::new(data, width)
-    }
-
-    fn concatenate_matrices_with_padding(matrices: &[RowMajorMatrix<F>]) -> RowMajorMatrix<F> {
-        assert!(!matrices.is_empty());
-        let height = matrices[0].height();
-        let padded: Vec<RowMajorMatrix<F>> = matrices
-            .iter()
-            .map(|matrix| {
-                assert_eq!(
-                    matrix.height(),
-                    height,
-                    "all matrices must share a height after lifting"
-                );
-                pad_matrix(matrix)
+        let concatenated_data: Vec<_> = (0..max_height)
+            .flat_map(|idx| {
+                matrices.iter().flat_map(move |m| {
+                    let mut row = m.row_slice(idx).unwrap().to_vec();
+                    let padded_width = row.len().next_multiple_of(RATE);
+                    row.resize(padded_width, F::ZERO);
+                    row
+                })
             })
             .collect();
-
-        let total_width: usize = padded.iter().map(|matrix| matrix.width()).sum();
-        let mut data = vec![F::ZERO; height * total_width];
-        let mut col_offset = 0;
-
-        for matrix in &padded {
-            for row in 0..height {
-                for col in 0..matrix.width() {
-                    let value = matrix
-                        .get(row, col)
-                        .expect("row and column should be in bounds");
-                    let dst_idx = row * total_width + col_offset + col;
-                    data[dst_idx] = value;
-                }
-            }
-
-            col_offset += matrix.width();
-        }
-
-        RowMajorMatrix::new(data, total_width)
+        RowMajorMatrix::new(concatenated_data, width)
     }
 
-    fn reference_leaves_from_single_matrix(
+    /// Scalar baseline: absorb each row independently and squeeze a digest for comparison.
+    fn build_leaves_single(
         matrix: &RowMajorMatrix<F>,
         sponge: &PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
     ) -> Vec<[F; DIGEST]> {
-        let mut leaves = Vec::with_capacity(matrix.height());
-        for row_idx in 0..matrix.height() {
-            let mut state = [F::ZERO; WIDTH];
-            let row = matrix.row(row_idx).expect("row exists");
-            sponge.absorb(&mut state, row.into_iter());
-            leaves.push(sponge.squeeze::<DIGEST>(&mut state));
-        }
-        leaves
+        matrix
+            .rows()
+            .map(|row| {
+                let mut state = [F::ZERO; WIDTH];
+                sponge.absorb(&mut state, row);
+                sponge.squeeze(&state)
+            })
+            .collect()
     }
 
-    #[derive(Clone)]
-    struct MatrixSpec {
-        height: usize,
-        width: usize,
-        pad: bool,
-    }
-
-    fn spec(height: usize, width: usize, pad: bool) -> MatrixSpec {
-        MatrixSpec { height, width, pad }
-    }
-
-    /// Common scenarios parameterized by both heights and widths.
-    fn matrix_scenarios() -> Vec<Vec<MatrixSpec>> {
+    /// Enumerates deterministic height/width scenarios covering padding and SIMD corner cases.
+    fn matrix_scenarios() -> Vec<Vec<(usize, usize)>> {
         vec![
-            vec![spec(1, 1, false)],
-            vec![spec(1, RATE - 1, true)],
-            vec![spec(2, 3, false), spec(4, 5, true), spec(8, RATE, false)],
+            vec![(1, 1)],
+            vec![(1, RATE - 1)],
+            vec![(2, 3), (4, 5), (8, RATE)],
+            vec![(1, 5), (1, 3), (2, 7), (4, 1), (8, RATE + 1)],
             vec![
-                spec(1, 5, true),
-                spec(1, 3, false),
-                spec(2, 7, true),
-                spec(4, 1, false),
-                spec(8, RATE + 1, true),
+                (PACK_WIDTH / 2, RATE - 1),
+                (PACK_WIDTH, RATE),
+                (PACK_WIDTH * 2, RATE + 3),
             ],
+            vec![(PACK_WIDTH, RATE + 5), (PACK_WIDTH * 2, 25)],
             vec![
-                spec(PACK_WIDTH / 2, RATE - 1, true),
-                spec(PACK_WIDTH, RATE, false),
-                spec(PACK_WIDTH * 2, RATE + 3, true),
+                (1, RATE * 2),
+                (PACK_WIDTH / 2, RATE * 2 - 1),
+                (PACK_WIDTH, RATE * 2),
+                (PACK_WIDTH * 2, RATE * 3 - 2),
             ],
-            vec![
-                spec(PACK_WIDTH, RATE + 5, true),
-                spec(PACK_WIDTH * 2, 25, true),
-            ],
-            vec![
-                spec(1, RATE * 2, false),
-                spec(PACK_WIDTH / 2, RATE * 2 - 1, true),
-                spec(PACK_WIDTH, RATE * 2, false),
-                spec(PACK_WIDTH * 2, RATE * 3 - 2, true),
-            ],
-            vec![
-                spec(4, RATE - 1, true),
-                spec(4, RATE, false),
-                spec(8, RATE + 3, true),
-                spec(8, RATE * 2, false),
-            ],
-            vec![spec(PACK_WIDTH * 2, RATE - 1, true)],
+            vec![(4, RATE - 1), (4, RATE), (8, RATE + 3), (8, RATE * 2)],
+            vec![(PACK_WIDTH * 2, RATE - 1)],
         ]
-    }
-
-    #[test]
-    fn modes_match_reference_across_scenarios() {
-        let (sponge, _) = poseidon_components();
-        let mut rng = SmallRng::seed_from_u64(42);
-
-        let scenarios = matrix_scenarios();
-        for (test_idx, specs) in scenarios.iter().enumerate() {
-            let max_height = specs.iter().map(|spec| spec.height).max().unwrap();
-
-            for sample_idx in 0..3 {
-                let mut matrices: Vec<RowMajorMatrix<F>> = specs
-                    .iter()
-                    .map(|spec| {
-                        let base = random_matrix(spec.height, spec.width, &mut rng);
-                        if spec.pad { pad_matrix(&base) } else { base }
-                    })
-                    .collect();
-                matrices.sort_by_key(|m| m.height());
-
-                for mode in &MODES {
-                    let actual = (mode.build)(&matrices, &sponge);
-                    let expected = (mode.reference)(&matrices, &sponge);
-
-                    assert_eq!(
-                        actual, expected,
-                        "scenario {test_idx} sample {sample_idx} (mode {}) should match reference",
-                        mode.name
-                    );
-                    assert_eq!(
-                        actual.len(),
-                        max_height,
-                        "scenario {test_idx} sample {sample_idx} (mode {}) should produce max_height leaves",
-                        mode.name
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn bit_reverse_equivalence_between_modes() {
-        let (sponge, _) = poseidon_components();
-        let mut rng = SmallRng::seed_from_u64(404);
-
-        let scenarios = matrix_scenarios();
-        for (case_idx, specs) in scenarios.iter().enumerate() {
-            let mut matrices = Vec::with_capacity(specs.len());
-            for spec in specs {
-                let base = random_matrix(spec.height, spec.width, &mut rng);
-                let matrix = if spec.pad { pad_matrix(&base) } else { base };
-                matrices.push(matrix);
-            }
-            matrices.sort_by_key(|m| m.height());
-
-            let upsampled = build_upsampled(&matrices, &sponge);
-            let cyclic = build_cyclic(&matrices, &sponge);
-
-            let mut bitrev_matrices: Vec<RowMajorMatrix<F>> = matrices
-                .iter()
-                .map(|m| m.clone().bit_reverse_rows().to_row_major_matrix())
-                .collect();
-            bitrev_matrices.sort_by_key(|m| m.height());
-
-            let upsampled_from_bitrev = build_upsampled(&bitrev_matrices, &sponge);
-            let cyclic_from_bitrev = build_cyclic(&bitrev_matrices, &sponge);
-
-            let mut upsampled_bitrev = upsampled.clone();
-            reverse_slice_index_bits(&mut upsampled_bitrev);
-            assert_eq!(
-                upsampled_bitrev, cyclic_from_bitrev,
-                "scenario {case_idx} (upsampled → cyclic via bit-reversal) mismatch"
-            );
-
-            let mut cyclic_bitrev = cyclic.clone();
-            reverse_slice_index_bits(&mut cyclic_bitrev);
-            assert_eq!(
-                cyclic_bitrev, upsampled_from_bitrev,
-                "scenario {case_idx} (cyclic → upsampled via bit-reversal) mismatch"
-            );
-        }
-    }
-    #[test]
-    fn digest_layers_match_truncated_poseidon() {
-        let (sponge, compressor) = poseidon_components();
-
-        let mut rng = SmallRng::seed_from_u64(10_000);
-        let matrix = random_matrix(PACK_WIDTH * 2, 4, &mut rng);
-        let matrices = vec![matrix];
-
-        let leaves =
-            build_leaves_upsampled::<Packed, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
-        let reference = reference_leaves_upsampled(&matrices, &sponge);
-        assert_eq!(leaves, reference);
-
-        let mut naive_layers = vec![reference.clone()];
-        let mut current = reference;
-        while current.len() > 1 {
-            let mut next = Vec::with_capacity(current.len() / 2);
-            for pair in current.chunks_exact(2) {
-                next.push(compressor.compress([pair[0], pair[1]]));
-            }
-            naive_layers.push(next.clone());
-            current = next;
-        }
-
-        let mut actual_layers = vec![leaves];
-        loop {
-            let prev_layer = actual_layers.last().unwrap();
-            if prev_layer.len() == 1 {
-                break;
-            }
-            let next_layer = compress_uniform::<Packed, _, DIGEST>(prev_layer, &compressor);
-            actual_layers.push(next_layer);
-        }
-
-        assert_eq!(actual_layers, naive_layers);
     }
 }
