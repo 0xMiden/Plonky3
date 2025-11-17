@@ -373,30 +373,37 @@ where
 
         pcs.open(rounds, &mut challenger)
     });
-    let trace_idx = SC::Pcs::TRACE_IDX;
-    let quotient_idx = SC::Pcs::QUOTIENT_IDX;
-    let trace_local = opened_values[trace_idx][0][0].clone();
-    let trace_next = opened_values[trace_idx][0][1].clone();
-    let quotient_chunks = opened_values[quotient_idx]
-        .iter()
-        .map(|v| v[0].clone())
-        .collect_vec();
-    let (aux_trace_local, aux_trace_next) = if aux_trace_data_opt.is_some() {
-        let aux_local = opened_values[quotient_idx + 1][0][0].clone();
-        let aux_next = opened_values[quotient_idx + 1][0][1].clone();
-        (Some(aux_local), Some(aux_next))
-    } else {
-        (None, None)
-    };
+
     let random = if is_random {
         Some(opened_values[0][0][0].clone())
     } else {
         None
     };
+
+    let mut cur_index = SC::Pcs::TRACE_IDX;
+    let trace_local = opened_values[cur_index][0][0].clone();
+    let trace_next = opened_values[cur_index][0][1].clone();
+
+    cur_index = SC::Pcs::QUOTIENT_IDX;
+    let quotient_chunks = opened_values[cur_index]
+        .iter()
+        .map(|v| v[0].clone())
+        .collect_vec();
+    cur_index += 1;
+
+    let (aux_trace_local, aux_trace_next) = if aux_trace_data_opt.is_some() {
+        let aux_local = opened_values[cur_index][0][0].clone();
+        let aux_next = opened_values[cur_index][0][1].clone();
+        cur_index += 1;
+        (Some(aux_local), Some(aux_next))
+    } else {
+        (None, None)
+    };
+
     let (preprocessed_local, preprocessed_next) = if preprocessed_width > 0 {
         (
-            Some(opened_values[SC::Pcs::PREPROCESSED_TRACE_IDX][0][0].clone()),
-            Some(opened_values[SC::Pcs::PREPROCESSED_TRACE_IDX][0][1].clone()),
+            Some(opened_values[cur_index][0][0].clone()),
+            Some(opened_values[cur_index][0][1].clone()),
         )
     } else {
         (None, None)

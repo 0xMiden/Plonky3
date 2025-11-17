@@ -73,6 +73,9 @@ pub fn verify_constraints<SC, A, PcsErr>(
     trace_next: &[SC::Challenge],
     preprocessed_local: Option<&[SC::Challenge]>,
     preprocessed_next: Option<&[SC::Challenge]>,
+    aux_local: Option<&[SC::Challenge]>,
+    aux_next: Option<&[SC::Challenge]>,
+    randomness: &[SC::Challenge],
     public_values: &[Val<SC>],
     trace_domain: Domain<SC>,
     zeta: SC::Challenge,
@@ -98,16 +101,24 @@ where
         _ => None,
     };
 
-    let empty: &[SC::Challenge] = &[];
-    let aux = VerticalPair::new(
-        RowMajorMatrixView::new_row(empty),
-        RowMajorMatrixView::new_row(empty),
-    );
-
+    let aux = match (aux_local, aux_next) {
+        (Some(local), Some(next)) => VerticalPair::new(
+            RowMajorMatrixView::new_row(local),
+            RowMajorMatrixView::new_row(next),
+        ),
+        _ => {
+            // Create an empty ViewPair with zero width
+            let empty: &[SC::Challenge] = &[];
+            VerticalPair::new(
+                RowMajorMatrixView::new_row(empty),
+                RowMajorMatrixView::new_row(empty),
+            )
+        }
+    };
     let mut folder = VerifierConstraintFolder {
         main,
         aux,
-        randomness: &[],
+        randomness,
         preprocessed,
         public_values,
         is_first_row: sels.is_first_row,
@@ -203,17 +214,7 @@ where
     let degree = 1 << degree_bits;
     let aux_width_base = air.aux_width();
     let num_randomness_base = air.num_randomness() * SC::Challenge::DIMENSION;
-    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, A>(
-        air,
-        0,
-        public_values.len(),
-        config.is_zk(),
-        aux_width_base,
-        num_randomness_base,
-    );
-    let quotient_degree = 1 << (log_quotient_degree + config.is_zk());
 
-    let mut challenger = config.initialise_challenger();
     let trace_domain = pcs.natural_domain_for_degree(degree);
     // TODO: allow moving preprocessed commitment to preprocess time, if known in advance
     let (preprocessed_width, preprocessed_commit) =
@@ -437,62 +438,78 @@ where
         zeta,
     );
 
-    let sels = trace_domain.selectors_at_point(zeta);
-
-    let main = VerticalPair::new(
-        RowMajorMatrixView::new_row(&opened_values.trace_local),
-        RowMajorMatrixView::new_row(&opened_values.trace_next),
-    );
-
-    let preprocessed = match (
-        &opened_values.preprocessed_local,
-        &opened_values.preprocessed_next,
-    ) {
-        (Some(local), Some(next)) => Some(VerticalPair::new(
-            RowMajorMatrixView::new_row(local),
-            RowMajorMatrixView::new_row(next),
-        )),
-        _ => None,
-    };
-
-    let aux = match (
-        &opened_values.aux_trace_local,
-        &opened_values.aux_trace_next,
-    ) {
-        (Some(local), Some(next)) => VerticalPair::new(
-            RowMajorMatrixView::new_row(local),
-            RowMajorMatrixView::new_row(next),
-        ),
-        _ => {
-            // Create an empty ViewPair with zero width
-            let empty: &[SC::Challenge] = &[];
-            VerticalPair::new(
-                RowMajorMatrixView::new_row(empty),
-                RowMajorMatrixView::new_row(empty),
-            )
-        }
-    };
-
-    let mut folder = VerifierConstraintFolder {
-        main,
-        aux,
-        randomness: &randomness,
+    verify_constraints::<SC, A, PcsError<SC>>(
+        air,
+        &opened_values.trace_local,
+        &opened_values.trace_next,
+        opened_values.preprocessed_local.as_deref(),
+        opened_values.preprocessed_next.as_deref(),
+        opened_values.aux_trace_local.as_deref(),
+        opened_values.aux_trace_next.as_deref(),
+        &randomness,
         public_values,
-        preprocessed,
-        is_first_row: sels.is_first_row,
-        is_last_row: sels.is_last_row,
-        is_transition: sels.is_transition,
+        init_trace_domain,
+        zeta,
         alpha,
-        accumulator: SC::Challenge::ZERO,
-    };
+        quotient,
+    )?;
 
-    air.eval(&mut folder);
-    let folded_constraints = folder.accumulator;
-    // Finally, check that
-    //     folded_constraints(zeta) / Z_H(zeta) = quotient(zeta)
-    if folded_constraints * sels.inv_vanishing != quotient {
-        return Err(VerificationError::OodEvaluationMismatch { index: None });
-    }
+    // let sels = trace_domain.selectors_at_point(zeta);
+
+    // let main = VerticalPair::new(
+    //     RowMajorMatrixView::new_row(&opened_values.trace_local),
+    //     RowMajorMatrixView::new_row(&opened_values.trace_next),
+    // );
+
+    // let preprocessed = match (
+    //     &opened_values.preprocessed_local,
+    //     &opened_values.preprocessed_next,
+    // ) {
+    //     (Some(local), Some(next)) => Some(VerticalPair::new(
+    //         RowMajorMatrixView::new_row(local),
+    //         RowMajorMatrixView::new_row(next),
+    //     )),
+    //     _ => None,
+    // };
+
+    // let aux = match (
+    //     &opened_values.aux_trace_local,
+    //     &opened_values.aux_trace_next,
+    // ) {
+    //     (Some(local), Some(next)) => VerticalPair::new(
+    //         RowMajorMatrixView::new_row(local),
+    //         RowMajorMatrixView::new_row(next),
+    //     ),
+    //     _ => {
+    //         // Create an empty ViewPair with zero width
+    //         let empty: &[SC::Challenge] = &[];
+    //         VerticalPair::new(
+    //             RowMajorMatrixView::new_row(empty),
+    //             RowMajorMatrixView::new_row(empty),
+    //         )
+    //     }
+    // };
+
+    // let mut folder = VerifierConstraintFolder {
+    //     main,
+    //     aux,
+    //     randomness: &randomness,
+    //     public_values,
+    //     preprocessed,
+    //     is_first_row: sels.is_first_row,
+    //     is_last_row: sels.is_last_row,
+    //     is_transition: sels.is_transition,
+    //     alpha,
+    //     accumulator: SC::Challenge::ZERO,
+    // };
+
+    // air.eval(&mut folder);
+    // let folded_constraints = folder.accumulator;
+    // // Finally, check that
+    // //     folded_constraints(zeta) / Z_H(zeta) = quotient(zeta)
+    // if folded_constraints * sels.inv_vanishing != quotient {
+    //     return Err(VerificationError::OodEvaluationMismatch { index: None });
+    // }
     Ok(())
 }
 

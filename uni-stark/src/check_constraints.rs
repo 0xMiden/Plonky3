@@ -84,20 +84,16 @@ pub(crate) fn check_constraints<F, EF, A>(
         };
 
         let preprocessed_pair = if let Some(preprocessed_matrix) = preprocessed.as_ref() {
-            let preprocessed_local = unsafe {
-                preprocessed_matrix
-                    .values
-                    .chunks(preprocessed_matrix.width)
-                    .nth(row_index)
-                    .unwrap()
-            };
-            let preprocessed_next = unsafe {
-                preprocessed_matrix
-                    .values
-                    .chunks(preprocessed_matrix.width)
-                    .nth(row_index_next)
-                    .unwrap()
-            };
+            let preprocessed_local = preprocessed_matrix
+                .values
+                .chunks(preprocessed_matrix.width)
+                .nth(row_index)
+                .unwrap();
+            let preprocessed_next = preprocessed_matrix
+                .values
+                .chunks(preprocessed_matrix.width)
+                .nth(row_index_next)
+                .unwrap();
             Some(ViewPair::new(
                 RowMajorMatrixView::new_row(preprocessed_local),
                 RowMajorMatrixView::new_row(preprocessed_next),

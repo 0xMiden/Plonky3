@@ -104,7 +104,7 @@ pub struct SymbolicAirBuilder<F: Field> {
 }
 
 impl<F: Field> SymbolicAirBuilder<F> {
-    pub(crate) fn new(
+    pub fn new(
         preprocessed_width: usize,
         width: usize,
         aux_width: usize,

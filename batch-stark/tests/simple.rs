@@ -3,7 +3,7 @@ use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::slice::from_ref;
 
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir};
+use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, BaseAirWithAuxTrace};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_batch_stark::{StarkInstance, prove_batch, verify_batch};
 use p3_challenger::{DuplexChallenger, HashChallenger, SerializingChallenger32};
@@ -11,7 +11,7 @@ use p3_circle::CirclePcs;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
-use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
+use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField64};
 use p3_fri::{FriParameters, TwoAdicFriPcs, create_test_fri_params};
 use p3_keccak::Keccak256Hash;
 use p3_matrix::Matrix;
@@ -34,6 +34,13 @@ impl<F> BaseAir<F> for FibonacciAir {
     fn width(&self) -> usize {
         2
     }
+}
+
+impl<F, EF> BaseAirWithAuxTrace<F, EF> for FibonacciAir
+where
+    F: Field,
+    EF: ExtensionField<F>,
+{
 }
 
 impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {
@@ -202,6 +209,14 @@ impl<F> BaseAir<F> for DemoAir {
         }
     }
 }
+
+impl<F, EF> BaseAirWithAuxTrace<F, EF> for DemoAir
+where
+    F: Field,
+    EF: ExtensionField<F>,
+{
+}
+
 impl<AB: AirBuilderWithPublicValues> Air<AB> for DemoAir {
     fn eval(&self, b: &mut AB) {
         match self {
@@ -401,6 +416,8 @@ fn test_invalid_trace_width_rejected() {
                 trace_next: valid_proof.opened_values.instances[0].trace_next.clone(),
                 preprocessed_local: None,
                 preprocessed_next: None,
+                aux_trace_local: None,
+                aux_trace_next: None,
                 quotient_chunks: valid_proof.opened_values.instances[0]
                     .quotient_chunks
                     .clone(),
