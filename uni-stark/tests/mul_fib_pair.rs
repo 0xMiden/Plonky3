@@ -1,12 +1,14 @@
 use core::borrow::Borrow;
 
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, PairBuilder};
+use p3_air::{
+    Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, BaseAirWithAuxTrace, PairBuilder,
+};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
-use p3_field::{Field, PrimeField64};
+use p3_field::{ExtensionField, Field, PrimeField64};
 use p3_fri::{TwoAdicFriPcs, create_test_fri_params};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -49,6 +51,8 @@ impl<F: PrimeField64> BaseAir<F> for MulFibPAir {
         ))
     }
 }
+
+impl<F: PrimeField64, EF: ExtensionField<F>> BaseAirWithAuxTrace<F, EF> for MulFibPAir {}
 
 impl<AB: AirBuilderWithPublicValues + PairBuilder> Air<AB> for MulFibPAir
 where

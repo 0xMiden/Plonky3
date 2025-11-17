@@ -249,8 +249,11 @@ where
     }
 
     // Observe the instance.
+    // challenger.observe(Val::<SC>::from_usize(proof.degree_bits));
+    // challenger.observe(Val::<SC>::from_usize(proof.degree_bits - config.is_zk()));
     challenger.observe(Val::<SC>::from_usize(proof.degree_bits));
     challenger.observe(Val::<SC>::from_usize(proof.degree_bits - config.is_zk()));
+    challenger.observe(Val::<SC>::from_usize(preprocessed_width));
     // TODO: Might be best practice to include other instance data here in the transcript, like some
     // encoding of the AIR. This protects against transcript collisions between distinct instances.
     // Practically speaking though, the only related known attack is from failing to include public
@@ -258,6 +261,20 @@ where
     // collision, since most such changes would completely change the set of satisfying witnesses.
 
     challenger.observe(commitments.trace.clone());
+    // Observe the instance.
+    // challenger.observe(Val::<SC>::from_usize(proof.degree_bits));
+    // challenger.observe(Val::<SC>::from_usize(proof.degree_bits - config.is_zk()));
+    // challenger.observe(Val::<SC>::from_usize(preprocessed_width));
+    // // TODO: Might be best practice to include other instance data here in the transcript, like some
+    // // encoding of the AIR. This protects against transcript collisions between distinct instances.
+    // // Practically speaking though, the only related known attack is from failing to include public
+    // // values. It's not clear if failing to include other instance data could enable a transcript
+    // // collision, since most such changes would completely change the set of satisfying witnesses.
+    // challenger.observe(commitments.trace.clone());
+    if preprocessed_width > 0 {
+        challenger.observe(preprocessed_commit.as_ref().unwrap().clone());
+    }
+    // challenger.observe_slice(public_values);
     challenger.observe_slice(public_values);
 
     // begin processing aux trace (optional)
@@ -307,26 +324,15 @@ where
         }
         vec![]
     };
-    // Observe the instance.
-    // challenger.observe(Val::<SC>::from_usize(proof.degree_bits));
-    // challenger.observe(Val::<SC>::from_usize(proof.degree_bits - config.is_zk()));
-    // challenger.observe(Val::<SC>::from_usize(preprocessed_width));
-    // // TODO: Might be best practice to include other instance data here in the transcript, like some
-    // // encoding of the AIR. This protects against transcript collisions between distinct instances.
-    // // Practically speaking though, the only related known attack is from failing to include public
-    // // values. It's not clear if failing to include other instance data could enable a transcript
-    // // collision, since most such changes would completely change the set of satisfying witnesses.
-    // challenger.observe(commitments.trace.clone());
-    if preprocessed_width > 0 {
-        challenger.observe(preprocessed_commit.as_ref().unwrap().clone());
-    }
-    // challenger.observe_slice(public_values);
 
     // Get the first Fiat Shamir challenge which will be used to combine all constraint polynomials
     // into a single polynomial.
     //
     // Soundness Error: n/|EF| where n is the number of constraints.
     let alpha = challenger.sample_algebra_element();
+
+    ark_std::println!("alpha: {:?}", alpha);
+
     challenger.observe(commitments.quotient_chunks.clone());
 
     // We've already checked that commitments.random is present if and only if ZK is enabled.
@@ -398,15 +404,25 @@ where
             )],
         ));
     }
+
     // Add preprocessed commitment verification if present
     if preprocessed_width > 0 {
+        let preprocessed_local = opened_values
+            .preprocessed_local
+            .as_ref()
+            .ok_or(VerificationError::InvalidProofShape)?;
+        let preprocessed_next = opened_values
+            .preprocessed_next
+            .as_ref()
+            .ok_or(VerificationError::InvalidProofShape)?;
+
         coms_to_verify.push((
             preprocessed_commit.unwrap(),
             vec![(
                 trace_domain,
                 vec![
-                    (zeta, opened_values.preprocessed_local.clone().unwrap()),
-                    (zeta_next, opened_values.preprocessed_next.clone().unwrap()),
+                    (zeta, preprocessed_local.clone()),
+                    (zeta_next, preprocessed_next.clone()),
                 ],
             )],
         ));
@@ -469,6 +485,7 @@ where
         alpha,
         accumulator: SC::Challenge::ZERO,
     };
+
     air.eval(&mut folder);
     let folded_constraints = folder.accumulator;
     // Finally, check that

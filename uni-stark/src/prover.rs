@@ -241,6 +241,7 @@ where
     // a soundness issue.
     let alpha: SC::Challenge = challenger.sample_algebra_element();
 
+    ark_std::println!("alpha: {:?}", alpha);
     // A domain large enough to uniquely identify the quotient polynomial.
     // This domain must be contained in the domain over which `trace_data` is defined.
     // Explicitly it should be equal to `gK` for some subgroup `K` contained in `H'`.
