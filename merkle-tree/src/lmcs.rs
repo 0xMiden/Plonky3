@@ -1,9 +1,10 @@
-use alloc::vec;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
 use p3_field::PackedValue;
+use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::lifted::{LiftableMatrix, UpsampledLiftedMatrixView};
 use p3_matrix::{Dimensions, Matrix};
 use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulSponge};
 use p3_util::log2_strict_usize;
@@ -13,8 +14,11 @@ use crate::uniform::UniformMerkleTree;
 
 /// Prover-side data for a lifted mixed-matrix commitment.
 pub struct MerkleTreeLmcsProverData<F, M, const DIGEST_ELEMS: usize> {
-    pub(crate) tree: UniformMerkleTree<F, M, DIGEST_ELEMS>,
-    pub(crate) sorted_to_original: Vec<usize>,
+    // The tree is built over upsampled lifted views to the final height.
+    pub(crate) tree:
+        UniformMerkleTree<F, UpsampledLiftedMatrixView<RowMajorMatrix<F>>, DIGEST_ELEMS>,
+    // Retain original matrices (in original order) for API accessors.
+    pub(crate) original: Vec<M>,
 }
 
 /// Errors that can arise while verifying LMCS openings.
@@ -103,32 +107,32 @@ where
             "LMCS commit requires at least one matrix"
         );
 
-        let mut enumerated: Vec<(usize, M)> = inputs.into_iter().enumerate().collect();
-        enumerated.sort_by(|(idx_a, mat_a), (idx_b, mat_b)| {
-            mat_a.height().cmp(&mat_b.height()).then(idx_a.cmp(idx_b))
-        });
-
-        let mut heights = Vec::with_capacity(enumerated.len());
-        for (i, (_, matrix)) in enumerated.iter().enumerate() {
-            let height = matrix.height();
-            assert!(height > 0, "matrix {i} has zero height");
-            assert!(
-                height.is_power_of_two(),
-                "matrix {i} height {height} must be a power of two"
-            );
-            heights.push(height);
+        // Enforce sorted-by-height invariant (non-decreasing) and power-of-two heights.
+        let mut prev_h = 0usize;
+        for (i, m) in inputs.iter().enumerate() {
+            let h = m.height();
+            assert!(h > 0, "matrix {i} has zero height");
+            assert!(h.is_power_of_two(), "matrix {i} height {h} must be a power of two");
+            assert!(prev_h <= h, "matrices must be sorted by non-decreasing height");
+            prev_h = h;
         }
 
-        let sorted_to_original: Vec<usize> = enumerated
+        let final_height = inputs.last().unwrap().height();
+
+        // Materialize to row-major by copying from borrowed inputs, then create upsampled lifted views.
+        let lifted: Vec<UpsampledLiftedMatrixView<RowMajorMatrix<P::Value>>> = inputs
             .iter()
-            .map(|(original_idx, _)| *original_idx)
+            .map(|m| {
+                let values: Vec<_> = m.rows().flatten().collect();
+                let row_major = RowMajorMatrix::new(values, m.width());
+                row_major.lift_upsampled(final_height)
+            })
             .collect();
-        let sorted_matrices: Vec<M> = enumerated.into_iter().map(|(_, matrix)| matrix).collect();
 
         let tree = UniformMerkleTree::new::<P, H, C, WIDTH, RATE>(
             &self.sponge,
             &self.compress,
-            sorted_matrices,
+            lifted,
         );
         let root = tree.root();
 
@@ -136,7 +140,7 @@ where
             root,
             MerkleTreeLmcsProverData {
                 tree,
-                sorted_to_original,
+                original: inputs,
             },
         )
     }
@@ -156,18 +160,15 @@ where
             "index {index} out of range {final_height}"
         );
 
-        let mut opened_rows: Vec<Vec<P::Value>> = vec![Vec::new(); num_matrices];
-
+        // The stored matrices are already upsampled lifted to `final_height`,
+        // so we can open exactly at `index` in-order.
+        let mut opened_rows: Vec<Vec<P::Value>> = Vec::with_capacity(num_matrices);
         for (sorted_idx, matrix) in tree.leaves.iter().enumerate() {
-            let height = matrix.height();
-            let factor = final_height / height;
-            let row_idx = index / factor;
             let row = matrix
-                .row(row_idx)
-                .unwrap_or_else(|| panic!("row {row_idx} missing in matrix {sorted_idx}"));
+                .row(index)
+                .unwrap_or_else(|| panic!("row {index} missing in matrix {sorted_idx}"));
             let values: Vec<P::Value> = row.into_iter().collect();
-            let original_idx = prover_data.sorted_to_original[sorted_idx];
-            opened_rows[original_idx] = values;
+            opened_rows.push(values);
         }
 
         let mut proof = Vec::with_capacity(tree.digest_layers.len().saturating_sub(1));
@@ -188,16 +189,8 @@ where
         &self,
         prover_data: &'a Self::ProverData<M>,
     ) -> Vec<&'a M> {
-        let num = prover_data.tree.leaves.len();
-        let mut ordered: Vec<Option<&M>> = vec![None; num];
-        for (sorted_idx, matrix) in prover_data.tree.leaves.iter().enumerate() {
-            let original_idx = prover_data.sorted_to_original[sorted_idx];
-            ordered[original_idx] = Some(matrix);
-        }
-        ordered
-            .into_iter()
-            .map(|opt| opt.expect("matrix missing in Lmcs prover data"))
-            .collect()
+        // Return references to the originally committed matrices in original order.
+        prover_data.original.iter().collect()
     }
 
     fn verify_batch(

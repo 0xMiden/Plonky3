@@ -145,7 +145,7 @@ impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: 
 /// - `P::WIDTH` is a power of two.
 ///
 /// Panics in debug builds if preconditions are violated.
-fn build_leaves_upsampled<
+pub fn build_leaves_upsampled<
     P: PackedValue + Default,
     M: Matrix<P::Value>,
     H: StatefulSponge<P, WIDTH, RATE> + StatefulSponge<P::Value, WIDTH, RATE> + Sync,
@@ -220,8 +220,7 @@ fn build_leaves_upsampled<
 /// - `P::WIDTH` is a power of two.
 ///
 /// Panics in debug builds if preconditions are violated.
-#[cfg_attr(not(test), allow(dead_code))]
-fn build_leaves_cyclic<
+pub fn build_leaves_cyclic<
     P: PackedValue + Default,
     M: Matrix<P::Value>,
     H: StatefulSponge<P, WIDTH, RATE> + StatefulSponge<P::Value, WIDTH, RATE> + Sync,
