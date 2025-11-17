@@ -1,5 +1,6 @@
 use alloc::vec::Vec;
 
+use p3_air::PairBuilder;
 use p3_air::{AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder};
 use p3_field::{BasedVectorSpace, PackedField, PrimeCharacteristicRing};
 use p3_matrix::Matrix;
@@ -22,8 +23,10 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     /// The randomness used to compute the aux trace; can be zero width.
     /// Cached EF randomness packed from base randomness to avoid temporary leaks
     pub packed_randomness: Vec<PackedChallenge<SC>>,
+    /// The preprocessed columns (if any)
+    pub preprocessed: Option<RowMajorMatrixView<'a, PackedVal<SC>>>,
     /// Public inputs to the AIR
-    pub public_values: &'a Vec<Val<SC>>,
+    pub public_values: &'a [Val<SC>],
     /// Evaluations of the Selector polynomial for the first row of the trace
     pub is_first_row: PackedVal<SC>,
     /// Evaluations of the Selector polynomial for the last row of the trace
@@ -53,8 +56,10 @@ pub struct VerifierConstraintFolder<'a, SC: StarkGenericConfig> {
     pub aux: ViewPair<'a, SC::Challenge>,
     /// The randomness used to compute the aux tract; can be zero width.
     pub randomness: &'a [SC::Challenge],
+    /// The preprocessed columns (if any)
+    pub preprocessed: Option<ViewPair<'a, SC::Challenge>>,
     /// Public values that are inputs to the computation
-    pub public_values: &'a Vec<Val<SC>>,
+    pub public_values: &'a [Val<SC>],
     /// Evaluations of the Selector polynomial for the first row of the trace
     pub is_first_row: SC::Challenge,
     /// Evaluations of the Selector polynomial for the last row of the trace
@@ -298,6 +303,14 @@ impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for ProverConstraintFolde
     }
 }
 
+impl<'a, SC: StarkGenericConfig> PairBuilder for ProverConstraintFolder<'a, SC> {
+    #[inline]
+    fn preprocessed(&self) -> Self::M {
+        self.preprocessed
+            .expect("Air does not provide preprocessed columns, hence can not be consumed")
+    }
+}
+
 impl<'a, SC: StarkGenericConfig> AirBuilder for VerifierConstraintFolder<'a, SC> {
     type F = Val<SC>;
     type Expr = SC::Challenge;
@@ -366,5 +379,11 @@ impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for VerifierConstraintFol
 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         self.randomness
+    }
+}
+impl<'a, SC: StarkGenericConfig> PairBuilder for VerifierConstraintFolder<'a, SC> {
+    fn preprocessed(&self) -> Self::M {
+        self.preprocessed
+            .expect("Air does not provide preprocessed columns, hence can not be consumed")
     }
 }

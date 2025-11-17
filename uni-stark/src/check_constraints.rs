@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 
 #[cfg(debug_assertions)]
 use p3_air::Air;
+use p3_air::PairBuilder;
 use p3_air::{AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder};
 #[cfg(debug_assertions)]
 use p3_field::BasedVectorSpace;
@@ -43,6 +44,7 @@ pub(crate) fn check_constraints<F, EF, A>(
     A: for<'a> Air<DebugConstraintBuilder<'a, F, EF>>,
 {
     let height = main.height();
+    let preprocessed = air.preprocessed_trace();
 
     (0..height).for_each(|row_index| {
         let row_index_next = (row_index + 1) % height;
@@ -51,7 +53,7 @@ pub(crate) fn check_constraints<F, EF, A>(
         let local = unsafe { main.row_slice_unchecked(row_index) };
         // row_index_next < height so we can used unchecked indexing.
         let next = unsafe { main.row_slice_unchecked(row_index_next) };
-        let main = VerticalPair::new(
+        let main = ViewPair::new(
             RowMajorMatrixView::new_row(&*local),
             RowMajorMatrixView::new_row(&*next),
         );
@@ -81,11 +83,35 @@ pub(crate) fn check_constraints<F, EF, A>(
             )
         };
 
+        let preprocessed_pair = if let Some(preprocessed_matrix) = preprocessed.as_ref() {
+            let preprocessed_local = unsafe {
+                preprocessed_matrix
+                    .values
+                    .chunks(preprocessed_matrix.width)
+                    .nth(row_index)
+                    .unwrap()
+            };
+            let preprocessed_next = unsafe {
+                preprocessed_matrix
+                    .values
+                    .chunks(preprocessed_matrix.width)
+                    .nth(row_index_next)
+                    .unwrap()
+            };
+            Some(ViewPair::new(
+                RowMajorMatrixView::new_row(preprocessed_local),
+                RowMajorMatrixView::new_row(preprocessed_next),
+            ))
+        } else {
+            None
+        };
+
         let mut builder = DebugConstraintBuilder {
             row_index,
             main,
             aux,
             aux_randomness,
+            preprocessed: preprocessed_pair,
             public_values,
             is_first_row: F::from_bool(row_index == 0),
             is_last_row: F::from_bool(row_index == height - 1),
@@ -122,6 +148,8 @@ pub struct DebugConstraintBuilder<'a, F: Field, EF: ExtensionField<F>> {
     aux: ViewPair<'a, EF>,
     /// randomness that is used to compute aux trace
     aux_randomness: &'a [EF],
+    /// A view of the preprocessed current and next row as a vertical pair (if present).
+    preprocessed: Option<ViewPair<'a, F>>,
     /// The public values provided for constraint validation (e.g. inputs or outputs).
     public_values: &'a [F],
     /// A flag indicating whether this is the first row.
@@ -222,6 +250,13 @@ impl<'a, F: Field, EF: ExtensionField<F>> PermutationAirBuilder
 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         self.aux_randomness
+    }
+}
+
+impl<'a, F: Field, EF: ExtensionField<F>> PairBuilder for DebugConstraintBuilder<'a, F, EF> {
+    fn preprocessed(&self) -> Self::M {
+        self.preprocessed
+            .expect("DebugConstraintBuilder requires preprocessed columns when used as PairBuilder")
     }
 }
 
