@@ -26,7 +26,7 @@ use p3_field::coset::TwoAdicMultiplicativeCoset;
 use p3_field::{
     ExtensionField, PackedFieldExtension, TwoAdicField, batch_multiplicative_inverse, dot_product,
 };
-use p3_interpolation::interpolate_coset_with_precomputation;
+use p3_interpolation::{interpolate_coset_with_precomputation, lagrange_interpolate_ext};
 use p3_matrix::Matrix;
 use p3_matrix::bitrev::{BitReversedMatrixView, BitReversibleMatrix};
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
@@ -91,6 +91,15 @@ pub type CommitmentWithOpeningPoints<Challenge, Commitment, Domain> = (
 pub struct TwoAdicFriFolding<InputProof, InputError> {
     pub log_folding_factor: usize,
     pub _phantom: PhantomData<(InputProof, InputError)>,
+}
+
+impl<InputProof, InputError> TwoAdicFriFolding<InputProof, InputError> {
+    pub fn new(log_folding_factor: usize) -> Self {
+        Self {
+            log_folding_factor,
+            _phantom: PhantomData,
+        }
+    }
 }
 
 pub type TwoAdicFriFoldingForMmcs<F, M> =
@@ -204,7 +213,7 @@ impl<InputProof, InputError: Debug> TwoAdicFriFolding<InputProof, InputError> {
 
         // Perform Lagrange interpolation at beta
         // We optimize by keeping denominators in base field F
-        lagrange_interpolate_at_point(&xs, &evals, beta)
+        lagrange_interpolate_ext(&xs, &evals, beta)
     }
 
     fn fold_matrix_2<EF, F, M: Matrix<EF>>(&self, beta: EF, m: M) -> Vec<EF>
@@ -270,99 +279,18 @@ impl<InputProof, InputError: Debug> TwoAdicFriFolding<InputProof, InputError> {
             })
             .collect();
 
-        // Precompute Lagrange denominators for each row
-        let lagrange_denoms: Vec<Vec<F>> = domain_points
-            .iter()
-            .map(|xs| precompute_lagrange_denominators(xs))
-            .collect();
-
         // Process each row in parallel
         m.par_rows()
             .zip(domain_points)
-            .zip(lagrange_denoms)
-            .map(|((row, xs), denoms)| {
+            .map(|(row, xs)| {
                 let evals: Vec<EF> = row.collect();
                 assert_eq!(evals.len(), folding_factor);
 
-                // Lagrange interpolation at beta, using precomputed denominators
-                let mut result = EF::ZERO;
-                for i in 0..folding_factor {
-                    // Compute Lagrange basis numerator: \prod(beta - xs[j]) for j \neq i
-                    let mut numerator = EF::ONE;
-                    for (j, &x_j) in xs.iter().enumerate().take(folding_factor) {
-                        if i != j {
-                            numerator *= beta - x_j;
-                        }
-                    }
-
-                    // Combine: evals[i] * numerator * (precomputed denominator)
-                    result += evals[i] * numerator * denoms[i];
-                }
-
-                result
+                // Perform Lagrange interpolation at beta
+                lagrange_interpolate_ext(&xs, &evals, beta)
             })
             .collect()
     }
-}
-
-/// Lagrange interpolation evaluated at a point using batch inversion.
-/// xs are in base field F, ys and result are in extension field EF.
-fn lagrange_interpolate_at_point<F, EF>(xs: &[F], ys: &[EF], x: EF) -> EF
-where
-    F: TwoAdicField,
-    EF: ExtensionField<F>,
-{
-    let n = xs.len();
-    let mut numerators = Vec::with_capacity(n);
-    let mut denominators = Vec::with_capacity(n);
-
-    for i in 0..n {
-        let mut numerator = EF::ONE;
-        let mut denominator = F::ONE;
-
-        for j in 0..n {
-            if i != j {
-                numerator *= x - xs[j]; // Numerator: (x - xs[j]) in EF
-                denominator *= xs[i] - xs[j]; // Denominator: (xs[i] - xs[j]) in F
-            }
-        }
-
-        numerators.push(numerator);
-        denominators.push(denominator);
-    }
-
-    // Batch invert all denominators
-    let inv_denominators = batch_multiplicative_inverse(&denominators);
-
-    // Compute the final result: sum of ys[i] * numerator[i] / denominator[i]
-    let mut result = EF::ZERO;
-    for i in 0..n {
-        result += ys[i] * numerators[i] * inv_denominators[i];
-    }
-
-    result
-}
-
-/// Precompute denominators for Lagrange interpolation using batch inversion.
-/// Returns 1 / \prod(xs[i] - xs[j]) for each i.
-fn precompute_lagrange_denominators<F: TwoAdicField>(xs: &[F]) -> Vec<F> {
-    let n = xs.len();
-
-    // Compute all products: denominators[i] = \prod_{j != i}(xs[i] - xs[j])
-    let denominators: Vec<F> = (0..n)
-        .map(|i| {
-            let mut denom = F::ONE;
-            for j in 0..n {
-                if i != j {
-                    denom *= xs[i] - xs[j];
-                }
-            }
-            denom
-        })
-        .collect();
-
-    // Batch invert all denominators
-    batch_multiplicative_inverse(&denominators)
 }
 
 impl<Val, Dft, InputMmcs, FriMmcs, Challenge, Challenger> Pcs<Challenge, Challenger>
@@ -425,7 +353,6 @@ where
         // Commit to the bit-reversed LDEs.
         self.mmcs.commit(ldes)
     }
-
 
     /// Given the evaluations on a domain `gH`, return the evaluations on a different domain `g'K`.
     ///

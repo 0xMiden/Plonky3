@@ -126,6 +126,64 @@ where
     evals
 }
 
+/// Lagrange interpolation for extension field evaluations at arbitrary domain points.
+///
+/// Given evaluations `ys` of polynomials at domain points `xs` (both in base field F),
+/// evaluate the interpolated polynomials at `point` (in extension field EF).
+///
+/// Unlike `interpolate_coset`, this function:
+/// - Works with extension field evaluations (the ys parameter contains EF elements)
+/// - Supports arbitrary domain points, not just two-adic cosets
+/// - Uses standard Lagrange interpolation formula with batch inversion
+///
+/// This is useful for FRI folding where evaluations are in the extension field
+/// but domain points remain in the base field.
+///
+/// # Arguments
+/// * `xs` - Domain points in base field F
+/// * `ys` - Evaluations at those points in extension field EF
+/// * `point` - Point at which to evaluate in extension field EF
+///
+/// # Returns
+/// The interpolated value at `point`
+pub fn lagrange_interpolate_ext<F, EF>(xs: &[F], ys: &[EF], point: EF) -> EF
+where
+    F: TwoAdicField,
+    EF: ExtensionField<F>,
+{
+    let n = xs.len();
+    debug_assert_eq!(xs.len(), ys.len(), "xs and ys must have the same length");
+
+    let mut numerators = Vec::with_capacity(n);
+    let mut denominators = Vec::with_capacity(n);
+
+    for i in 0..n {
+        let mut numerator = EF::ONE;
+        let mut denominator = F::ONE;
+
+        for j in 0..n {
+            if i != j {
+                numerator *= point - xs[j]; // Numerator: (point - xs[j]) in EF
+                denominator *= xs[i] - xs[j]; // Denominator: (xs[i] - xs[j]) in F
+            }
+        }
+
+        numerators.push(numerator);
+        denominators.push(denominator);
+    }
+
+    // Batch invert all denominators
+    let inv_denominators = batch_multiplicative_inverse(&denominators);
+
+    // Compute the final result: sum of ys[i] * numerator[i] / denominator[i]
+    let mut result = EF::ZERO;
+    for i in 0..n {
+        result += ys[i] * numerators[i] * inv_denominators[i];
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;
@@ -137,7 +195,10 @@ mod tests {
     use p3_matrix::dense::RowMajorMatrix;
     use p3_util::log2_strict_usize;
 
-    use crate::{interpolate_coset, interpolate_coset_with_precomputation, interpolate_subgroup};
+    use crate::{
+        interpolate_coset, interpolate_coset_with_precomputation, interpolate_subgroup,
+        lagrange_interpolate_ext,
+    };
 
     #[test]
     fn test_interpolate_subgroup() {
@@ -279,5 +340,51 @@ mod tests {
         let expected_f2 = f2(point);
 
         assert_eq!(result, vec![expected_f1, expected_f2]);
+    }
+
+    #[test]
+    fn test_lagrange_interpolate_ext() {
+        type F = BabyBear;
+        type EF4 = BinomialExtensionField<BabyBear, 4>;
+
+        // Test polynomial: f(x) = x^3 + 2x^2 + 3x + 4 evaluated in extension field
+        let poly = |x: EF4| x * x * x + x * x * F::TWO + x * F::from_u32(3) + F::from_u32(4);
+
+        // Domain points in base field
+        let xs = vec![
+            F::from_u32(1),
+            F::from_u32(2),
+            F::from_u32(3),
+            F::from_u32(5),
+        ];
+
+        // Evaluations in extension field
+        let ys: Vec<EF4> = xs.iter().map(|&x| poly(x.into())).collect();
+
+        // Evaluate at a point in the extension field
+        let point = EF4::from_u32(7);
+        let result = lagrange_interpolate_ext(&xs, &ys, point);
+        let expected = poly(point);
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_lagrange_interpolate_ext_small_folding_factor() {
+        type F = BabyBear;
+        type EF4 = BinomialExtensionField<BabyBear, 4>;
+
+        // Test with folding factor of 2 (common in FRI)
+        // Linear interpolation between (10, 100) and (20, 400)
+        // The line is: f(x) = 30x - 200
+        let xs = vec![F::from_u32(10), F::from_u32(20)];
+        let ys = vec![EF4::from_u32(100), EF4::from_u32(400)];
+
+        let point = EF4::from_u32(15);
+        let result = lagrange_interpolate_ext(&xs, &ys, point);
+
+        // f(15) = 30*15 - 200 = 450 - 200 = 250
+        let expected = EF4::from_u32(250);
+        assert_eq!(result, expected);
     }
 }
