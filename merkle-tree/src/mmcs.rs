@@ -128,7 +128,7 @@ where
 
     fn commit<M: Matrix<P::Value>>(
         &self,
-        mut inputs: Vec<M>,
+        inputs: Vec<M>,
     ) -> (Self::Commitment, Self::ProverData<M>) {
         if let Some(max_height) = inputs.iter().map(|m| m.height()).max()
             && max_height > 0

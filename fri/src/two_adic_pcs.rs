@@ -94,7 +94,7 @@ pub struct TwoAdicFriFolding<InputProof, InputError> {
 }
 
 impl<InputProof, InputError> TwoAdicFriFolding<InputProof, InputError> {
-    pub fn new(log_folding_factor: usize) -> Self {
+    pub const fn new(log_folding_factor: usize) -> Self {
         Self {
             log_folding_factor,
             _phantom: PhantomData,
@@ -124,7 +124,7 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
         index: usize,
         log_height: usize,
         beta: EF,
-        evals: impl Iterator<Item = EF>,
+        evals: impl ParallelIterator<Item = EF>,
     ) -> EF {
         let folding_factor = 1 << self.log_folding_factor;
         if folding_factor == 2 {
@@ -137,9 +137,9 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
     fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, m: M) -> Vec<EF> {
         let folding_factor = 1 << self.log_folding_factor;
         if folding_factor == 2 {
-            self.fold_matrix_2(beta, m)
+            self.fold_matrix_2(beta, &m)
         } else {
-            self.fold_matrix_arbitrary(beta, m, folding_factor)
+            self.fold_matrix_arbitrary(beta, &m, folding_factor)
         }
     }
 }
@@ -150,7 +150,7 @@ impl<InputProof, InputError: Debug> TwoAdicFriFolding<InputProof, InputError> {
         index: usize,
         log_height: usize,
         beta: EF,
-        evals: impl Iterator<Item = EF>,
+        evals: impl ParallelIterator<Item = EF>,
     ) -> EF
     where
         EF: ExtensionField<F>,
@@ -216,7 +216,7 @@ impl<InputProof, InputError: Debug> TwoAdicFriFolding<InputProof, InputError> {
         lagrange_interpolate_ext(&xs, &evals, beta)
     }
 
-    fn fold_matrix_2<EF, F, M: Matrix<EF>>(&self, beta: EF, m: M) -> Vec<EF>
+    fn fold_matrix_2<EF, F, M: Matrix<EF>>(&self, beta: EF, m: &M) -> Vec<EF>
     where
         EF: ExtensionField<F>,
         F: TwoAdicField,
@@ -254,7 +254,7 @@ impl<InputProof, InputError: Debug> TwoAdicFriFolding<InputProof, InputError> {
     fn fold_matrix_arbitrary<EF, F, M: Matrix<EF>>(
         &self,
         beta: EF,
-        m: M,
+        m: &M,
         folding_factor: usize,
     ) -> Vec<EF>
     where
