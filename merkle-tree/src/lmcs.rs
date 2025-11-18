@@ -1,61 +1,17 @@
 use alloc::vec::Vec;
+use core::iter::zip;
 use core::marker::PhantomData;
 
 use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
 use p3_field::PackedValue;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_matrix::lifted::{LiftableMatrix, UpsampledLiftedMatrixView};
+use p3_matrix::lifted::UpsampledLiftIndexMap;
 use p3_matrix::{Dimensions, Matrix};
 use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulSponge};
 use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
 
-use crate::uniform::UniformMerkleTree;
-
-/// Prover-side data for a lifted mixed-matrix commitment.
-pub struct MerkleTreeLmcsProverData<F, M, const DIGEST_ELEMS: usize> {
-    // The tree is built over upsampled lifted views to the final height.
-    pub(crate) tree:
-        UniformMerkleTree<F, UpsampledLiftedMatrixView<RowMajorMatrix<F>>, DIGEST_ELEMS>,
-    // Retain original matrices (in original order) for API accessors.
-    pub(crate) original: Vec<M>,
-}
-
-/// Errors that can arise while verifying LMCS openings.
-#[derive(Debug)]
-pub enum LmcsError {
-    WrongBatchSize,
-    WrongWidth {
-        matrix: usize,
-        expected: usize,
-        actual: usize,
-    },
-    WrongHeight {
-        expected: usize,
-        actual: usize,
-    },
-    IndexOutOfBounds {
-        max_height: usize,
-        index: usize,
-    },
-    RootMismatch,
-    EmptyBatch,
-    NonPowerOfTwoHeight {
-        matrix: usize,
-        height: usize,
-    },
-    HeightNotDivisor {
-        matrix: usize,
-        height: usize,
-        final_height: usize,
-    },
-    ZeroHeightMatrix {
-        matrix: usize,
-    },
-    FinalHeightNotPowerOfTwo {
-        height: usize,
-    },
-}
+use crate::uniform::{LiftDimensions, UniformMerkleTree};
 
 /// Lifted MMCS built on top of [`UniformMerkleTree`].
 ///
@@ -93,7 +49,7 @@ where
         + Clone,
     [P::Value; DIGEST_ELEMS]: Serialize + for<'de> Deserialize<'de>,
 {
-    type ProverData<M> = MerkleTreeLmcsProverData<P::Value, M, DIGEST_ELEMS>;
+    type ProverData<M> = UniformMerkleTree<P::Value, M, DIGEST_ELEMS>;
     type Commitment = Hash<P::Value, P::Value, DIGEST_ELEMS>;
     type Proof = Vec<[P::Value; DIGEST_ELEMS]>;
     type Error = LmcsError;
@@ -102,74 +58,46 @@ where
         &self,
         inputs: Vec<M>,
     ) -> (Self::Commitment, Self::ProverData<M>) {
-        assert!(
-            !inputs.is_empty(),
-            "LMCS commit requires at least one matrix"
-        );
-
-        // Enforce sorted-by-height invariant (non-decreasing) and power-of-two heights.
-        let mut prev_h = 0usize;
-        for (i, m) in inputs.iter().enumerate() {
-            let h = m.height();
-            assert!(h > 0, "matrix {i} has zero height");
-            assert!(h.is_power_of_two(), "matrix {i} height {h} must be a power of two");
-            assert!(prev_h <= h, "matrices must be sorted by non-decreasing height");
-            prev_h = h;
-        }
-
-        let final_height = inputs.last().unwrap().height();
-
-        // Materialize to row-major by copying from borrowed inputs, then create upsampled lifted views.
-        let lifted: Vec<UpsampledLiftedMatrixView<RowMajorMatrix<P::Value>>> = inputs
-            .iter()
-            .map(|m| {
-                let values: Vec<_> = m.rows().flatten().collect();
-                let row_major = RowMajorMatrix::new(values, m.width());
-                row_major.lift_upsampled(final_height)
-            })
-            .collect();
-
-        let tree = UniformMerkleTree::new::<P, H, C, WIDTH, RATE>(
-            &self.sponge,
-            &self.compress,
-            lifted,
-        );
+        let tree =
+            UniformMerkleTree::new::<P, H, C, WIDTH, RATE>(&self.sponge, &self.compress, inputs);
         let root = tree.root();
 
-        (
-            root,
-            MerkleTreeLmcsProverData {
-                tree,
-                original: inputs,
-            },
-        )
+        (root, tree)
     }
 
     fn open_batch<M: Matrix<P::Value>>(
         &self,
         index: usize,
-        prover_data: &Self::ProverData<M>,
+        tree: &Self::ProverData<M>,
     ) -> BatchOpening<P::Value, Self> {
-        let tree = &prover_data.tree;
-        let num_matrices = tree.leaves.len();
-        assert!(num_matrices > 0, "no matrices committed");
-
-        let final_height = tree.leaves.last().expect("at least one matrix").height();
+        let lift = tree
+            .lift_dims
+            .as_ref()
+            .expect("missing lift dimensions; tree must be constructed from matrices");
+        let final_height = lift.largest_height();
         assert!(
             index < final_height,
             "index {index} out of range {final_height}"
         );
 
-        // The stored matrices are already upsampled lifted to `final_height`,
-        // so we can open exactly at `index` in-order.
-        let mut opened_rows: Vec<Vec<P::Value>> = Vec::with_capacity(num_matrices);
-        for (sorted_idx, matrix) in tree.leaves.iter().enumerate() {
-            let row = matrix
-                .row(index)
-                .unwrap_or_else(|| panic!("row {index} missing in matrix {sorted_idx}"));
-            let values: Vec<P::Value> = row.into_iter().collect();
-            opened_rows.push(values);
-        }
+        // Map to per-matrix indices and pad to RATE-aligned widths.
+        let mapped = lift.map_idxs_upsampled(index);
+        let padded_widths = lift.padded_widths::<RATE>();
+        let opened_rows: Vec<Vec<P::Value>> = tree
+            .leaves
+            .iter()
+            .zip(mapped)
+            .zip(padded_widths)
+            .map(|((m, mapped_idx), padded_w)| {
+                let mut row: Vec<_> = m
+                    .row(mapped_idx)
+                    .expect("invalid index")
+                    .into_iter()
+                    .collect();
+                row.resize(padded_w, P::Value::default());
+                row
+            })
+            .collect();
 
         let mut proof = Vec::with_capacity(tree.digest_layers.len().saturating_sub(1));
         let mut layer_index = index;
@@ -185,12 +113,9 @@ where
         BatchOpening::new(opened_rows, proof)
     }
 
-    fn get_matrices<'a, M: Matrix<P::Value>>(
-        &self,
-        prover_data: &'a Self::ProverData<M>,
-    ) -> Vec<&'a M> {
+    fn get_matrices<'a, M: Matrix<P::Value>>(&self, tree: &'a Self::ProverData<M>) -> Vec<&'a M> {
         // Return references to the originally committed matrices in original order.
-        prover_data.original.iter().collect()
+        tree.leaves.iter().collect()
     }
 
     fn verify_batch(
@@ -205,24 +130,9 @@ where
         if dimensions.len() != opened_values.len() {
             return Err(LmcsError::WrongBatchSize);
         }
-        if dimensions.is_empty() {
-            return Err(LmcsError::EmptyBatch);
-        }
 
-        let mut order: Vec<usize> = (0..dimensions.len()).collect();
-        order.sort_by_key(|&i| (dimensions[i].height, i));
-
-        let final_height = dimensions[order.last().copied().unwrap()].height;
-        if final_height == 0 {
-            return Err(LmcsError::ZeroHeightMatrix {
-                matrix: order.last().copied().unwrap(),
-            });
-        }
-        if !final_height.is_power_of_two() {
-            return Err(LmcsError::FinalHeightNotPowerOfTwo {
-                height: final_height,
-            });
-        }
+        let lift = LiftDimensions::new(dimensions.to_vec())?;
+        let final_height = lift.largest_height();
         if index >= final_height {
             return Err(LmcsError::IndexOutOfBounds {
                 max_height: final_height,
@@ -238,41 +148,24 @@ where
             });
         }
 
-        let mut state = [P::Value::default(); WIDTH];
-
-        for &idx in &order {
-            let dims = dimensions[idx];
-            if dims.height == 0 {
-                return Err(LmcsError::ZeroHeightMatrix { matrix: idx });
-            }
-            if !dims.height.is_power_of_two() {
-                return Err(LmcsError::NonPowerOfTwoHeight {
-                    matrix: idx,
-                    height: dims.height,
-                });
-            }
-            if final_height % dims.height != 0 {
-                return Err(LmcsError::HeightNotDivisor {
-                    matrix: idx,
-                    height: dims.height,
-                    final_height,
-                });
-            }
-
-            let values = &opened_values[idx];
-            if dims.width != values.len() {
+        for (idx, (opened_row, padded_width)) in
+            zip(opened_values, lift.padded_widths::<RATE>()).enumerate()
+        {
+            if padded_width != opened_row.len() {
                 return Err(LmcsError::WrongWidth {
                     matrix: idx,
-                    expected: dims.width,
-                    actual: values.len(),
+                    expected: padded_width,
+                    actual: opened_row.len(),
                 });
             }
-
-            // Consume the provided row in the same order used during commitment.
-            self.sponge.absorb(&mut state, values.iter().copied());
         }
 
-        let mut digest = self.sponge.squeeze::<DIGEST_ELEMS>(&state);
+        let sponge_state = opened_values.iter().fold([P::Value::default(); WIDTH], |mut state, opened_row| {
+            self.sponge.absorb(&mut state, opened_row.iter().copied());
+            state
+        });
+
+        let mut digest = self.sponge.squeeze::<DIGEST_ELEMS>(&sponge_state);
         let mut current_index = index;
         for sibling in opening_proof {
             let (left, right) = if current_index & 1 == 0 {
@@ -291,4 +184,42 @@ where
             Err(LmcsError::RootMismatch)
         }
     }
+}
+
+/// Errors that can arise while verifying LMCS openings.
+#[derive(Debug)]
+pub enum LmcsError {
+    WrongBatchSize,
+    WrongWidth {
+        matrix: usize,
+        expected: usize,
+        actual: usize,
+    },
+    WrongHeight {
+        expected: usize,
+        actual: usize,
+    },
+    IndexOutOfBounds {
+        max_height: usize,
+        index: usize,
+    },
+    RootMismatch,
+    EmptyBatch,
+    NonPowerOfTwoHeight {
+        matrix: usize,
+        height: usize,
+    },
+    HeightNotDivisor {
+        matrix: usize,
+        height: usize,
+        final_height: usize,
+    },
+    ZeroHeightMatrix {
+        matrix: usize,
+    },
+    FinalHeightNotPowerOfTwo {
+        height: usize,
+    },
+    /// Dimensions are not sorted by non-decreasing height.
+    UnsortedByHeight,
 }
