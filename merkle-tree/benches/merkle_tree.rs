@@ -9,11 +9,11 @@ use p3_keccak::Keccak256Hash;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_mds::integrated_coset_mds::IntegratedCosetMds;
-use p3_merkle_tree::{MerkleTreeLmcs, MerkleTreeMmcs};
+use p3_merkle_tree::MerkleTreeMmcs;
 use p3_rescue::Rescue;
 use p3_symmetric::{
     CompressionFunctionFromHasher, CryptographicHasher, PaddingFreeSponge,
-    PseudoCompressionFunction, SerializingHasher, StatefulSponge, TruncatedPermutation,
+    PseudoCompressionFunction, SerializingHasher, TruncatedPermutation,
 };
 use rand::SeedableRng;
 use rand::distr::{Distribution, StandardUniform};
@@ -46,7 +46,6 @@ fn bench_bb_poseidon2(criterion: &mut Criterion) {
         h.clone(),
         c.clone(),
     );
-    bench_mmcs_vs_lmcs::<<F as Field>::Packing, H, C, 8>(criterion, h.clone(), c.clone());
     bench_merkle_tree::<<F as Field>::Packing, <F as Field>::Packing, H, C, 8>(criterion, h, c);
 }
 
@@ -72,7 +71,6 @@ fn bench_bb_rescue(criterion: &mut Criterion) {
         h.clone(),
         c.clone(),
     );
-    bench_mmcs_vs_lmcs::<<F as Field>::Packing, H, C, 8>(criterion, h.clone(), c.clone());
     bench_merkle_tree::<<F as Field>::Packing, <F as Field>::Packing, H, C, 8>(criterion, h, c);
 }
 
@@ -86,8 +84,7 @@ fn bench_bb_blake3(criterion: &mut Criterion) {
     let b = Blake3 {};
     let c = C::new(b);
 
-    bench_mmcs::<F, u8, H, C, 32>(criterion, h.clone(), c.clone());
-    // LMCS relies on stateful sponges over a single field; skip for Blake3 byte-hash benchmark.
+    bench_mmcs::<F, u8, H, C, 32>(criterion, h, c.clone());
     bench_merkle_tree::<F, u8, H, C, 32>(criterion, h, c);
 }
 
@@ -101,8 +98,7 @@ fn bench_bb_keccak(criterion: &mut Criterion) {
     type C = CompressionFunctionFromHasher<Keccak256Hash, 2, 32>;
     let c = C::new(k);
 
-    bench_mmcs::<F, u8, H, C, 32>(criterion, h.clone(), c.clone());
-    // LMCS relies on stateful sponges over a single field; skip for Keccak byte-hash benchmark.
+    bench_mmcs::<F, u8, H, C, 32>(criterion, h, c.clone());
     bench_merkle_tree::<F, u8, H, C, 32>(criterion, h, c);
 }
 
@@ -179,99 +175,6 @@ where
     group.bench_with_input(params, &leaves, |b, input| {
         b.iter(|| mmcs.commit(input.clone()));
     });
-}
-
-fn bench_lmcs<P, H, C, const DIGEST_ELEMS: usize>(criterion: &mut Criterion, h: H, c: C)
-where
-    P: PackedField + Default,
-    H: StatefulSponge<P::Scalar, 16, 8> + StatefulSponge<P, 16, 8> + Sync + Clone,
-    C: PseudoCompressionFunction<[P::Scalar; DIGEST_ELEMS], 2>
-        + PseudoCompressionFunction<[P; DIGEST_ELEMS], 2>
-        + Sync
-        + Clone,
-    [P::Scalar; DIGEST_ELEMS]: Serialize + DeserializeOwned,
-    StandardUniform: Distribution<P::Scalar>,
-{
-    const ROWS: usize = 1 << 15;
-    const COLS: usize = 135;
-
-    let mut rng = SmallRng::seed_from_u64(1);
-    // LMCS expects power-of-two heights; generate sorted heights.
-    let matrix_1 = RowMajorMatrix::<P::Scalar>::rand(&mut rng, ROWS, COLS);
-    let matrix_2 = RowMajorMatrix::<P::Scalar>::rand(&mut rng, ROWS / 2, COLS);
-    let dims = vec![matrix_2.dimensions(), matrix_1.dimensions()];
-    let leaves = vec![matrix_2, matrix_1];
-
-    let name = format!(
-        "MerkleTreeLmcs::<{}, {}>::new",
-        type_name::<H>(),
-        type_name::<C>()
-    );
-    let params = BenchmarkId::from_parameter(format!("{dims:?}"));
-
-    let mut group = criterion.benchmark_group(name);
-    group.sample_size(10);
-
-    // Parameters WIDTH, RATE, and DIGEST_ELEMS are taken from the hasher type H.
-    // They are specified at the call site via concrete types.
-    let lmcs = MerkleTreeLmcs::<P, H, C, 16, 8, DIGEST_ELEMS>::new(h, c);
-    group.bench_with_input(params, &leaves, |b, input| {
-        b.iter(|| lmcs.commit(input.clone()));
-    });
-}
-
-fn bench_mmcs_vs_lmcs<P, H, C, const DIGEST_ELEMS: usize>(criterion: &mut Criterion, h: H, c: C)
-where
-    P: PackedField + Default,
-    H: StatefulSponge<P::Scalar, 16, 8>
-        + StatefulSponge<P, 16, 8>
-        + CryptographicHasher<P::Scalar, [P::Scalar; DIGEST_ELEMS]>
-        + CryptographicHasher<P, [P; DIGEST_ELEMS]>
-        + Sync
-        + Clone,
-    C: PseudoCompressionFunction<[P::Scalar; DIGEST_ELEMS], 2>
-        + PseudoCompressionFunction<[P; DIGEST_ELEMS], 2>
-        + Sync
-        + Clone,
-    [P::Scalar; DIGEST_ELEMS]: Serialize + DeserializeOwned,
-    StandardUniform: Distribution<P::Scalar>,
-{
-    const ROWS: usize = 1 << 15;
-    const COLS: usize = 135;
-
-    let mut rng = SmallRng::seed_from_u64(2);
-    // Use identical, power-of-two heights for fair comparison and LMCS compatibility.
-    let m_small = RowMajorMatrix::<P::Scalar>::rand(&mut rng, ROWS / 2, COLS);
-    let m_large = RowMajorMatrix::<P::Scalar>::rand(&mut rng, ROWS, COLS);
-    let dims = vec![m_small.dimensions(), m_large.dimensions()];
-    let leaves = vec![m_small, m_large];
-
-    let mut group = criterion.benchmark_group(format!(
-        "MMCS_vs_LMCS",
-        // type_name::<H>(),
-        // type_name::<C>()
-    ));
-    group.sample_size(10);
-
-    let mmcs = MerkleTreeMmcs::<P, P, H, C, DIGEST_ELEMS>::new(h.clone(), c.clone());
-    group.bench_with_input(
-        BenchmarkId::new("MMCS", format!("{dims:?}")),
-        &leaves,
-        |b, input| {
-            b.iter(|| mmcs.commit(input.clone()));
-        },
-    );
-
-    let lmcs = MerkleTreeLmcs::<P, H, C, 16, 8, DIGEST_ELEMS>::new(h, c);
-    group.bench_with_input(
-        BenchmarkId::new("LMCS", format!("{dims:?}")),
-        &leaves,
-        |b, input| {
-            b.iter(|| lmcs.commit(input.clone()));
-        },
-    );
-
-    group.finish();
 }
 
 criterion_group!(benches, bench_merkle_trees);
