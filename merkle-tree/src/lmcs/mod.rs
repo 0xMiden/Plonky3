@@ -257,8 +257,11 @@ mod tests {
     #[test]
     fn commit_open_verify_roundtrip() {
         let (sponge, compress) = components();
-        let lmcs =
-            MerkleTreeLmcs::<P, _, _, WIDTH, RATE, DIGEST>::new(sponge.clone(), compress.clone(), Lifting::Upsample);
+        let lmcs = MerkleTreeLmcs::<P, _, _, WIDTH, RATE, DIGEST>::new(
+            sponge.clone(),
+            compress.clone(),
+            Lifting::Upsample,
+        );
 
         let mut rng = SmallRng::seed_from_u64(9);
         let matrices = vec![

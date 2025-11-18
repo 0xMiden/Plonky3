@@ -502,7 +502,7 @@ pub trait Matrix<T: Send + Sync + Clone>: Send + Sync {
 // Allow creating matrix views over references by forwarding `Matrix` methods to the underlying
 // matrix implementation. This enables using `&M` anywhere an `M: Matrix<T>` is expected,
 // which is useful for lightweight views like lifted/strided without moving or cloning.
-impl<'a, T, M> Matrix<T> for &'a M
+impl<T, M> Matrix<T> for &M
 where
     T: Send + Sync + Clone,
     M: Matrix<T> + ?Sized,
