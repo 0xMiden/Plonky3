@@ -14,30 +14,40 @@ mod merkle_tree;
 mod test_helpers;
 mod utils;
 
-pub use merkle_tree::{UniformMerkleTree, build_leaves_cyclic, build_leaves_upsampled};
-use p3_matrix::lifted::LiftableMatrix;
+pub use merkle_tree::{LiftedMerkleTree, build_leaves_cyclic, build_leaves_upsampled};
 
+use crate::lmcs::merkle_tree::Lifting;
 use crate::lmcs::utils::validate_heights;
 
-/// Lifted MMCS built on top of [`UniformMerkleTree`].
+/// Lifted MMCS built on top of [`LiftedMerkleTree`].
 ///
-/// The tree treats every matrix as if it were expanded to the tallest height by duplicating
-/// rows, allowing the commitment to follow a uniform Merkle structure.
+/// Matrices of different heights are aligned to the tallest height via a chosen [`Lifting`]
+/// (either upsampled/nearest-neighbor or cyclic repetition). Conceptually, each matrix is
+/// virtually extended vertically to height `H` (width unchanged) and the leaf `r` absorbs the
+/// `r`-th row from each extended matrix. See [`Lifting`] for the precise definition of the
+/// row-index mapping.
+///
+/// Equivalent single-matrix view: the scheme is equivalent to lifting every matrix to height `H`,
+/// padding each horizontally with zeros to a multiple of `RATE`, and concatenating them side-by-
+/// side into one matrix. The Merkle tree and verification behavior are identical to committing to
+/// and opening that single concatenated matrix.
 #[derive(Clone, Debug)]
 pub struct MerkleTreeLmcs<P, H, C, const WIDTH: usize, const RATE: usize, const DIGEST_ELEMS: usize>
 {
     sponge: H,
     compress: C,
+    lifting: Lifting,
     _phantom: PhantomData<P>,
 }
 
 impl<P, H, C, const WIDTH: usize, const RATE: usize, const DIGEST_ELEMS: usize>
     MerkleTreeLmcs<P, H, C, WIDTH, RATE, DIGEST_ELEMS>
 {
-    pub const fn new(sponge: H, compress: C) -> Self {
+    pub const fn new(sponge: H, compress: C, lifting: Lifting) -> Self {
         Self {
             sponge,
             compress,
+            lifting,
             _phantom: PhantomData,
         }
     }
@@ -55,7 +65,7 @@ where
         + Clone,
     [P::Value; DIGEST_ELEMS]: Serialize + for<'de> Deserialize<'de>,
 {
-    type ProverData<M> = UniformMerkleTree<P::Value, M, DIGEST_ELEMS>;
+    type ProverData<M> = LiftedMerkleTree<P::Value, M, DIGEST_ELEMS>;
     type Commitment = Hash<P::Value, P::Value, DIGEST_ELEMS>;
     type Proof = Vec<[P::Value; DIGEST_ELEMS]>;
     type Error = LmcsError;
@@ -64,9 +74,13 @@ where
         &self,
         inputs: Vec<M>,
     ) -> (Self::Commitment, Self::ProverData<M>) {
-        let tree =
-            UniformMerkleTree::new::<P, H, C, WIDTH, RATE>(&self.sponge, &self.compress, inputs)
-                .unwrap();
+        let tree = LiftedMerkleTree::new::<P, H, C, WIDTH, RATE>(
+            &self.sponge,
+            &self.compress,
+            self.lifting,
+            inputs,
+        )
+        .unwrap();
         let root = tree.root();
 
         (root, tree)
@@ -83,22 +97,8 @@ where
             "index {index} out of range {final_height}"
         );
 
-        let upsampled_matrices: Vec<_> = tree
-            .leaves
-            .iter()
-            .map(|m| m.lift_upsampled(final_height))
-            .collect();
-
         // Map to per-matrix indices and pad to RATE-aligned widths.
-        let opened_rows: Vec<Vec<P::Value>> = upsampled_matrices
-            .iter()
-            .map(|m| {
-                let padded_width = m.width().next_multiple_of(RATE);
-                let mut row: Vec<_> = m.row(index).expect("invalid index").into_iter().collect();
-                row.resize(padded_width, P::Value::default());
-                row
-            })
-            .collect();
+        let opened_rows = tree.rows(index, RATE);
 
         let mut proof = Vec::with_capacity(tree.digest_layers.len().saturating_sub(1));
         let mut layer_index = index;
@@ -258,7 +258,7 @@ mod tests {
     fn commit_open_verify_roundtrip() {
         let (sponge, compress) = components();
         let lmcs =
-            MerkleTreeLmcs::<P, _, _, WIDTH, RATE, DIGEST>::new(sponge.clone(), compress.clone());
+            MerkleTreeLmcs::<P, _, _, WIDTH, RATE, DIGEST>::new(sponge.clone(), compress.clone(), Lifting::Upsample);
 
         let mut rng = SmallRng::seed_from_u64(9);
         let matrices = vec![

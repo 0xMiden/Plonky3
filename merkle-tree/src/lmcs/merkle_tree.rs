@@ -4,15 +4,90 @@ use core::array;
 use core::marker::PhantomData;
 
 use p3_field::PackedValue;
-use p3_matrix::{Dimensions, Matrix};
+use p3_matrix::Matrix;
+// use p3_matrix::lifted::LiftableMatrix;
 use p3_maybe_rayon::prelude::{
     IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelSliceMut,
 };
 use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulSponge};
+use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
 
-use super::utils::{pack_arrays, unpack_array_into, validate_heights};
+use super::utils::{pack_arrays, pad_rows, unpack_array_into, validate_heights};
 use crate::LmcsError;
+
+/// Lifting method used to align matrices of different heights to a common height.
+///
+/// Consider matrices `M_0, …, M_{t-1}` with heights `h_0 ≤ h_1 ≤ … ≤ h_{t-1}` (each a power of
+/// two), and let `H = h_{t-1}`. For each matrix `M_i`, lifting defines a row-index mapping
+/// `f_i: {0,…,H-1} → {0,…,h_i-1}` and thereby a virtual height-`H` matrix `M_i^↑` of the same
+/// width, whose `r`-th row is `row_{f_i(r)}(M_i)`. In other words, lifting “extends” each matrix
+/// vertically to height `H` without changing its width. The LMCS leaf at position `r` then uses,
+/// in order, the row `r` from each lifted matrix `M_i^↑` as input to the sponge (with per-matrix
+/// zero padding to a multiple of `RATE` for absorption).
+///
+/// Two canonical choices for `f_i` are supported:
+/// - Upsample (nearest-neighbor): each original row is repeated contiguously
+///   `s_i = H / h_i` times; with `s_i = 2^k`, we have `f_i(r) = r >> k = floor(r / s_i)`.
+/// - Cyclic: the entire `h_i`-row matrix is repeated periodically until height `H`;
+///   equivalently `f_i(r) = r mod h_i = r & (h_i - 1)`.
+///
+/// Example (h_i = 4, H = 8):
+/// - Original rows of `M_i`: `[r0, r1, r2, r3]`.
+/// - Upsample (s_i = 2): `M_i^↑` rows by index `r = 0..7` are
+///   `[r0, r0, r1, r1, r2, r2, r3, r3]` (blocks of length 2).
+/// - Cyclic: `M_i^↑` rows are `[r0, r1, r2, r3, r0, r1, r2, r3]` (period 4).
+///
+/// Summary view:
+/// - Upsample lifting: virtually extend by repeating each row `s_i` times (blocks of identical
+///   rows), width unchanged.
+/// - Cyclic lifting: virtually extend by tiling the `h_i` original rows `s_i` times, width
+///   unchanged.
+///
+/// The implementation realizes these semantics incrementally by maintaining one sponge state per
+/// final row `r ∈ [0, H)`. As taller matrices are processed, states are duplicated contiguously
+/// (upsample) or tiled in cycles (cyclic) so that each state continues to absorb
+/// `row_{f_i(r)}(M_i)` from the current matrix’s virtual extension.
+///
+/// Power-of-two requirement: All matrix heights and the final height `H` must be powers of two.
+/// The implementation relies on this (via bit-shifts and masks) and rejects non-powers-of-two.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum Lifting {
+    /// Nearest-neighbor upsampling. For a matrix of height `h` lifted to `H`, each original row is
+    /// duplicated contiguously `s = H / h` times, and the lifted index map is
+    /// `r ↦ floor(r / s)` (with `s` a power of two). This produces blocks of identical rows.
+    Upsample,
+    /// Cyclic repetition. For a matrix of height `h` lifted to `H`, the lifted index map is
+    /// `r ↦ r mod h`, i.e. rows repeat with period `h` across the final height.
+    Cyclic,
+}
+
+impl Lifting {
+    /// Map a final leaf row index `index ∈ [0, max_height)` to the corresponding row index of a
+    /// particular matrix of height `height`, according to this lifting.
+    ///
+    /// Preconditions:
+    /// - `height` and `max_height` are powers of two with `height ≤ max_height`.
+    /// - `index < max_height`.
+    ///
+    /// Semantics:
+    /// - Upsample: returns `floor(index / (max_height / height))`.
+    /// - Cyclic: returns `index mod height`.
+    pub fn map_index(&self, index: usize, height: usize, max_height: usize) -> usize {
+        assert!(index < max_height);
+        assert!(height.is_power_of_two());
+        assert!(max_height.is_power_of_two());
+        assert!(height <= max_height);
+
+        match self {
+            Self::Upsample => {
+                let log_scaling_factor = log2_strict_usize(max_height / height);
+                index >> log_scaling_factor
+            }
+            Self::Cyclic => index & (height - 1),
+        }
+    }
+}
 
 /// A uniform binary Merkle tree whose leaves are constructed from matrices with power-of-two heights.
 ///
@@ -25,9 +100,18 @@ use crate::LmcsError;
 /// - **Matrices must be sorted by height** (shortest to tallest)
 /// - Uses incremental hashing via [`StatefulSponge`] instead of one-shot hashing
 ///
-/// The tree construction uses state upsampling: as matrices grow in height, sponge states
-/// duplicate to match the new height before absorbing additional rows. This ensures
-/// uniform tree structure where all leaves at the same level have consistent hash state history.
+/// The per-leaf row composition follows the chosen [`Lifting`]: each matrix `M_i` is virtually
+/// extended to height `H` (width unchanged) via the index map described in [`Lifting`]. For leaf
+/// row `r`, the sponge absorbs the `r`-th row from each lifted matrix in sequence (with
+/// per-matrix zero padding to a multiple of `RATE` for absorption).
+///
+/// Equivalent single-matrix view: this commitment is equivalent to first forming a single
+/// height-`H` matrix by (a) lifting every input matrix to height `H` (per [`Lifting`]), (b)
+/// padding each lifted matrix horizontally with zero columns so each width is a multiple of
+/// `RATE`, and (c) concatenating the results side-by-side. The leaf digest at row `r` is then the
+/// sponge of that single concatenated matrix’s row `r`. From the verifier’s perspective, the two
+/// constructions are indistinguishable: verification absorbs the same padded row segments in the
+/// same order and checks the same Merkle path.
 ///
 /// Since [`StatefulSponge`] operates on a single field type, this tree uses the same type `F`
 /// for both matrix elements and digest words, unlike `MerkleTree` which can hash `F → W`.
@@ -37,7 +121,7 @@ use crate::LmcsError;
 /// This generally shouldn't be used directly. If you're using a Merkle tree as an MMCS,
 /// see the MMCS wrapper types.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct UniformMerkleTree<F, M, const DIGEST_ELEMS: usize> {
+pub struct LiftedMerkleTree<F, M, const DIGEST_ELEMS: usize> {
     /// All leaf matrices in insertion order.
     ///
     /// Matrices must be sorted by height (shortest to tallest) and all heights must be
@@ -62,12 +146,14 @@ pub struct UniformMerkleTree<F, M, const DIGEST_ELEMS: usize> {
     )]
     pub(crate) digest_layers: Vec<Vec<[F; DIGEST_ELEMS]>>,
 
+    pub(crate) lifting: Lifting,
+
     /// Zero-sized marker for type safety.
     _phantom: PhantomData<M>,
 }
 
 impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: usize>
-    UniformMerkleTree<F, M, DIGEST_ELEMS>
+    LiftedMerkleTree<F, M, DIGEST_ELEMS>
 {
     /// Build a uniform tree from **one or more matrices** with power-of-two heights.
     ///
@@ -98,13 +184,20 @@ impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: 
     >(
         h: &H,
         c: &C,
+        lifting: Lifting,
         leaves: Vec<M>,
     ) -> Result<Self, LmcsError> {
         assert!(!leaves.is_empty(), "No matrices given");
 
         // Build leaf digests from matrices using the sponge
-        let leaf_digests =
-            build_leaves_upsampled::<P, M, H, WIDTH, RATE, DIGEST_ELEMS>(&leaves, h)?;
+        let leaf_digests = match lifting {
+            Lifting::Upsample => {
+                build_leaves_upsampled::<P, M, H, WIDTH, RATE, DIGEST_ELEMS>(&leaves, h)
+            }
+            Lifting::Cyclic => {
+                build_leaves_cyclic::<P, M, H, WIDTH, RATE, DIGEST_ELEMS>(&leaves, h)
+            }
+        }?;
 
         // Build digest layers by repeatedly compressing until we reach the root
         let mut digest_layers = vec![leaf_digests];
@@ -122,6 +215,7 @@ impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: 
         Ok(Self {
             leaves,
             digest_layers,
+            lifting,
             _phantom: PhantomData,
         })
     }
@@ -131,22 +225,28 @@ impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: 
     pub fn root(&self) -> Hash<F, F, DIGEST_ELEMS> {
         self.digest_layers.last().unwrap()[0].into()
     }
+
+    pub fn rows(&self, index: usize, padding_multiple: usize) -> Vec<Vec<F>> {
+        let max_height = self.leaves.last().unwrap().height();
+        let mut rows = Vec::with_capacity(self.leaves.len());
+
+        for m in &self.leaves {
+            let row_index = self.lifting.map_index(index, m.height(), max_height);
+            let row = m.row_slice(row_index).unwrap().to_vec();
+
+            rows.push(row);
+        }
+        pad_rows(rows, padding_multiple)
+    }
 }
 
-/// Build leaf digests using an upsampled (nearest-neighbor) view of each matrix.
+/// Build leaf digests using the upsampled view; see [`Lifting::Upsample`] for semantics.
+/// Conceptually, each matrix is virtually extended to height `H` by repeating each row
+/// `L = H / h` times (width unchanged), and the leaf `r` absorbs the `r`-th row from each
+/// extended matrix in order. Each absorbed row is virtually padded with zeros to a multiple of
+/// `RATE` for absorption; see [`LiftedMerkleTree`] docs for the equivalent single-matrix view.
 ///
-/// Conceptually, fix `H` to be the tallest input height. For a matrix with height `h`, define its
-/// upsampled lifting to `H` by duplicating each original row into `H / h` consecutive rows. For
-/// every final row index `r ∈ [0, H)`, form a single long row by horizontally concatenating the
-/// rows at index `r` from all upsampled matrices (padding each matrix's width up to a multiple of
-/// `RATE` with zeros). The digest for leaf `r` is the `squeeze` of a sponge that has `absorb`ed
-/// exactly that long row.
-///
-/// This function produces the same result as the above “single concatenated matrix” definition,
-/// but does so incrementally: it maintains one sponge state per final row and, as heights grow,
-/// duplicates those states so that the per-row histories remain aligned with the upsampled view.
-///
-/// # Preconditions:
+/// # Preconditions
 /// - `matrices` is non-empty and sorted by non-decreasing power-of-two heights.
 /// - `P::WIDTH` is a power of two.
 ///
@@ -211,19 +311,13 @@ pub fn build_leaves_upsampled<
         .collect())
 }
 
-/// Build leaf digests using a cyclic (modulo) view of each matrix.
+/// Build leaf digests using the cyclic view; see [`Lifting::Cyclic`] for semantics.
+/// Conceptually, each matrix is virtually extended to height `H` by repeating its `h` rows
+/// `L = H / h` times in a cycle (width unchanged), and the leaf `r` absorbs the `r`-th row from
+/// each extended matrix in order. Each absorbed row is virtually padded with zeros to a multiple
+/// of `RATE` for absorption; see [`LiftedMerkleTree`] docs for the equivalent single-matrix view.
 ///
-/// Let `H` be the tallest input height. For a matrix of height `h`, define its cyclic lifting to
-/// `H` by mapping row index `r` to the original row `(r mod h)`. For every final row `r ∈ [0, H)`,
-/// form one long row by horizontally concatenating the rows at index `r mod h_i` from all
-/// matrices `i` (padding each matrix's width to a multiple of `RATE` with zeros). The digest for
-/// leaf `r` is the `squeeze` of a sponge that has `absorb`ed exactly that long row.
-///
-/// This function realizes that semantics incrementally by keeping one running sponge state per
-/// final row and, whenever the working height increases, duplicating the accumulated states so
-/// that each new row range inherits the same history as its modulo counterpart.
-///
-/// # Preconditions:
+/// # Preconditions
 /// - `matrices` is non-empty and sorted by non-decreasing power-of-two heights.
 /// - `P::WIDTH` is a power of two.
 ///
@@ -376,17 +470,17 @@ fn compress_uniform<
 mod tests {
     use alloc::vec::Vec;
 
-    use p3_matrix::Matrix;
     use p3_matrix::bitrev::BitReversibleMatrix;
     use p3_matrix::dense::RowMajorMatrix;
-    use p3_matrix::lifted::LiftableMatrix;
+    use p3_matrix::{Dimensions, Matrix};
     use p3_util::reverse_slice_index_bits;
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
+    use crate::lmcs::merkle_tree::Lifting;
     use crate::lmcs::test_helpers::{
         DIGEST, F, P, RATE, Sponge, build_leaves_single, components, concatenate_matrices,
-        matrix_scenarios, rand_matrix,
+        lift_matrix, matrix_scenarios, rand_matrix,
     };
 
     fn build_leaves_cyclic(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
@@ -407,6 +501,10 @@ mod tests {
                 .into_iter()
                 .map(|(h, w)| rand_matrix(h, w, &mut rng))
                 .collect();
+            let matrices_bitreversed: Vec<_> = matrices
+                .iter()
+                .map(|m: &RowMajorMatrix<F>| m.as_view().bit_reverse_rows().to_row_major_matrix())
+                .collect();
 
             let max_height = matrices.last().unwrap().height();
 
@@ -416,9 +514,7 @@ mod tests {
 
                 let matrices_cyclic: Vec<_> = matrices
                     .iter()
-                    .map(|m: &RowMajorMatrix<F>| {
-                        m.as_view().lift_cyclic(max_height).to_row_major_matrix()
-                    })
+                    .map(|m: &RowMajorMatrix<F>| lift_matrix(m, Lifting::Cyclic, max_height))
                     .collect();
                 let leaves_lifted = build_leaves_cyclic(&matrices_cyclic, &sponge);
                 assert_eq!(leaves, leaves_lifted);
@@ -426,6 +522,10 @@ mod tests {
                 let matrix_single = concatenate_matrices::<RATE>(&matrices_cyclic);
                 let leaves_single = build_leaves_single(&matrix_single, &sponge);
                 assert_eq!(leaves, leaves_single);
+
+                let mut leaves_bitreversed = build_leaves_upsampled(&matrices_bitreversed, &sponge);
+                reverse_slice_index_bits(&mut leaves_bitreversed);
+                assert_eq!(leaves, leaves_bitreversed);
             }
 
             // Upsampled path equivalence vs explicit upsampled lifting and single-concat baseline
@@ -434,9 +534,7 @@ mod tests {
 
                 let matrices_upsampled: Vec<_> = matrices
                     .iter()
-                    .map(|m: &RowMajorMatrix<F>| {
-                        m.as_view().lift_upsampled(max_height).to_row_major_matrix()
-                    })
+                    .map(|m: &RowMajorMatrix<F>| lift_matrix(m, Lifting::Upsample, max_height))
                     .collect();
                 let leaves_lifted = build_leaves_upsampled(&matrices_upsampled, &sponge);
                 assert_eq!(leaves, leaves_lifted);
@@ -445,26 +543,8 @@ mod tests {
                 let leaves_single = build_leaves_single(&matrix_single, &sponge);
                 assert_eq!(leaves, leaves_single);
 
-                let matrices_bitreversed: Vec<_> = matrices
-                    .iter()
-                    .map(|m| m.as_view().bit_reverse_rows().to_row_major_matrix())
-                    .collect();
                 let mut leaves_bitreversed = build_leaves_cyclic(&matrices_bitreversed, &sponge);
                 reverse_slice_index_bits(&mut leaves_bitreversed);
-                assert_eq!(leaves, leaves_bitreversed);
-            }
-
-            // Bit-reverse property: reverse rows, use upsampled, then reverse leaves
-            {
-                let matrices_bitreversed: Vec<_> = matrices
-                    .iter()
-                    .map(|m: &RowMajorMatrix<F>| {
-                        m.as_view().bit_reverse_rows().to_row_major_matrix()
-                    })
-                    .collect();
-                let mut leaves_bitreversed = build_leaves_upsampled(&matrices_bitreversed, &sponge);
-                reverse_slice_index_bits(&mut leaves_bitreversed);
-                let leaves = build_leaves_cyclic(&matrices, &sponge);
                 assert_eq!(leaves, leaves_bitreversed);
             }
         }

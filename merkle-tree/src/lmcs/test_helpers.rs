@@ -3,11 +3,13 @@ use alloc::vec::Vec;
 
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_field::{Field, PackedValue, PrimeCharacteristicRing};
-use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::{Dimensions, Matrix};
 use p3_symmetric::{PaddingFreeSponge, StatefulSponge, TruncatedPermutation};
 use rand::rngs::SmallRng;
 use rand::{RngCore, SeedableRng};
+
+use crate::lmcs::merkle_tree::Lifting;
 
 pub(crate) type F = BabyBear;
 pub(crate) type P = <F as Field>::Packing;
@@ -85,4 +87,19 @@ pub(crate) fn matrix_scenarios() -> Vec<Vec<(usize, usize)>> {
         vec![(4, RATE - 1), (4, RATE), (8, RATE + 3), (8, RATE * 2)],
         vec![(pack_width * 2, RATE - 1)],
     ]
+}
+
+pub(crate) fn lift_matrix(
+    matrix: &RowMajorMatrix<F>,
+    lifting: Lifting,
+    max_height: usize,
+) -> RowMajorMatrix<F> {
+    let Dimensions { height, width } = matrix.dimensions();
+    let data = (0..max_height)
+        .flat_map(|index| {
+            let mapped_index = lifting.map_index(index, height, max_height);
+            matrix.row(mapped_index).unwrap()
+        })
+        .collect();
+    RowMajorMatrix::new(data, width)
 }
