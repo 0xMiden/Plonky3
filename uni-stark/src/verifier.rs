@@ -250,8 +250,6 @@ where
     }
 
     // Observe the instance.
-    // challenger.observe(Val::<SC>::from_usize(proof.degree_bits));
-    // challenger.observe(Val::<SC>::from_usize(proof.degree_bits - config.is_zk()));
     challenger.observe(Val::<SC>::from_usize(proof.degree_bits));
     challenger.observe(Val::<SC>::from_usize(proof.degree_bits - config.is_zk()));
     challenger.observe(Val::<SC>::from_usize(preprocessed_width));
@@ -262,20 +260,9 @@ where
     // collision, since most such changes would completely change the set of satisfying witnesses.
 
     challenger.observe(commitments.trace.clone());
-    // Observe the instance.
-    // challenger.observe(Val::<SC>::from_usize(proof.degree_bits));
-    // challenger.observe(Val::<SC>::from_usize(proof.degree_bits - config.is_zk()));
-    // challenger.observe(Val::<SC>::from_usize(preprocessed_width));
-    // // TODO: Might be best practice to include other instance data here in the transcript, like some
-    // // encoding of the AIR. This protects against transcript collisions between distinct instances.
-    // // Practically speaking though, the only related known attack is from failing to include public
-    // // values. It's not clear if failing to include other instance data could enable a transcript
-    // // collision, since most such changes would completely change the set of satisfying witnesses.
-    // challenger.observe(commitments.trace.clone());
     if preprocessed_width > 0 {
         challenger.observe(preprocessed_commit.as_ref().unwrap().clone());
     }
-    // challenger.observe_slice(public_values);
     challenger.observe_slice(public_values);
 
     // begin processing aux trace (optional)
@@ -331,8 +318,6 @@ where
     //
     // Soundness Error: n/|EF| where n is the number of constraints.
     let alpha = challenger.sample_algebra_element();
-
-    ark_std::println!("alpha: {:?}", alpha);
 
     challenger.observe(commitments.quotient_chunks.clone());
 
@@ -454,62 +439,6 @@ where
         quotient,
     )?;
 
-    // let sels = trace_domain.selectors_at_point(zeta);
-
-    // let main = VerticalPair::new(
-    //     RowMajorMatrixView::new_row(&opened_values.trace_local),
-    //     RowMajorMatrixView::new_row(&opened_values.trace_next),
-    // );
-
-    // let preprocessed = match (
-    //     &opened_values.preprocessed_local,
-    //     &opened_values.preprocessed_next,
-    // ) {
-    //     (Some(local), Some(next)) => Some(VerticalPair::new(
-    //         RowMajorMatrixView::new_row(local),
-    //         RowMajorMatrixView::new_row(next),
-    //     )),
-    //     _ => None,
-    // };
-
-    // let aux = match (
-    //     &opened_values.aux_trace_local,
-    //     &opened_values.aux_trace_next,
-    // ) {
-    //     (Some(local), Some(next)) => VerticalPair::new(
-    //         RowMajorMatrixView::new_row(local),
-    //         RowMajorMatrixView::new_row(next),
-    //     ),
-    //     _ => {
-    //         // Create an empty ViewPair with zero width
-    //         let empty: &[SC::Challenge] = &[];
-    //         VerticalPair::new(
-    //             RowMajorMatrixView::new_row(empty),
-    //             RowMajorMatrixView::new_row(empty),
-    //         )
-    //     }
-    // };
-
-    // let mut folder = VerifierConstraintFolder {
-    //     main,
-    //     aux,
-    //     randomness: &randomness,
-    //     public_values,
-    //     preprocessed,
-    //     is_first_row: sels.is_first_row,
-    //     is_last_row: sels.is_last_row,
-    //     is_transition: sels.is_transition,
-    //     alpha,
-    //     accumulator: SC::Challenge::ZERO,
-    // };
-
-    // air.eval(&mut folder);
-    // let folded_constraints = folder.accumulator;
-    // // Finally, check that
-    // //     folded_constraints(zeta) / Z_H(zeta) = quotient(zeta)
-    // if folded_constraints * sels.inv_vanishing != quotient {
-    //     return Err(VerificationError::OodEvaluationMismatch { index: None });
-    // }
     Ok(())
 }
 

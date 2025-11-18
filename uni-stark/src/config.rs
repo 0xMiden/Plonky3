@@ -50,13 +50,7 @@ pub trait StarkGenericConfig {
     }
 }
 
-pub struct StarkConfig<Pcs, Challenge, Challenger>
-where
-    Pcs: p3_commit::Pcs<Challenge, Challenger>,
-    Challenge: ExtensionField<
-        <<Pcs as p3_commit::Pcs<Challenge, Challenger>>::Domain as PolynomialSpace>::Val,
-    >,
-{
+pub struct StarkConfig<Pcs, Challenge, Challenger> {
     /// The PCS used to commit polynomials and prove opening proofs.
     pcs: Pcs,
     /// An initialised instance of the challenger.
@@ -65,13 +59,7 @@ where
     _phantom: PhantomData<Challenge>,
 }
 
-impl<Pcs, Challenge, Challenger> StarkConfig<Pcs, Challenge, Challenger>
-where
-    Pcs: p3_commit::Pcs<Challenge, Challenger>,
-    Challenge: ExtensionField<
-        <<Pcs as p3_commit::Pcs<Challenge, Challenger>>::Domain as PolynomialSpace>::Val,
-    >,
-{
+impl<Pcs, Challenge, Challenger> StarkConfig<Pcs, Challenge, Challenger> {
     pub const fn new(pcs: Pcs, challenger: Challenger) -> Self {
         Self {
             pcs,

@@ -55,10 +55,6 @@ where
         + for<'a> Air<ProverConstraintFolder<'a, SC>>
         + BaseAirWithAuxTrace<Val<SC>, SC::Challenge>,
 {
-    // Note: constraint checking is done after aux trace generation (see line ~173)
-    // #[cfg(debug_assertions)]
-    // crate::check_constraints::check_constraints(air, &trace, public_values);
-
     // Compute the height `N = 2^n` and `log_2(height)`, `n`, of the trace.
     let degree = trace.height();
     let log_degree = log2_strict_usize(degree);
@@ -70,13 +66,13 @@ where
 
     // Compute the constraint polynomials as vectors of symbolic expressions.
     let aux_width_base = air.aux_width();
-    let num_randomness_base = air.num_randomness() * SC::Challenge::DIMENSION;
+    let num_randomness = air.num_randomness();
     let symbolic_constraints = get_symbolic_constraints(
         air,
         preprocessed_width,
         public_values.len(),
         aux_width_base,
-        num_randomness_base,
+        num_randomness,
     );
 
     // Count the number of constraints that we have.
@@ -121,7 +117,7 @@ where
         public_values.len(),
         config.is_zk(),
         aux_width_base,
-        num_randomness_base,
+        num_randomness,
     );
     let quotient_degree = 1 << (log_quotient_degree + config.is_zk());
 
@@ -241,7 +237,6 @@ where
     // a soundness issue.
     let alpha: SC::Challenge = challenger.sample_algebra_element();
 
-    ark_std::println!("alpha: {:?}", alpha);
     // A domain large enough to uniquely identify the quotient polynomial.
     // This domain must be contained in the domain over which `trace_data` is defined.
     // Explicitly it should be equal to `gK` for some subgroup `K` contained in `H'`.
