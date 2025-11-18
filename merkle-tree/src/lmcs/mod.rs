@@ -14,9 +14,8 @@ mod merkle_tree;
 mod test_helpers;
 mod utils;
 
-pub use merkle_tree::{LiftedMerkleTree, build_leaves_cyclic, build_leaves_upsampled};
+pub use merkle_tree::{LiftedMerkleTree, build_leaves_cyclic, build_leaves_upsampled, Lifting};
 
-use crate::lmcs::merkle_tree::Lifting;
 use crate::lmcs::utils::validate_heights;
 
 /// Lifted MMCS built on top of [`LiftedMerkleTree`].
