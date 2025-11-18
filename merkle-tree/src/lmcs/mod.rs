@@ -77,7 +77,7 @@ where
         index: usize,
         tree: &Self::ProverData<M>,
     ) -> BatchOpening<P::Value, Self> {
-        let final_height = tree.leaves.last().unwrap().width();
+        let final_height = tree.leaves.last().unwrap().height();
         assert!(
             index < final_height,
             "index {index} out of range {final_height}"
