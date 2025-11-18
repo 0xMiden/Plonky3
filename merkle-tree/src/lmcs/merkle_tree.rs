@@ -470,9 +470,9 @@ fn compress_uniform<
 mod tests {
     use alloc::vec::Vec;
 
+    use p3_matrix::Matrix;
     use p3_matrix::bitrev::BitReversibleMatrix;
     use p3_matrix::dense::RowMajorMatrix;
-    use p3_matrix::{Dimensions, Matrix};
     use p3_util::reverse_slice_index_bits;
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
