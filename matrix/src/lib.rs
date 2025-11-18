@@ -500,6 +500,212 @@ pub trait Matrix<T: Send + Sync + Clone>: Send + Sync {
     }
 }
 
+// Allow creating matrix views over references by forwarding `Matrix` methods to the underlying
+// matrix implementation. This enables using `&M` anywhere an `M: Matrix<T>` is expected,
+// which is useful for lightweight views like lifted/strided without moving or cloning.
+impl<'a, T, M> Matrix<T> for &'a M
+where
+    T: Send + Sync + Clone,
+    M: Matrix<T> + ?Sized,
+{
+    #[inline]
+    fn width(&self) -> usize {
+        (*self).width()
+    }
+
+    #[inline]
+    fn height(&self) -> usize {
+        (*self).height()
+    }
+
+    #[inline]
+    fn get(&self, r: usize, c: usize) -> Option<T> {
+        (*self).get(r, c)
+    }
+
+    #[inline]
+    unsafe fn get_unchecked(&self, r: usize, c: usize) -> T {
+        // Safety: Follows the contract of the underlying matrix method.
+        unsafe { (*self).get_unchecked(r, c) }
+    }
+
+    #[inline]
+    fn row(
+        &self,
+        r: usize,
+    ) -> Option<impl IntoIterator<Item = T, IntoIter = impl Iterator<Item = T> + Send + Sync>> {
+        (*self).row(r)
+    }
+
+    #[inline]
+    unsafe fn row_unchecked(
+        &self,
+        r: usize,
+    ) -> impl IntoIterator<Item = T, IntoIter = impl Iterator<Item = T> + Send + Sync> {
+        // Safety: Follows the contract of the underlying matrix method.
+        unsafe { (*self).row_unchecked(r) }
+    }
+
+    #[inline]
+    unsafe fn row_subseq_unchecked(
+        &self,
+        r: usize,
+        start: usize,
+        end: usize,
+    ) -> impl IntoIterator<Item = T, IntoIter = impl Iterator<Item = T> + Send + Sync> {
+        // Safety: Follows the contract of the underlying matrix method.
+        unsafe { (*self).row_subseq_unchecked(r, start, end) }
+    }
+
+    #[inline]
+    fn row_slice(&self, r: usize) -> Option<impl Deref<Target = [T]>> {
+        (*self).row_slice(r)
+    }
+    #[inline]
+    unsafe fn row_slice_unchecked(&self, r: usize) -> impl Deref<Target = [T]> {
+        // Safety: Follows the contract of the underlying matrix method.
+        unsafe { (*self).row_slice_unchecked(r) }
+    }
+
+    #[inline]
+    unsafe fn row_subslice_unchecked(
+        &self,
+        r: usize,
+        start: usize,
+        end: usize,
+    ) -> impl Deref<Target = [T]> {
+        // Safety: Follows the contract of the underlying matrix method.
+        unsafe { (*self).row_subslice_unchecked(r, start, end) }
+    }
+
+    #[inline]
+    fn rows(&self) -> impl Iterator<Item = impl Iterator<Item = T>> + Send + Sync {
+        (*self).rows()
+    }
+
+    #[inline]
+    fn par_rows(
+        &self,
+    ) -> impl IndexedParallelIterator<
+        Item = impl Iterator<Item = T>,
+    > + Send
+           + Sync {
+        (*self).par_rows()
+    }
+
+    #[inline]
+    fn wrapping_row_slices(&self, r: usize, c: usize) -> Vec<impl Deref<Target = [T]>> {
+        (*self).wrapping_row_slices(r, c)
+    }
+
+    #[inline]
+    fn first_row(
+        &self,
+    ) -> Option<impl IntoIterator<Item = T, IntoIter = impl Iterator<Item = T> + Send + Sync>> {
+        (*self).first_row()
+    }
+
+    #[inline]
+    fn last_row(
+        &self,
+    ) -> Option<impl IntoIterator<Item = T, IntoIter = impl Iterator<Item = T> + Send + Sync>> {
+        (*self).last_row()
+    }
+
+    #[inline]
+    fn horizontally_packed_row<'b, P>(
+        &'b self,
+        r: usize,
+    ) -> (
+        impl Iterator<Item = P> + Send + Sync,
+        impl Iterator<Item = T> + Send + Sync,
+    )
+    where
+        P: PackedValue<Value = T>,
+        T: Clone + 'b,
+    {
+        (*self).horizontally_packed_row::<P>(r)
+    }
+
+    #[inline]
+    fn padded_horizontally_packed_row<'b, P>(
+        &'b self,
+        r: usize,
+    ) -> impl Iterator<Item = P> + Send + Sync
+    where
+        P: PackedValue<Value = T>,
+        T: Clone + Default + 'b,
+    {
+        (*self).padded_horizontally_packed_row::<P>(r)
+    }
+
+    #[inline]
+    fn par_horizontally_packed_rows<'b, P>(
+        &'b self,
+    ) -> impl IndexedParallelIterator<
+        Item = (
+            impl Iterator<Item = P> + Send + Sync,
+            impl Iterator<Item = T> + Send + Sync,
+        ),
+    >
+    where
+        P: PackedValue<Value = T>,
+        T: Clone + 'b,
+    {
+        (*self).par_horizontally_packed_rows::<P>()
+    }
+
+    #[inline]
+    fn par_padded_horizontally_packed_rows<'b, P>(
+        &'b self,
+    ) -> impl IndexedParallelIterator<Item = impl Iterator<Item = P> + Send + Sync>
+    where
+        P: PackedValue<Value = T>,
+        T: Clone + Default + 'b,
+    {
+        (*self).par_padded_horizontally_packed_rows::<P>()
+    }
+
+    #[inline]
+    fn vertically_packed_row<P>(&self, r: usize) -> impl Iterator<Item = P>
+    where
+        T: Copy,
+        P: PackedValue<Value = T>,
+    {
+        (*self).vertically_packed_row::<P>(r)
+    }
+
+    #[inline]
+    fn vertically_packed_row_pair<P>(&self, r: usize, step: usize) -> Vec<P>
+    where
+        T: Copy,
+        P: PackedValue<Value = T>,
+    {
+        (*self).vertically_packed_row_pair::<P>(r, step)
+    }
+
+    #[inline]
+    fn columnwise_dot_product<EF>(&self, v: &[EF]) -> Vec<EF>
+    where
+        T: Field,
+        EF: ExtensionField<T>,
+    {
+        (*self).columnwise_dot_product::<EF>(v)
+    }
+
+    #[inline]
+    fn rowwise_packed_dot_product<EF>(
+        &self,
+        vec: &[<EF as ExtensionField<T>>::ExtensionPacking],
+    ) -> impl IndexedParallelIterator<Item = EF>
+    where
+        T: Field,
+        EF: ExtensionField<T>,
+    {
+        (*self).rowwise_packed_dot_product::<EF>(vec)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;

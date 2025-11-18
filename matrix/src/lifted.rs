@@ -195,6 +195,31 @@ mod tests {
     }
 
     #[test]
+    fn lift_cyclic_view_from_ref() {
+        let matrix = RowMajorMatrix::new((0u32..8).collect::<Vec<_>>(), 2);
+
+        // Use the extension trait on a reference
+        let view_ref = (&matrix).lift_cyclic(16);
+        assert_eq!(view_ref.height(), 16);
+        assert_eq!(view_ref.width(), matrix.width());
+
+        for row in 0..view_ref.height() {
+            let expected_row: Vec<_> = matrix
+                .row(row % matrix.height())
+                .unwrap()
+                .into_iter()
+                .collect();
+            let actual_row: Vec<_> = view_ref.row(row).unwrap().into_iter().collect();
+            assert_eq!(actual_row, expected_row, "row {}", row);
+        }
+
+        // Use the explicit constructor directly with a reference
+        let explicit = super::CyclicLiftIndexMap::new_view(&matrix, 16);
+        assert_eq!(explicit.height(), 16);
+        assert_eq!(explicit.width(), matrix.width());
+    }
+
+    #[test]
     fn lift_upsampled_view_duplicates_rows() {
         let matrix = RowMajorMatrix::new((0u32..8).collect::<Vec<_>>(), 2);
         let view = matrix.clone().lift_upsampled(16);
@@ -209,6 +234,28 @@ mod tests {
             let actual_row: Vec<_> = view.row(row).unwrap().into_iter().collect();
             assert_eq!(actual_row, expected_row, "row {}", row);
         }
+    }
+
+    #[test]
+    fn lift_upsampled_view_from_ref() {
+        let matrix = RowMajorMatrix::new((0u32..8).collect::<Vec<_>>(), 2);
+        let scaling = 16 / matrix.height();
+
+        // Use the extension trait on a reference
+        let view_ref = (&matrix).lift_upsampled(16);
+        assert_eq!(view_ref.height(), 16);
+        assert_eq!(view_ref.width(), matrix.width());
+        for row in 0..view_ref.height() {
+            let base_row = row / scaling;
+            let expected_row: Vec<_> = matrix.row(base_row).unwrap().into_iter().collect();
+            let actual_row: Vec<_> = view_ref.row(row).unwrap().into_iter().collect();
+            assert_eq!(actual_row, expected_row, "row {}", row);
+        }
+
+        // Use the explicit constructor directly with a reference
+        let explicit = super::UpsampledLiftIndexMap::new_view(&matrix, 16);
+        assert_eq!(explicit.height(), 16);
+        assert_eq!(explicit.width(), matrix.width());
     }
 
     #[test]
