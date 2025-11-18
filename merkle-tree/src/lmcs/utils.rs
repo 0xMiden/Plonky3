@@ -1,9 +1,25 @@
+use alloc::vec::Vec;
 use core::array;
 
 use p3_field::PackedValue;
 
 use crate::LmcsError;
 
+/// Validate a sequence of matrix heights for LMCS.
+///
+/// Requirements enforced:
+/// - Non-empty sequence (at least one matrix).
+/// - Every height is a power of two and non-zero.
+/// - Heights are in non-decreasing order (sorted by height), so the last height is the maximum
+///   `H` used by lifting.
+///
+/// Returns `Ok(())` if all checks pass; otherwise returns a specific [`LmcsError`]:
+/// - [`LmcsError::ZeroHeightMatrix`]
+/// - [`LmcsError::NonPowerOfTwoHeight`]
+/// - [`LmcsError::UnsortedByHeight`]
+/// - [`LmcsError::EmptyBatch`]
+///
+/// The `matrix` index in the errors refers to the position within the provided iterator.
 pub fn validate_heights(dims: impl IntoIterator<Item = usize>) -> Result<(), LmcsError> {
     let mut active_height = 0;
 
@@ -19,13 +35,26 @@ pub fn validate_heights(dims: impl IntoIterator<Item = usize>) -> Result<(), Lmc
         if height < active_height {
             return Err(LmcsError::UnsortedByHeight);
         }
-        active_height = height
+        active_height = height;
     }
 
     if active_height == 0 {
         return Err(LmcsError::EmptyBatch);
     }
     Ok(())
+}
+
+/// Pad each row to a multiple of `multiple` by appending default values.
+///
+/// Used to realize the LMCS “virtual horizontal zero-padding” when absorbing rows into the
+/// sponge in chunks of size `RATE`. For each row, extends its length to
+/// `row.len().next_multiple_of(multiple)` by appending `T::default()` values.
+pub fn pad_rows<T: Clone + Default>(mut rows: Vec<Vec<T>>, multiple: usize) -> Vec<Vec<T>> {
+    for row in rows.iter_mut() {
+        let padded_width = row.len().next_multiple_of(multiple);
+        row.resize(padded_width, T::default());
+    }
+    rows
 }
 
 /// Unpack a SIMD-packed array into multiple scalar arrays (one per SIMD lane).
