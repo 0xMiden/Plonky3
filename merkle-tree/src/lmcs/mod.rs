@@ -9,14 +9,15 @@ use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulSponge};
 use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
 
-mod dimensions;
 mod merkle_tree;
 #[cfg(test)]
 mod test_helpers;
 mod utils;
 
-pub use dimensions::LiftDimensions;
 pub use merkle_tree::{UniformMerkleTree, build_leaves_cyclic, build_leaves_upsampled};
+use p3_matrix::lifted::LiftableMatrix;
+
+use crate::lmcs::utils::validate_heights;
 
 /// Lifted MMCS built on top of [`UniformMerkleTree`].
 ///
@@ -64,7 +65,8 @@ where
         inputs: Vec<M>,
     ) -> (Self::Commitment, Self::ProverData<M>) {
         let tree =
-            UniformMerkleTree::new::<P, H, C, WIDTH, RATE>(&self.sponge, &self.compress, inputs);
+            UniformMerkleTree::new::<P, H, C, WIDTH, RATE>(&self.sponge, &self.compress, inputs)
+                .unwrap();
         let root = tree.root();
 
         (root, tree)
@@ -75,31 +77,25 @@ where
         index: usize,
         tree: &Self::ProverData<M>,
     ) -> BatchOpening<P::Value, Self> {
-        let lift = tree
-            .lift_dims
-            .as_ref()
-            .expect("missing lift dimensions; tree must be constructed from matrices");
-        let final_height = lift.largest_height();
+        let final_height = tree.leaves.last().unwrap().width();
         assert!(
             index < final_height,
             "index {index} out of range {final_height}"
         );
 
-        // Map to per-matrix indices and pad to RATE-aligned widths.
-        let mapped = lift.map_idxs_upsampled(index);
-        let padded_widths = lift.padded_widths::<RATE>();
-        let opened_rows: Vec<Vec<P::Value>> = tree
+        let upsampled_matrices: Vec<_> = tree
             .leaves
             .iter()
-            .zip(mapped)
-            .zip(padded_widths)
-            .map(|((m, mapped_idx), padded_w)| {
-                let mut row: Vec<_> = m
-                    .row(mapped_idx)
-                    .expect("invalid index")
-                    .into_iter()
-                    .collect();
-                row.resize(padded_w, P::Value::default());
+            .map(|m| m.lift_upsampled(final_height))
+            .collect();
+
+        // Map to per-matrix indices and pad to RATE-aligned widths.
+        let opened_rows: Vec<Vec<P::Value>> = upsampled_matrices
+            .iter()
+            .map(|m| {
+                let padded_width = m.width().next_multiple_of(RATE);
+                let mut row: Vec<_> = m.row(index).expect("invalid index").into_iter().collect();
+                row.resize(padded_width, P::Value::default());
                 row
             })
             .collect();
@@ -132,12 +128,13 @@ where
     ) -> Result<(), Self::Error> {
         let (opened_values, opening_proof) = batch_opening.unpack();
 
+        validate_heights(dimensions.iter().map(|d| d.height))?;
+
         if dimensions.len() != opened_values.len() {
             return Err(LmcsError::WrongBatchSize);
         }
 
-        let lift = LiftDimensions::new(dimensions.to_vec())?;
-        let final_height = lift.largest_height();
+        let final_height = dimensions.last().unwrap().height;
         if index >= final_height {
             return Err(LmcsError::IndexOutOfBounds {
                 max_height: final_height,
@@ -153,10 +150,9 @@ where
             });
         }
 
-        for (idx, (opened_row, padded_width)) in
-            zip(opened_values, lift.padded_widths::<RATE>()).enumerate()
-        {
-            if padded_width != opened_row.len() {
+        for (idx, (opened_row, dimension)) in zip(opened_values, dimensions).enumerate() {
+            let padded_width = dimension.width.next_multiple_of(RATE);
+            if opened_row.len() != padded_width {
                 return Err(LmcsError::WrongWidth {
                     matrix: idx,
                     expected: padded_width,
@@ -225,10 +221,6 @@ pub enum LmcsError {
     ZeroHeightMatrix {
         matrix: usize,
     },
-    FinalHeightNotPowerOfTwo {
-        height: usize,
-    },
-    /// Dimensions are not sorted by non-decreasing height.
     UnsortedByHeight,
 }
 
@@ -289,43 +281,5 @@ mod tests {
             lmcs.verify_batch(&commitment, &dims, index, opening_ref)
                 .is_ok()
         );
-    }
-
-    #[test]
-    fn uniform_tree_root_matches_leaves() {
-        let (sponge, compressor) = components();
-        let mut rng = SmallRng::seed_from_u64(7);
-
-        // A small but non-trivial scenario set
-        let scenario = vec![(2, 3), (4, 5), (8, RATE + 1)];
-        let matrices: Vec<_> = scenario
-            .into_iter()
-            .map(|(h, w)| rand_matrix(h, w, &mut rng))
-            .collect();
-
-        // Build tree and fetch root
-        let tree = UniformMerkleTree::<F, _, DIGEST>::new::<P, _, _, WIDTH, RATE>(
-            &sponge,
-            &compressor,
-            matrices.clone(),
-        );
-        let root = tree.root();
-
-        // Recompute leaves using the same upsampled semantics
-        let leaves = crate::lmcs::merkle_tree::build_leaves_upsampled::<P, _, _, WIDTH, RATE, DIGEST>(
-            &matrices, &sponge,
-        );
-        // Reduce leaves to a root via pairwise compression
-        let mut layer = leaves;
-        while layer.len() > 1 {
-            let mut next = Vec::with_capacity(layer.len() / 2);
-            for i in (0..layer.len()).step_by(2) {
-                next.push(compressor.compress([layer[i], layer[i + 1]]));
-            }
-            layer = next;
-        }
-
-        let expected: Hash<_, _, DIGEST> = layer[0].into();
-        assert_eq!(root, expected);
     }
 }

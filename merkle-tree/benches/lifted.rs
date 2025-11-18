@@ -82,7 +82,8 @@ fn bench_lifted(c: &mut Criterion) {
                     let out = build_leaves_cyclic::<Packed, _, _, WIDTH, RATE, DIGEST>(
                         black_box(&mats[..]),
                         black_box(&sponge),
-                    );
+                    )
+                    .unwrap();
                     black_box(out);
                 });
             },
@@ -96,7 +97,8 @@ fn bench_lifted(c: &mut Criterion) {
                     let out = build_leaves_upsampled::<Packed, _, _, WIDTH, RATE, DIGEST>(
                         black_box(&mats[..]),
                         black_box(&sponge),
-                    );
+                    )
+                    .unwrap();
                     black_box(out);
                 });
             },
@@ -114,7 +116,8 @@ fn bench_lifted(c: &mut Criterion) {
                     let mut out = build_leaves_cyclic::<Packed, _, _, WIDTH, RATE, DIGEST>(
                         black_box(&mats_bitrev[..]),
                         black_box(&sponge),
-                    );
+                    )
+                    .unwrap();
                     reverse_slice_index_bits(&mut out);
                     black_box(out);
                 });
