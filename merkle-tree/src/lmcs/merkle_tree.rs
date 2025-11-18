@@ -5,11 +5,14 @@ use core::marker::PhantomData;
 
 use p3_field::PackedValue;
 use p3_matrix::{Dimensions, Matrix};
-use p3_maybe_rayon::prelude::*;
+use p3_maybe_rayon::prelude::{
+    IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelSliceMut,
+};
 use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulSponge};
 use serde::{Deserialize, Serialize};
 
-use crate::lmcs::LmcsError;
+use super::dimensions::LiftDimensions;
+use super::utils::{pack_arrays, unpack_array_into};
 
 /// A uniform binary Merkle tree whose leaves are constructed from matrices with power-of-two heights.
 ///
@@ -238,6 +241,7 @@ pub fn build_leaves_upsampled<
 /// - `P::WIDTH` is a power of two.
 ///
 /// Panics in debug builds if preconditions are violated.
+#[allow(dead_code)]
 pub fn build_leaves_cyclic<
     P: PackedValue + Default,
     M: Matrix<P::Value>,
@@ -379,328 +383,111 @@ fn compress_uniform<
                 unpack_array_into(&packed_digest, digests_chunk);
             });
     }
-
     next_digests
-}
-
-/// Dimensions helper for lifting-related computations over a batch of matrices.
-#[derive(Clone, Debug)]
-pub struct LiftDimensions {
-    dims: Vec<Dimensions>,
-}
-
-impl LiftDimensions {
-    /// Construct and validate lifting dimensions.
-    ///
-    /// Returns an `LmcsError` when:
-    /// - The list is empty (`EmptyBatch`)
-    /// - Any height is zero (`ZeroHeightMatrix`)
-    /// - Any height is not a power of two (`NonPowerOfTwoHeight`)
-    /// - The final height is not a power of two (`FinalHeightNotPowerOfTwo`)
-    /// - A height does not divide the final height (`HeightNotDivisor`)
-    pub fn new(dims: Vec<Dimensions>) -> Result<Self, LmcsError> {
-        if dims.is_empty() {
-            return Err(LmcsError::EmptyBatch);
-        }
-
-        // Check non-decreasing heights order.
-        let heights_sorted = dims
-            .iter()
-            .zip(dims.iter().skip(1))
-            .all(|(a, b)| a.height <= b.height);
-        if !heights_sorted {
-            return Err(LmcsError::UnsortedByHeight);
-        }
-
-        // Compute the tallest height (input need not be pre-sorted before this step).
-        let mut max_height = 0usize;
-        for (i, d) in dims.iter().copied().enumerate() {
-            let h = d.height;
-            if h == 0 {
-                return Err(LmcsError::ZeroHeightMatrix { matrix: i });
-            }
-            if !h.is_power_of_two() {
-                return Err(LmcsError::NonPowerOfTwoHeight {
-                    matrix: i,
-                    height: h,
-                });
-            }
-            max_height = max_height.max(h);
-        }
-
-        if !max_height.is_power_of_two() {
-            return Err(LmcsError::FinalHeightNotPowerOfTwo { height: max_height });
-        }
-
-        for (i, d) in dims.iter().copied().enumerate() {
-            let h = d.height;
-            if !max_height.is_multiple_of(h) {
-                return Err(LmcsError::HeightNotDivisor {
-                    matrix: i,
-                    height: h,
-                    final_height: max_height,
-                });
-            }
-        }
-
-        Ok(Self { dims })
-    }
-
-    #[inline]
-    pub fn smallest_height(&self) -> usize {
-        self.dims.first().unwrap().height
-    }
-
-    #[inline]
-    pub fn largest_height(&self) -> usize {
-        self.dims.last().unwrap().height
-    }
-
-    #[inline]
-    pub fn dimensions(&self) -> &[Dimensions] {
-        &self.dims
-    }
-
-    /// Iterate over all matrix heights.
-    pub fn heights(&self) -> impl Iterator<Item = usize> + '_ {
-        self.dims.iter().map(|d| d.height)
-    }
-
-    /// Map a global row index to the corresponding row index for matrix `matrix_idx`
-    /// under upsampled lifting semantics.
-    #[inline]
-    pub fn map_idx_upsampled_for(&self, matrix_idx: usize, index: usize) -> usize {
-        let max_h = self.largest_height();
-        let h = self.dims[matrix_idx].height;
-        let scaling = max_h / h;
-        let log_s = p3_util::log2_strict_usize(scaling);
-        index >> log_s
-    }
-
-    /// Map a global row index to every matrix's local row index under upsampled lifting.
-    pub fn map_idxs_upsampled(&self, index: usize) -> impl Iterator<Item = usize> + '_ {
-        let max_h = self.largest_height();
-        self.dims.iter().map(move |d| {
-            let scaling = max_h / d.height;
-            let log_s = p3_util::log2_strict_usize(scaling);
-            index >> log_s
-        })
-    }
-
-    /// Iterator of widths padded up to the given RATE.
-    pub fn padded_widths<const RATE: usize>(&self) -> impl Iterator<Item = usize> + '_ {
-        self.dims.iter().map(|d| d.width.next_multiple_of(RATE))
-    }
-}
-
-/// Unpack a SIMD-packed array into multiple scalar arrays (one per SIMD lane).
-///
-/// Transposes packed SIMD layout into scalar layout. Each SIMD lane's values across all
-/// array elements are extracted into a separate scalar array.
-///
-/// # Example Layout
-/// Input: `packed_array = [[a0, a1, a2, a3], [b0, b1, b2, b3]]` (2 packed elements, width=4)
-/// Output: `scalar_arrays[0] = [a0, b0]`, `scalar_arrays[1] = [a1, b1]`, etc.
-fn unpack_array_into<P: PackedValue, const N: usize>(
-    packed_array: &[P; N],
-    scalar_arrays: &mut [[P::Value; N]],
-) {
-    for (lane, scalar_array) in scalar_arrays.iter_mut().take(P::WIDTH).enumerate() {
-        *scalar_array = array::from_fn(|col| packed_array[col].as_slice()[lane]);
-    }
-}
-
-/// Pack multiple scalar arrays (one per SIMD lane) into a SIMD-packed array.
-///
-/// Transposes scalar layout into packed SIMD layout. Values at the same position across
-/// all scalar arrays are combined into a single SIMD-packed element.
-///
-/// # Example Layout
-/// Input: `scalar[0] = [a0, b0]`, `scalar[1] = [a1, b1]`, ... (4 scalar arrays)
-/// Output: `packed = [[a0, a1, a2, a3], [b0, b1, b2, b3]]` (2 packed elements, width=4)
-fn pack_arrays<P: PackedValue, const N: usize>(scalar: &[[P::Value; N]]) -> [P; N] {
-    array::from_fn(|col| P::from_fn(|lane| scalar[lane][col]))
 }
 
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
 
-    use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
-    use p3_field::{Field, PrimeCharacteristicRing};
     use p3_matrix::bitrev::BitReversibleMatrix;
     use p3_matrix::dense::RowMajorMatrix;
     use p3_matrix::lifted::LiftableMatrix;
-    use p3_symmetric::{PaddingFreeSponge, StatefulSponge, TruncatedPermutation};
     use p3_util::reverse_slice_index_bits;
+    use rand::SeedableRng;
     use rand::rngs::SmallRng;
-    use rand::{RngCore, SeedableRng};
 
     use super::*;
+    use crate::lmcs::test_helpers::{
+        DIGEST, F, P, RATE, WIDTH, build_leaves_single, components, concatenate_matrices,
+        matrix_scenarios, rand_matrix,
+    };
 
-    type F = BabyBear;
-    type Packed = <F as Field>::Packing;
-
-    const WIDTH: usize = 16;
-    const RATE: usize = 8;
-    const DIGEST: usize = 8;
-    const PACK_WIDTH: usize = <Packed as PackedValue>::WIDTH;
-
-    type Sponge = PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>;
-
-    /// Constructs deterministic Poseidon2 sponge and compression components for reproducible tests.
-    fn poseidon_components() -> (
-        Sponge,
-        TruncatedPermutation<Poseidon2BabyBear<WIDTH>, 2, DIGEST, WIDTH>,
-    ) {
-        let mut rng = SmallRng::seed_from_u64(1);
-        let permutation = Poseidon2BabyBear::<WIDTH>::new_from_rng_128(&mut rng);
-        let sponge = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(permutation.clone());
-        let compressor = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(permutation);
-        (sponge, compressor)
-    }
-
-    /// Verifies that cyclic and upsampled leaf builders stay in sync across many dimensional scenarios.
     #[test]
-    fn test_cyclic_upsampled_equivalence() {
-        let (sponge, _) = poseidon_components();
+    fn cyclic_upsampled_equivalence() {
+        let (sponge, _compressor) = components();
         let mut rng = SmallRng::seed_from_u64(42);
 
-        // Iterate through deterministic height/width configurations that cover scalar vs SIMD paths,
-        // padding behaviour, and mixed-height batches.
         for scenario in matrix_scenarios() {
-            let matrices: Vec<_> = scenario
+            let matrices: Vec<RowMajorMatrix<F>> = scenario
                 .into_iter()
-                .map(|(height, width)| random_matrix(height, width, &mut rng))
+                .map(|(h, w)| rand_matrix(h, w, &mut rng))
                 .collect();
 
             let max_height = matrices.last().unwrap().height();
 
-            // Verify cyclic lifting
-            {
-                let leaves = build_leaves_cyclic::<Packed, _, _, _, _, _>(&matrices, &sponge);
-
-                // Compare against matrices explicitly lifted cyclically to the final height.
-                let matrices_cyclic: Vec<_> = matrices
-                    .iter()
-                    .map(|m| m.as_view().lift_cyclic(max_height).to_row_major_matrix())
-                    .collect();
-                let leaves_lifted =
-                    build_leaves_cyclic::<Packed, _, _, _, _, _>(&matrices_cyclic, &sponge);
-                assert_eq!(leaves, leaves_lifted);
-
-                // Validate against a single concatenated baseline that pads widths to the rate.
-                let matrix_single = concatenate_matrices(&matrices_cyclic);
-                let leaves_single = build_leaves_single(&matrix_single, &sponge);
-                assert_eq!(leaves, leaves_single);
-
-                // Ensure equivalence after bit-reversing rows and using upsampled lifting.
-                let matrices_bitreversed: Vec<_> = matrices
-                    .iter()
-                    .map(|m| m.as_view().bit_reverse_rows().to_row_major_matrix())
-                    .collect();
-                let mut leaves_bitreversed =
-                    build_leaves_upsampled::<Packed, _, _, _, _, _>(&matrices_bitreversed, &sponge);
-                reverse_slice_index_bits(&mut leaves_bitreversed);
-                assert_eq!(leaves, leaves_bitreversed);
-            };
-
+            // Cyclic path equivalence vs explicit cyclic lifting and single-concat baseline
             {
                 let leaves =
-                    build_leaves_upsampled::<Packed, _, _, _, _, DIGEST>(&matrices, &sponge);
+                    build_leaves_cyclic::<P, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
 
-                // Compare against matrices explicitly upsampled (row duplication) to the final height.
-                let matrices_upsampled: Vec<_> = matrices
+                let matrices_cyclic: Vec<_> = matrices
                     .iter()
-                    .map(|m| m.as_view().lift_upsampled(max_height).to_row_major_matrix())
+                    .map(|m: &RowMajorMatrix<F>| {
+                        m.as_view().lift_cyclic(max_height).to_row_major_matrix()
+                    })
                     .collect();
                 let leaves_lifted =
-                    build_leaves_upsampled::<Packed, _, _, _, _, _>(&matrices_upsampled, &sponge);
+                    build_leaves_cyclic::<P, _, _, WIDTH, RATE, DIGEST>(&matrices_cyclic, &sponge);
                 assert_eq!(leaves, leaves_lifted);
 
-                // Validate against a single concatenated baseline that pads widths to the rate.
-                let matrix_single = concatenate_matrices(&matrices_upsampled);
+                let matrix_single = concatenate_matrices::<RATE>(&matrices_cyclic);
+                let leaves_single = build_leaves_single(&matrix_single, &sponge);
+                assert_eq!(leaves, leaves_single);
+            }
+
+            // Bit-reverse property: reverse rows, use upsampled, then reverse leaves
+            {
+                let matrices_bitreversed: Vec<_> = matrices
+                    .iter()
+                    .map(|m: &RowMajorMatrix<F>| {
+                        m.as_view().bit_reverse_rows().to_row_major_matrix()
+                    })
+                    .collect();
+                let mut leaves_bitreversed =
+                    super::build_leaves_upsampled::<P, _, _, WIDTH, RATE, DIGEST>(
+                        &matrices_bitreversed,
+                        &sponge,
+                    );
+                reverse_slice_index_bits(&mut leaves_bitreversed);
+                let leaves =
+                    build_leaves_cyclic::<P, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
+                assert_eq!(leaves, leaves_bitreversed);
+            }
+
+            // Upsampled path equivalence vs explicit upsampled lifting and single-concat baseline
+            {
+                let leaves =
+                    build_leaves_upsampled::<P, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
+
+                let matrices_upsampled: Vec<_> = matrices
+                    .iter()
+                    .map(|m: &RowMajorMatrix<F>| {
+                        m.as_view().lift_upsampled(max_height).to_row_major_matrix()
+                    })
+                    .collect();
+                let leaves_lifted = super::build_leaves_upsampled::<P, _, _, WIDTH, RATE, DIGEST>(
+                    &matrices_upsampled,
+                    &sponge,
+                );
+                assert_eq!(leaves, leaves_lifted);
+
+                let matrix_single = concatenate_matrices::<RATE>(&matrices_upsampled);
                 let leaves_single = build_leaves_single(&matrix_single, &sponge);
                 assert_eq!(leaves, leaves_single);
 
-                // Ensure equivalence after bit-reversing rows and using cyclic lifting.
                 let matrices_bitreversed: Vec<_> = matrices
                     .iter()
                     .map(|m| m.as_view().bit_reverse_rows().to_row_major_matrix())
                     .collect();
                 let mut leaves_bitreversed =
-                    build_leaves_cyclic::<Packed, _, _, _, _, _>(&matrices_bitreversed, &sponge);
+                    super::build_leaves_cyclic::<P, _, _, WIDTH, RATE, DIGEST>(
+                        &matrices_bitreversed,
+                        &sponge,
+                    );
                 reverse_slice_index_bits(&mut leaves_bitreversed);
                 assert_eq!(leaves, leaves_bitreversed);
-            };
+            }
         }
-    }
-
-    /// Builds a `height × width` matrix filled with pseudo-random BabyBear values from `rng`.
-    fn random_matrix(height: usize, width: usize, rng: &mut SmallRng) -> RowMajorMatrix<F> {
-        let data = (0..height * width)
-            .map(|_| F::new(rng.next_u32()))
-            .collect();
-        RowMajorMatrix::new(data, width)
-    }
-
-    /// Horizontally concatenates matrices after padding each row width to the rate and lifting to max height.
-    fn concatenate_matrices(matrices: &[RowMajorMatrix<F>]) -> RowMajorMatrix<F> {
-        let max_height = matrices.last().unwrap().height();
-        let width: usize = matrices
-            .iter()
-            .map(|m| m.width().next_multiple_of(RATE))
-            .sum();
-
-        let concatenated_data: Vec<_> = (0..max_height)
-            .flat_map(|idx| {
-                matrices.iter().flat_map(move |m| {
-                    let mut row = m.row_slice(idx).unwrap().to_vec();
-                    let padded_width = row.len().next_multiple_of(RATE);
-                    row.resize(padded_width, F::ZERO);
-                    row
-                })
-            })
-            .collect();
-        RowMajorMatrix::new(concatenated_data, width)
-    }
-
-    /// Scalar baseline: absorb each row independently and squeeze a digest for comparison.
-    fn build_leaves_single(
-        matrix: &RowMajorMatrix<F>,
-        sponge: &PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
-    ) -> Vec<[F; DIGEST]> {
-        matrix
-            .rows()
-            .map(|row| {
-                let mut state = [F::ZERO; WIDTH];
-                sponge.absorb(&mut state, row);
-                sponge.squeeze(&state)
-            })
-            .collect()
-    }
-
-    /// Enumerates deterministic height/width scenarios covering padding and SIMD corner cases.
-    fn matrix_scenarios() -> Vec<Vec<(usize, usize)>> {
-        vec![
-            vec![(1, 1)],
-            vec![(1, RATE - 1)],
-            vec![(2, 3), (4, 5), (8, RATE)],
-            vec![(1, 5), (1, 3), (2, 7), (4, 1), (8, RATE + 1)],
-            vec![
-                (PACK_WIDTH / 2, RATE - 1),
-                (PACK_WIDTH, RATE),
-                (PACK_WIDTH * 2, RATE + 3),
-            ],
-            vec![(PACK_WIDTH, RATE + 5), (PACK_WIDTH * 2, 25)],
-            vec![
-                (1, RATE * 2),
-                (PACK_WIDTH / 2, RATE * 2 - 1),
-                (PACK_WIDTH, RATE * 2),
-                (PACK_WIDTH * 2, RATE * 3 - 2),
-            ],
-            vec![(4, RATE - 1), (4, RATE), (8, RATE + 3), (8, RATE * 2)],
-            vec![(PACK_WIDTH * 2, RATE - 1)],
-        ]
     }
 }

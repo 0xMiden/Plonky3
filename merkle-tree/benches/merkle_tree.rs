@@ -46,11 +46,7 @@ fn bench_bb_poseidon2(criterion: &mut Criterion) {
         h.clone(),
         c.clone(),
     );
-    bench_mmcs_vs_lmcs::<<F as Field>::Packing, H, C, 8>(
-        criterion,
-        h.clone(),
-        c.clone(),
-    );
+    bench_mmcs_vs_lmcs::<<F as Field>::Packing, H, C, 8>(criterion, h.clone(), c.clone());
     bench_merkle_tree::<<F as Field>::Packing, <F as Field>::Packing, H, C, 8>(criterion, h, c);
 }
 
@@ -76,11 +72,7 @@ fn bench_bb_rescue(criterion: &mut Criterion) {
         h.clone(),
         c.clone(),
     );
-    bench_mmcs_vs_lmcs::<<F as Field>::Packing, H, C, 8>(
-        criterion,
-        h.clone(),
-        c.clone(),
-    );
+    bench_mmcs_vs_lmcs::<<F as Field>::Packing, H, C, 8>(criterion, h.clone(), c.clone());
     bench_merkle_tree::<<F as Field>::Packing, <F as Field>::Packing, H, C, 8>(criterion, h, c);
 }
 

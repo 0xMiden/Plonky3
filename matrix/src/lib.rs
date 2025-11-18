@@ -586,10 +586,7 @@ where
     #[inline]
     fn par_rows(
         &self,
-    ) -> impl IndexedParallelIterator<
-        Item = impl Iterator<Item = T>,
-    > + Send
-           + Sync {
+    ) -> impl IndexedParallelIterator<Item = impl Iterator<Item = T>> + Send + Sync {
         (*self).par_rows()
     }
 
