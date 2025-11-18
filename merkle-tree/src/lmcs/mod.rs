@@ -4,14 +4,19 @@ use core::marker::PhantomData;
 
 use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
 use p3_field::PackedValue;
-use p3_matrix::dense::RowMajorMatrix;
-use p3_matrix::lifted::UpsampledLiftIndexMap;
 use p3_matrix::{Dimensions, Matrix};
 use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulSponge};
 use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
 
-use crate::uniform::{LiftDimensions, UniformMerkleTree};
+mod dimensions;
+mod merkle_tree;
+#[cfg(test)]
+mod test_helpers;
+mod utils;
+
+pub use dimensions::LiftDimensions;
+pub use merkle_tree::{UniformMerkleTree, build_leaves_cyclic, build_leaves_upsampled};
 
 /// Lifted MMCS built on top of [`UniformMerkleTree`].
 ///
@@ -160,10 +165,13 @@ where
             }
         }
 
-        let sponge_state = opened_values.iter().fold([P::Value::default(); WIDTH], |mut state, opened_row| {
-            self.sponge.absorb(&mut state, opened_row.iter().copied());
-            state
-        });
+        let sponge_state =
+            opened_values
+                .iter()
+                .fold([P::Value::default(); WIDTH], |mut state, opened_row| {
+                    self.sponge.absorb(&mut state, opened_row.iter().copied());
+                    state
+                });
 
         let mut digest = self.sponge.squeeze::<DIGEST_ELEMS>(&sponge_state);
         let mut current_index = index;
@@ -222,4 +230,102 @@ pub enum LmcsError {
     },
     /// Dimensions are not sorted by non-decreasing height.
     UnsortedByHeight,
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    use p3_baby_bear::Poseidon2BabyBear;
+    use p3_matrix::dense::RowMajorMatrix;
+    use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
+    use rand::rngs::SmallRng;
+    use rand::{RngCore, SeedableRng};
+
+    use super::test_helpers::{DIGEST, F, P, RATE, WIDTH};
+    use super::*;
+
+    fn components() -> (
+        PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
+        TruncatedPermutation<Poseidon2BabyBear<WIDTH>, 2, DIGEST, WIDTH>,
+    ) {
+        let mut rng = SmallRng::seed_from_u64(123);
+        let perm = Poseidon2BabyBear::<WIDTH>::new_from_rng_128(&mut rng);
+        let sponge = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(perm.clone());
+        let compress = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(perm);
+        (sponge, compress)
+    }
+
+    fn rand_matrix(h: usize, w: usize, rng: &mut SmallRng) -> RowMajorMatrix<F> {
+        let vals = (0..h * w).map(|_| F::new(rng.next_u32())).collect();
+        RowMajorMatrix::new(vals, w)
+    }
+
+    #[test]
+    fn commit_open_verify_roundtrip() {
+        let (sponge, compress) = components();
+        let lmcs =
+            MerkleTreeLmcs::<P, _, _, WIDTH, RATE, DIGEST>::new(sponge.clone(), compress.clone());
+
+        let mut rng = SmallRng::seed_from_u64(9);
+        let matrices = vec![
+            rand_matrix(2, 3, &mut rng),
+            rand_matrix(4, 5, &mut rng),
+            rand_matrix(8, 7, &mut rng),
+        ];
+        let dims: Vec<Dimensions> = matrices
+            .iter()
+            .map(|m: &RowMajorMatrix<F>| m.dimensions())
+            .collect();
+
+        let (commitment, tree) = lmcs.commit(matrices);
+        let final_height = dims.last().unwrap().height;
+        let index = final_height - 1; // valid index within range
+
+        let opening = lmcs.open_batch(index, &tree);
+        let opening_ref: BatchOpeningRef<'_, F, _> = (&opening).into();
+        assert!(
+            lmcs.verify_batch(&commitment, &dims, index, opening_ref)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn uniform_tree_root_matches_leaves() {
+        let (sponge, compressor) = components();
+        let mut rng = SmallRng::seed_from_u64(7);
+
+        // A small but non-trivial scenario set
+        let scenario = vec![(2, 3), (4, 5), (8, RATE + 1)];
+        let matrices: Vec<_> = scenario
+            .into_iter()
+            .map(|(h, w)| rand_matrix(h, w, &mut rng))
+            .collect();
+
+        // Build tree and fetch root
+        let tree = UniformMerkleTree::<F, _, DIGEST>::new::<P, _, _, WIDTH, RATE>(
+            &sponge,
+            &compressor,
+            matrices.clone(),
+        );
+        let root = tree.root();
+
+        // Recompute leaves using the same upsampled semantics
+        let leaves = crate::lmcs::merkle_tree::build_leaves_upsampled::<P, _, _, WIDTH, RATE, DIGEST>(
+            &matrices, &sponge,
+        );
+        // Reduce leaves to a root via pairwise compression
+        let mut layer = leaves;
+        while layer.len() > 1 {
+            let mut next = Vec::with_capacity(layer.len() / 2);
+            for i in (0..layer.len()).step_by(2) {
+                next.push(compressor.compress([layer[i], layer[i + 1]]));
+            }
+            layer = next;
+        }
+
+        let expected: Hash<_, _, DIGEST> = layer[0].into();
+        assert_eq!(root, expected);
+    }
 }

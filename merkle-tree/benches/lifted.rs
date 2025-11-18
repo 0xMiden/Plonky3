@@ -1,16 +1,17 @@
 use std::hint::black_box;
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::time::Duration;
+
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_field::Field;
+use p3_matrix::Matrix;
+use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_merkle_tree::uniform::{build_leaves_cyclic, build_leaves_upsampled};
+use p3_merkle_tree::{build_leaves_cyclic, build_leaves_upsampled};
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
+use p3_util::reverse_slice_index_bits;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
-use p3_matrix::bitrev::BitReversibleMatrix;
-use p3_matrix::Matrix;
-use p3_util::reverse_slice_index_bits;
 
 type F = BabyBear;
 type Packed = <F as Field>::Packing;
@@ -21,7 +22,10 @@ const DIGEST: usize = 8;
 
 type Sponge = PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>;
 
-fn poseidon_components() -> (Sponge, TruncatedPermutation<Poseidon2BabyBear<WIDTH>, 2, DIGEST, WIDTH>) {
+fn poseidon_components() -> (
+    Sponge,
+    TruncatedPermutation<Poseidon2BabyBear<WIDTH>, 2, DIGEST, WIDTH>,
+) {
     let mut rng = SmallRng::seed_from_u64(1);
     let permutation = Poseidon2BabyBear::<WIDTH>::new_from_rng_128(&mut rng);
     let sponge = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(permutation.clone());
@@ -70,37 +74,52 @@ fn bench_lifted(c: &mut Criterion) {
     for (label, matrices) in scenarios {
         let dims: Vec<_> = matrices.iter().map(|m| m.dimensions()).collect();
 
-        group.bench_with_input(BenchmarkId::new(format!("cyclic/{label}"), format!("{dims:?}")), &matrices, |b, mats| {
-            b.iter(|| {
-                let out = build_leaves_cyclic::<Packed, _, _, WIDTH, RATE, DIGEST>(
-                    black_box(&mats[..]),
-                    black_box(&sponge),
-                );
-                black_box(out);
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new(format!("cyclic/{label}"), format!("{dims:?}")),
+            &matrices,
+            |b, mats| {
+                b.iter(|| {
+                    let out = build_leaves_cyclic::<Packed, _, _, WIDTH, RATE, DIGEST>(
+                        black_box(&mats[..]),
+                        black_box(&sponge),
+                    );
+                    black_box(out);
+                });
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new(format!("upsampled/{label}"), format!("{dims:?}")), &matrices, |b, mats| {
-            b.iter(|| {
-                let out = build_leaves_upsampled::<Packed, _, _, WIDTH, RATE, DIGEST>(
-                    black_box(&mats[..]),
-                    black_box(&sponge),
-                );
-                black_box(out);
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new(format!("upsampled/{label}"), format!("{dims:?}")),
+            &matrices,
+            |b, mats| {
+                b.iter(|| {
+                    let out = build_leaves_upsampled::<Packed, _, _, WIDTH, RATE, DIGEST>(
+                        black_box(&mats[..]),
+                        black_box(&sponge),
+                    );
+                    black_box(out);
+                });
+            },
+        );
 
-        let mats_bitrev: Vec<_> = matrices.iter().map(|m| m.as_view().bit_reverse_rows()).collect();
-        group.bench_with_input(BenchmarkId::new(format!("bitrev/upsampled/{label}"), format!("{dims:?}")), &matrices, |b, mats| {
-            b.iter(|| {
-                let mut out = build_leaves_cyclic::<Packed, _, _, WIDTH, RATE, DIGEST>(
-                    black_box(&mats_bitrev[..]),
-                    black_box(&sponge),
-                );
-                reverse_slice_index_bits(&mut out);
-                black_box(out);
-            });
-        });
+        let mats_bitrev: Vec<_> = matrices
+            .iter()
+            .map(|m| m.as_view().bit_reverse_rows())
+            .collect();
+        group.bench_with_input(
+            BenchmarkId::new(format!("bitrev/upsampled/{label}"), format!("{dims:?}")),
+            &matrices,
+            |b, _mats| {
+                b.iter(|| {
+                    let mut out = build_leaves_cyclic::<Packed, _, _, WIDTH, RATE, DIGEST>(
+                        black_box(&mats_bitrev[..]),
+                        black_box(&sponge),
+                    );
+                    reverse_slice_index_bits(&mut out);
+                    black_box(out);
+                });
+            },
+        );
     }
 
     group.finish();
@@ -116,7 +135,7 @@ fn setup_criterion() -> Criterion {
         .warm_up_time(Duration::from_secs(3))
 }
 
-criterion_group!{
+criterion_group! {
     name = benches;
     config = setup_criterion();
     targets = bench_lifted

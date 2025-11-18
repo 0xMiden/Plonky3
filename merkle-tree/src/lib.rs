@@ -6,10 +6,8 @@ mod hiding_mmcs;
 mod lmcs;
 mod merkle_tree;
 mod mmcs;
-pub mod uniform;
 
 pub use hiding_mmcs::*;
 pub use lmcs::*;
 pub use merkle_tree::*;
 pub use mmcs::*;
-pub use uniform::UniformMerkleTree;
