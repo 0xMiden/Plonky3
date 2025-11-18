@@ -4,10 +4,12 @@ use core::array;
 use core::marker::PhantomData;
 
 use p3_field::PackedValue;
-use p3_matrix::Matrix;
+use p3_matrix::{Dimensions, Matrix};
 use p3_maybe_rayon::prelude::*;
 use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulSponge};
 use serde::{Deserialize, Serialize};
+
+use crate::lmcs::LmcsError;
 
 /// A uniform binary Merkle tree whose leaves are constructed from matrices with power-of-two heights.
 ///
@@ -56,6 +58,13 @@ pub struct UniformMerkleTree<F, M, const DIGEST_ELEMS: usize> {
         bound(deserialize = "[F; DIGEST_ELEMS]: Deserialize<'de>")
     )]
     pub(crate) digest_layers: Vec<Vec<[F; DIGEST_ELEMS]>>,
+
+    /// Optional cached lifting dimensions describing the original matrices used to build the tree.
+    ///
+    /// Stored to aid LMCS operations (index mapping, padded widths, etc.). This is skipped during
+    /// serialization since it can be reconstructed from the leaf matrices if needed.
+    #[serde(skip)]
+    pub(crate) lift_dims: Option<LiftDimensions>,
 
     /// Zero-sized marker for type safety.
     _phantom: PhantomData<M>,
@@ -113,9 +122,14 @@ impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: 
             digest_layers.push(next_layer);
         }
 
+        // Cache lifting-related dimensions when possible.
+        let dims: Vec<Dimensions> = leaves.iter().map(|m| m.dimensions()).collect();
+        let lift_dims = LiftDimensions::new(dims).ok();
+
         Self {
             leaves,
             digest_layers,
+            lift_dims,
             _phantom: PhantomData,
         }
     }
@@ -159,7 +173,11 @@ pub fn build_leaves_upsampled<
     const {
         assert!(P::WIDTH.is_power_of_two());
     };
-    let final_height = validate_matrix_heights(matrices);
+    // Validate lifting invariants (including non-decreasing heights) and compute the final height via LiftDimensions,
+    // asserting with a descriptive error on failure.
+    let dims: Vec<Dimensions> = matrices.iter().map(|m| m.dimensions()).collect();
+    let lift = LiftDimensions::new(dims).expect("invalid input matrices");
+    let final_height = lift.largest_height();
 
     let scalar_default = [P::Value::default(); WIDTH];
 
@@ -233,9 +251,11 @@ pub fn build_leaves_cyclic<
 ) -> Vec<[P::Value; DIGEST_ELEMS]> {
     const { assert!(P::WIDTH.is_power_of_two()) };
 
-    let final_height = validate_matrix_heights(matrices);
-    let default_state = [P::Value::default(); WIDTH];
+    let dims: Vec<Dimensions> = matrices.iter().map(|m| m.dimensions()).collect();
+    let lift = LiftDimensions::new(dims).expect("invalid input matrices");
+    let final_height = lift.largest_height();
 
+    let default_state = [P::Value::default(); WIDTH];
     let mut states = vec![default_state; final_height];
     let mut active_height = matrices.first().unwrap().height();
 
@@ -262,7 +282,6 @@ pub fn build_leaves_cyclic<
         .map(|state| sponge.squeeze::<DIGEST_ELEMS>(&state))
         .collect()
 }
-
 
 /// Incorporate one matrix’s row-wise contribution into the running per-leaf states.
 ///
@@ -364,6 +383,116 @@ fn compress_uniform<
     next_digests
 }
 
+/// Dimensions helper for lifting-related computations over a batch of matrices.
+#[derive(Clone, Debug)]
+pub struct LiftDimensions {
+    dims: Vec<Dimensions>,
+}
+
+impl LiftDimensions {
+    /// Construct and validate lifting dimensions.
+    ///
+    /// Returns an `LmcsError` when:
+    /// - The list is empty (`EmptyBatch`)
+    /// - Any height is zero (`ZeroHeightMatrix`)
+    /// - Any height is not a power of two (`NonPowerOfTwoHeight`)
+    /// - The final height is not a power of two (`FinalHeightNotPowerOfTwo`)
+    /// - A height does not divide the final height (`HeightNotDivisor`)
+    pub fn new(dims: Vec<Dimensions>) -> Result<Self, LmcsError> {
+        if dims.is_empty() {
+            return Err(LmcsError::EmptyBatch);
+        }
+
+        // Check non-decreasing heights order.
+        let heights_sorted = dims
+            .iter()
+            .zip(dims.iter().skip(1))
+            .all(|(a, b)| a.height <= b.height);
+        if !heights_sorted {
+            return Err(LmcsError::UnsortedByHeight);
+        }
+
+        // Compute the tallest height (input need not be pre-sorted before this step).
+        let mut max_height = 0usize;
+        for (i, d) in dims.iter().copied().enumerate() {
+            let h = d.height;
+            if h == 0 {
+                return Err(LmcsError::ZeroHeightMatrix { matrix: i });
+            }
+            if !h.is_power_of_two() {
+                return Err(LmcsError::NonPowerOfTwoHeight {
+                    matrix: i,
+                    height: h,
+                });
+            }
+            max_height = max_height.max(h);
+        }
+
+        if !max_height.is_power_of_two() {
+            return Err(LmcsError::FinalHeightNotPowerOfTwo { height: max_height });
+        }
+
+        for (i, d) in dims.iter().copied().enumerate() {
+            let h = d.height;
+            if !max_height.is_multiple_of(h) {
+                return Err(LmcsError::HeightNotDivisor {
+                    matrix: i,
+                    height: h,
+                    final_height: max_height,
+                });
+            }
+        }
+
+        Ok(Self { dims })
+    }
+
+    #[inline]
+    pub fn smallest_height(&self) -> usize {
+        self.dims.first().unwrap().height
+    }
+
+    #[inline]
+    pub fn largest_height(&self) -> usize {
+        self.dims.last().unwrap().height
+    }
+
+    #[inline]
+    pub fn dimensions(&self) -> &[Dimensions] {
+        &self.dims
+    }
+
+    /// Iterate over all matrix heights.
+    pub fn heights(&self) -> impl Iterator<Item = usize> + '_ {
+        self.dims.iter().map(|d| d.height)
+    }
+
+    /// Map a global row index to the corresponding row index for matrix `matrix_idx`
+    /// under upsampled lifting semantics.
+    #[inline]
+    pub fn map_idx_upsampled_for(&self, matrix_idx: usize, index: usize) -> usize {
+        let max_h = self.largest_height();
+        let h = self.dims[matrix_idx].height;
+        let scaling = max_h / h;
+        let log_s = p3_util::log2_strict_usize(scaling);
+        index >> log_s
+    }
+
+    /// Map a global row index to every matrix's local row index under upsampled lifting.
+    pub fn map_idxs_upsampled(&self, index: usize) -> impl Iterator<Item = usize> + '_ {
+        let max_h = self.largest_height();
+        self.dims.iter().map(move |d| {
+            let scaling = max_h / d.height;
+            let log_s = p3_util::log2_strict_usize(scaling);
+            index >> log_s
+        })
+    }
+
+    /// Iterator of widths padded up to the given RATE.
+    pub fn padded_widths<const RATE: usize>(&self) -> impl Iterator<Item = usize> + '_ {
+        self.dims.iter().map(|d| d.width.next_multiple_of(RATE))
+    }
+}
+
 /// Unpack a SIMD-packed array into multiple scalar arrays (one per SIMD lane).
 ///
 /// Transposes packed SIMD layout into scalar layout. Each SIMD lane's values across all
@@ -391,25 +520,6 @@ fn unpack_array_into<P: PackedValue, const N: usize>(
 /// Output: `packed = [[a0, a1, a2, a3], [b0, b1, b2, b3]]` (2 packed elements, width=4)
 fn pack_arrays<P: PackedValue, const N: usize>(scalar: &[[P::Value; N]]) -> [P; N] {
     array::from_fn(|col| P::from_fn(|lane| scalar[lane][col]))
-}
-
-fn validate_matrix_heights<P: PackedValue, M: Matrix<P>>(matrices: &[M]) -> usize {
-    assert!(!matrices.is_empty(), "matrices cannot be empty");
-
-    let mut prev_height = 1;
-    for (idx, matrix) in matrices.iter().enumerate() {
-        let height = matrix.height();
-        assert!(
-            height.is_power_of_two(),
-            "matrix {idx} height {height} must be a power of two"
-        );
-        assert!(
-            prev_height <= height,
-            "matrices must be sorted by non-decreasing height"
-        );
-        prev_height = height;
-    }
-    prev_height
 }
 
 #[cfg(test)]

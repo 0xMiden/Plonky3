@@ -12,7 +12,7 @@ pub struct CyclicLiftIndexMap {
 }
 
 impl CyclicLiftIndexMap {
-    fn new(inner_height: usize, target_height: usize) -> Self {
+    pub fn new(inner_height: usize, target_height: usize) -> Self {
         assert!(inner_height > 0, "inner matrix height must be positive");
 
         let log_inner_height = log2_strict_usize(inner_height);
@@ -67,7 +67,7 @@ pub struct UpsampledLiftIndexMap {
 }
 
 impl UpsampledLiftIndexMap {
-    fn new(inner_height: usize, target_height: usize) -> Self {
+    pub fn new(inner_height: usize, target_height: usize) -> Self {
         assert!(inner_height > 0, "inner matrix height must be positive");
 
         let log_inner_height = log2_strict_usize(inner_height);
@@ -77,7 +77,7 @@ impl UpsampledLiftIndexMap {
             "target height must be at least the inner height"
         );
         assert!(
-            target_height % inner_height == 0,
+            target_height.is_multiple_of(inner_height),
             "target height must be a multiple of inner height"
         );
         let scaling = target_height / inner_height;
