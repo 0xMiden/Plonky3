@@ -2,6 +2,32 @@ use core::array;
 
 use p3_field::PackedValue;
 
+use crate::LmcsError;
+
+pub fn validate_heights(dims: impl IntoIterator<Item = usize>) -> Result<(), LmcsError> {
+    let mut active_height = 0;
+
+    for (matrix, height) in dims.into_iter().enumerate() {
+        if height == 0 {
+            return Err(LmcsError::ZeroHeightMatrix { matrix });
+        }
+
+        if !height.is_power_of_two() {
+            return Err(LmcsError::NonPowerOfTwoHeight { matrix, height });
+        }
+
+        if height < active_height {
+            return Err(LmcsError::UnsortedByHeight);
+        }
+        active_height = height
+    }
+
+    if active_height == 0 {
+        return Err(LmcsError::EmptyBatch);
+    }
+    Ok(())
+}
+
 /// Unpack a SIMD-packed array into multiple scalar arrays (one per SIMD lane).
 ///
 /// Transposes packed SIMD layout into scalar layout. Each SIMD lane's values across all

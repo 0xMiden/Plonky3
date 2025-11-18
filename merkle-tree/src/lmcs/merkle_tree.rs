@@ -11,8 +11,8 @@ use p3_maybe_rayon::prelude::{
 use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulSponge};
 use serde::{Deserialize, Serialize};
 
-use super::dimensions::LiftDimensions;
-use super::utils::{pack_arrays, unpack_array_into};
+use super::utils::{pack_arrays, unpack_array_into, validate_heights};
+use crate::LmcsError;
 
 /// A uniform binary Merkle tree whose leaves are constructed from matrices with power-of-two heights.
 ///
@@ -62,13 +62,6 @@ pub struct UniformMerkleTree<F, M, const DIGEST_ELEMS: usize> {
     )]
     pub(crate) digest_layers: Vec<Vec<[F; DIGEST_ELEMS]>>,
 
-    /// Optional cached lifting dimensions describing the original matrices used to build the tree.
-    ///
-    /// Stored to aid LMCS operations (index mapping, padded widths, etc.). This is skipped during
-    /// serialization since it can be reconstructed from the leaf matrices if needed.
-    #[serde(skip)]
-    pub(crate) lift_dims: Option<LiftDimensions>,
-
     /// Zero-sized marker for type safety.
     _phantom: PhantomData<M>,
 }
@@ -106,11 +99,12 @@ impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: 
         h: &H,
         c: &C,
         leaves: Vec<M>,
-    ) -> Self {
+    ) -> Result<Self, LmcsError> {
         assert!(!leaves.is_empty(), "No matrices given");
 
         // Build leaf digests from matrices using the sponge
-        let leaf_digests = build_leaves_upsampled::<P, M, H, WIDTH, RATE, DIGEST_ELEMS>(&leaves, h);
+        let leaf_digests =
+            build_leaves_upsampled::<P, M, H, WIDTH, RATE, DIGEST_ELEMS>(&leaves, h)?;
 
         // Build digest layers by repeatedly compressing until we reach the root
         let mut digest_layers = vec![leaf_digests];
@@ -125,16 +119,11 @@ impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: 
             digest_layers.push(next_layer);
         }
 
-        // Cache lifting-related dimensions when possible.
-        let dims: Vec<Dimensions> = leaves.iter().map(|m| m.dimensions()).collect();
-        let lift_dims = LiftDimensions::new(dims).ok();
-
-        Self {
+        Ok(Self {
             leaves,
             digest_layers,
-            lift_dims,
             _phantom: PhantomData,
-        }
+        })
     }
 
     /// Return the root digest of the tree.
@@ -172,15 +161,13 @@ pub fn build_leaves_upsampled<
 >(
     matrices: &[M],
     sponge: &H,
-) -> Vec<[P::Value; DIGEST_ELEMS]> {
+) -> Result<Vec<[P::Value; DIGEST_ELEMS]>, LmcsError> {
     const {
         assert!(P::WIDTH.is_power_of_two());
     };
-    // Validate lifting invariants (including non-decreasing heights) and compute the final height via LiftDimensions,
-    // asserting with a descriptive error on failure.
-    let dims: Vec<Dimensions> = matrices.iter().map(|m| m.dimensions()).collect();
-    let lift = LiftDimensions::new(dims).expect("invalid input matrices");
-    let final_height = lift.largest_height();
+    validate_heights(matrices.iter().map(|d| d.dimensions().height))?;
+
+    let final_height = matrices.last().unwrap().height();
 
     let scalar_default = [P::Value::default(); WIDTH];
 
@@ -218,10 +205,10 @@ pub fn build_leaves_upsampled<
         active_height = height;
     }
 
-    states
+    Ok(states
         .par_iter_mut()
         .map(|state| sponge.squeeze::<DIGEST_ELEMS>(state))
-        .collect()
+        .collect())
 }
 
 /// Build leaf digests using a cyclic (modulo) view of each matrix.
@@ -252,12 +239,11 @@ pub fn build_leaves_cyclic<
 >(
     matrices: &[M],
     sponge: &H,
-) -> Vec<[P::Value; DIGEST_ELEMS]> {
+) -> Result<Vec<[P::Value; DIGEST_ELEMS]>, LmcsError> {
     const { assert!(P::WIDTH.is_power_of_two()) };
+    validate_heights(matrices.iter().map(|d| d.dimensions().height))?;
 
-    let dims: Vec<Dimensions> = matrices.iter().map(|m| m.dimensions()).collect();
-    let lift = LiftDimensions::new(dims).expect("invalid input matrices");
-    let final_height = lift.largest_height();
+    let final_height = matrices.last().unwrap().height();
 
     let default_state = [P::Value::default(); WIDTH];
     let mut states = vec![default_state; final_height];
@@ -281,10 +267,10 @@ pub fn build_leaves_cyclic<
         active_height = height;
     }
 
-    states
+    Ok(states
         .into_iter()
         .map(|state| sponge.squeeze::<DIGEST_ELEMS>(&state))
-        .collect()
+        .collect())
 }
 
 /// Incorporate one matrix’s row-wise contribution into the running per-leaf states.
@@ -390,6 +376,7 @@ fn compress_uniform<
 mod tests {
     use alloc::vec::Vec;
 
+    use p3_matrix::Matrix;
     use p3_matrix::bitrev::BitReversibleMatrix;
     use p3_matrix::dense::RowMajorMatrix;
     use p3_matrix::lifted::LiftableMatrix;
@@ -397,11 +384,18 @@ mod tests {
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
-    use super::*;
     use crate::lmcs::test_helpers::{
-        DIGEST, F, P, RATE, WIDTH, build_leaves_single, components, concatenate_matrices,
+        DIGEST, F, P, RATE, Sponge, build_leaves_single, components, concatenate_matrices,
         matrix_scenarios, rand_matrix,
     };
+
+    fn build_leaves_cyclic(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
+        super::build_leaves_cyclic::<P, _, _, _, _, _>(matrices, sponge).unwrap()
+    }
+
+    fn build_leaves_upsampled(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
+        super::build_leaves_upsampled::<P, _, _, _, _, _>(matrices, sponge).unwrap()
+    }
 
     #[test]
     fn cyclic_upsampled_equivalence() {
@@ -418,8 +412,7 @@ mod tests {
 
             // Cyclic path equivalence vs explicit cyclic lifting and single-concat baseline
             {
-                let leaves =
-                    build_leaves_cyclic::<P, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
+                let leaves = build_leaves_cyclic(&matrices, &sponge);
 
                 let matrices_cyclic: Vec<_> = matrices
                     .iter()
@@ -427,8 +420,7 @@ mod tests {
                         m.as_view().lift_cyclic(max_height).to_row_major_matrix()
                     })
                     .collect();
-                let leaves_lifted =
-                    build_leaves_cyclic::<P, _, _, WIDTH, RATE, DIGEST>(&matrices_cyclic, &sponge);
+                let leaves_lifted = build_leaves_cyclic(&matrices_cyclic, &sponge);
                 assert_eq!(leaves, leaves_lifted);
 
                 let matrix_single = concatenate_matrices::<RATE>(&matrices_cyclic);
@@ -436,29 +428,9 @@ mod tests {
                 assert_eq!(leaves, leaves_single);
             }
 
-            // Bit-reverse property: reverse rows, use upsampled, then reverse leaves
-            {
-                let matrices_bitreversed: Vec<_> = matrices
-                    .iter()
-                    .map(|m: &RowMajorMatrix<F>| {
-                        m.as_view().bit_reverse_rows().to_row_major_matrix()
-                    })
-                    .collect();
-                let mut leaves_bitreversed =
-                    super::build_leaves_upsampled::<P, _, _, WIDTH, RATE, DIGEST>(
-                        &matrices_bitreversed,
-                        &sponge,
-                    );
-                reverse_slice_index_bits(&mut leaves_bitreversed);
-                let leaves =
-                    build_leaves_cyclic::<P, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
-                assert_eq!(leaves, leaves_bitreversed);
-            }
-
             // Upsampled path equivalence vs explicit upsampled lifting and single-concat baseline
             {
-                let leaves =
-                    build_leaves_upsampled::<P, _, _, WIDTH, RATE, DIGEST>(&matrices, &sponge);
+                let leaves = build_leaves_upsampled(&matrices, &sponge);
 
                 let matrices_upsampled: Vec<_> = matrices
                     .iter()
@@ -466,10 +438,7 @@ mod tests {
                         m.as_view().lift_upsampled(max_height).to_row_major_matrix()
                     })
                     .collect();
-                let leaves_lifted = super::build_leaves_upsampled::<P, _, _, WIDTH, RATE, DIGEST>(
-                    &matrices_upsampled,
-                    &sponge,
-                );
+                let leaves_lifted = build_leaves_upsampled(&matrices_upsampled, &sponge);
                 assert_eq!(leaves, leaves_lifted);
 
                 let matrix_single = concatenate_matrices::<RATE>(&matrices_upsampled);
@@ -480,12 +449,22 @@ mod tests {
                     .iter()
                     .map(|m| m.as_view().bit_reverse_rows().to_row_major_matrix())
                     .collect();
-                let mut leaves_bitreversed =
-                    super::build_leaves_cyclic::<P, _, _, WIDTH, RATE, DIGEST>(
-                        &matrices_bitreversed,
-                        &sponge,
-                    );
+                let mut leaves_bitreversed = build_leaves_cyclic(&matrices_bitreversed, &sponge);
                 reverse_slice_index_bits(&mut leaves_bitreversed);
+                assert_eq!(leaves, leaves_bitreversed);
+            }
+
+            // Bit-reverse property: reverse rows, use upsampled, then reverse leaves
+            {
+                let matrices_bitreversed: Vec<_> = matrices
+                    .iter()
+                    .map(|m: &RowMajorMatrix<F>| {
+                        m.as_view().bit_reverse_rows().to_row_major_matrix()
+                    })
+                    .collect();
+                let mut leaves_bitreversed = build_leaves_upsampled(&matrices_bitreversed, &sponge);
+                reverse_slice_index_bits(&mut leaves_bitreversed);
+                let leaves = build_leaves_cyclic(&matrices, &sponge);
                 assert_eq!(leaves, leaves_bitreversed);
             }
         }
