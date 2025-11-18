@@ -35,7 +35,7 @@ where
         group.bench_function(BenchmarkId::from_parameter(n), |b| {
             b.iter(|| {
                 folding.fold_matrix(beta, mat.clone());
-            })
+            });
         });
     }
 }
