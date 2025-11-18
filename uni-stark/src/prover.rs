@@ -486,10 +486,24 @@ where
                 width,
             );
             let aux = if let Some(aux_trace) = aux_trace_on_quotient_domain.as_ref() {
-                RowMajorMatrix::new(
-                    aux_trace.vertically_packed_row_pair(i_start, next_step),
-                    aux_trace.width(),
-                )
+                // Aux trace is stored in flattened base field format (each EF element = D base elements)
+                // We need to convert it to packed extension field format
+                let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
+                let base_packed: Vec<PackedVal<SC>> =
+                    aux_trace.vertically_packed_row_pair(i_start, next_step);
+                let ef_width = aux_trace.width() / d;
+
+                // Convert from packed base field to packed extension field
+                // Each EF element is formed from D consecutive base field elements
+                let ef_packed: Vec<PackedChallenge<SC>> = (0..ef_width * 2)
+                    .map(|i| {
+                        PackedChallenge::<SC>::from_basis_coefficients_fn(|j| {
+                            base_packed[i * d + j]
+                        })
+                    })
+                    .collect();
+
+                RowMajorMatrix::new(ef_packed, ef_width)
             } else {
                 // Create an empty matrix with zero width
                 RowMajorMatrix::new(vec![], 0)
@@ -502,6 +516,10 @@ where
                     preprocessed_width,
                 )
             });
+
+            // Pack challenges for constraint evaluation
+            let packed_randomness: Vec<PackedChallenge<SC>> =
+                randomness.iter().copied().map(Into::into).collect();
 
             let accumulator = PackedChallenge::<SC>::ZERO;
             let mut folder = ProverConstraintFolder {
@@ -516,7 +534,7 @@ where
                 decomposed_alpha_powers: &decomposed_alpha_powers,
                 accumulator,
                 constraint_index: 0,
-                packed_randomness: randomness.iter().copied().map(Into::into).collect(),
+                packed_randomness,
             };
             air.eval(&mut folder);
 
