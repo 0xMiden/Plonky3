@@ -107,7 +107,7 @@ macro_rules! make_tests_for_pcs {
             // Ensure minimum of 3 for CirclePcs (needs at least 4 rows)
             let step = $log_folding_factor;
             // Round up to nearest multiple of step that's >= 3
-            let start = ((3 + step - 1) / step) * step;
+            let start = 3_usize.div_ceil(step) * step;
             for i in (start..=(start + 2 * step)).step_by(step) {
                 $crate::do_test_fri_pcs(&p, &[&[i]]);
             }
@@ -118,7 +118,7 @@ macro_rules! make_tests_for_pcs {
             let p = $p;
             let step = $log_folding_factor;
             // Round up to nearest multiple of step that's >= 3
-            let start = ((3 + step - 1) / step) * step;
+            let start = 3_usize.div_ceil(step) * step;
             for i in (start..=(start + 2 * step)).step_by(step) {
                 $crate::do_test_fri_pcs(&p, &[&[i; 5]]);
                 println!("{i} ok");

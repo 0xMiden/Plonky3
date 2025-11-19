@@ -7,7 +7,6 @@ use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
 use p3_field::coset::TwoAdicMultiplicativeCoset;
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::Dimensions;
-use p3_maybe_rayon::prelude::IntoParallelIterator;
 use p3_util::zip_eq::zip_eq;
 use p3_util::{log2_strict_usize, reverse_bits_len};
 
@@ -301,7 +300,7 @@ where
             .map_err(FriError::CommitPhaseMmcsError)?;
 
         // Fold all evaluations in the group to get the evaluation of the parent FRI node.
-        folded_eval = folding.fold_row(group_index, log_folded_height, beta, evals.into_par_iter());
+        folded_eval = folding.fold_row(group_index, log_folded_height, beta, evals.into_iter());
 
         // If there are new polynomials to roll in at the folded height, do so.
         //

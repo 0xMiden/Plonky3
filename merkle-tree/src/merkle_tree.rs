@@ -627,18 +627,14 @@ mod tests {
             assert_eq!(
                 tree_new.root(),
                 tree_single.root(),
-                "Roots differ for matrix size {}x{}",
-                rows,
-                cols
+                "Roots differ for matrix size {rows}x{cols}",
             );
 
             // Compare digest layer counts
             assert_eq!(
                 tree_new.digest_layers.len(),
                 tree_single.digest_layers.len(),
-                "Digest layer counts differ for matrix size {}x{}",
-                rows,
-                cols
+                "Digest layer counts differ for matrix size {rows}x{cols}",
             );
 
             // Compare each digest layer
@@ -650,8 +646,7 @@ mod tests {
             {
                 assert_eq!(
                     layer_new, layer_single,
-                    "Digest layer {} differs for matrix size {}x{}",
-                    i, rows, cols
+                    "Digest layer {i} differs for matrix size {rows}x{cols}",
                 );
             }
         }

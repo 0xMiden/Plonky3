@@ -124,7 +124,7 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
         index: usize,
         log_height: usize,
         beta: EF,
-        evals: impl ParallelIterator<Item = EF>,
+        evals: impl Iterator<Item = EF>,
     ) -> EF {
         let folding_factor = 1 << self.log_folding_factor;
         if folding_factor == 2 {
@@ -150,7 +150,7 @@ impl<InputProof, InputError: Debug> TwoAdicFriFolding<InputProof, InputError> {
         index: usize,
         log_height: usize,
         beta: EF,
-        evals: impl ParallelIterator<Item = EF>,
+        evals: impl Iterator<Item = EF>,
     ) -> EF
     where
         EF: ExtensionField<F>,
@@ -182,7 +182,7 @@ impl<InputProof, InputError: Debug> TwoAdicFriFolding<InputProof, InputError> {
         index: usize,
         log_height: usize,
         beta: EF,
-        evals: impl ParallelIterator<Item = EF>,
+        evals: impl Iterator<Item = EF>,
         folding_factor: usize,
     ) -> EF
     where

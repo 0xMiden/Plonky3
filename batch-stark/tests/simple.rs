@@ -556,5 +556,5 @@ fn test_circle_stark_batch() -> Result<(), impl Debug> {
     let airs = vec![air_fib1, air_fib2];
     let public_values = vec![fib_pis1, fib_pis2];
     verify_batch(&config, &airs, &proof, &public_values)
-        .map_err(|e| format!("Verification failed: {:?}", e))
+        .map_err(|e| format!("Verification failed: {e:?}"))
 }
