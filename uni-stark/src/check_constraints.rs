@@ -271,9 +271,6 @@ mod tests {
                 builder.when_transition().assert_eq(b, a + F::ONE);
             }
 
-            // New logic: enforce row[i+1] = row[i] + 1, only on transitions
-            builder.when_transition().assert_eq(b, a + F::ONE);
-
             // ======================
             // aux trace
             // ======================

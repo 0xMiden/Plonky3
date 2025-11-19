@@ -1,7 +1,8 @@
 use core::ops::{Add, Mul, Sub};
 
-use crate::FilteredMidenAirBuilder;
-use crate::{Algebra, ExtensionField, Field, Matrix, PrimeCharacteristicRing};
+use crate::{
+    Algebra, ExtensionField, Field, FilteredMidenAirBuilder, Matrix, PrimeCharacteristicRing,
+};
 
 /// Super trait for all AIR builders in the Miden VM ecosystem.
 ///

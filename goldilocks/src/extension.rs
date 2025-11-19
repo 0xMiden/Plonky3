@@ -1,13 +1,14 @@
 use p3_field::extension::{
-    BinomiallyExtendable, BinomiallyExtendableAlgebra, HasTwoAdicBinomialExtension,
+    BinomiallyExtendable, BinomiallyExtendableAlgebra, ComplexExtendable,
+    HasTwoAdicBinomialExtension,
 };
 use p3_field::{PrimeCharacteristicRing, TwoAdicField, field_to_array};
 
 use crate::Goldilocks;
 
-impl BinomiallyExtendableAlgebra<Goldilocks, 2> for Goldilocks {}
+//impl BinomiallyExtendableAlgebra<Goldilocks, 2> for Goldilocks {}
 
-impl BinomiallyExtendable<2> for Goldilocks {
+/*impl BinomiallyExtendable<2> for Goldilocks {
     // Verifiable in Sage with
     // `R.<x> = GF(p)[]; assert (x^2 - 7).is_irreducible()`.
     const W: Self = Self::new(7);
@@ -19,6 +20,23 @@ impl BinomiallyExtendable<2> for Goldilocks {
         Self::new(18081566051660590251),
         Self::new(16121475356294670766),
     ];
+}*/
+
+impl ComplexExtendable for Goldilocks {
+    const COMPLEX_GENERATOR: p3_field::extension::Complex<Self> =
+        p3_field::extension::Complex::new_complex(
+            Goldilocks::new(18081566051660590251),
+            Goldilocks::new(16121475356294670766),
+        );
+
+    const CIRCLE_TWO_ADICITY: usize = 33;
+
+    fn circle_two_adic_generator(bits: usize) -> p3_field::extension::Complex<Self> {
+        p3_field::extension::Complex::new_complex(
+            Goldilocks::two_adic_generator(bits),
+            Goldilocks::ZERO,
+        )
+    }
 }
 
 impl HasTwoAdicBinomialExtension<2> for Goldilocks {

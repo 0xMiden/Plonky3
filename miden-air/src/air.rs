@@ -1,7 +1,4 @@
-use crate::ExtensionField;
-use crate::Field;
-use crate::MidenAirBuilder;
-use crate::RowMajorMatrix;
+use crate::{ExtensionField, Field, MidenAirBuilder, RowMajorMatrix};
 
 /// Super trait for all AIR definitions in the Miden VM ecosystem.
 ///
