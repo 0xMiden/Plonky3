@@ -25,11 +25,7 @@ pub trait BaseAirWithPublicValues<F>: BaseAir<F> {
 }
 
 /// An extension of `BaseAir` that includes support for auxiliary traces.
-pub trait BaseAirWithAuxTrace<F, EF>: BaseAir<F>
-where
-    EF: ExtensionField<F>,
-    F: Field,
-{
+pub trait BaseAirWithAuxTrace<F, EF>: BaseAir<F> {
     /// Number of challenges (extension fields) that is required to compute the aux trace
     fn num_randomness(&self) -> usize {
         0

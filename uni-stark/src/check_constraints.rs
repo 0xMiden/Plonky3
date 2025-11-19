@@ -1,20 +1,12 @@
-#[cfg(debug_assertions)]
 use alloc::vec::Vec;
 
-#[cfg(debug_assertions)]
-use p3_air::Air;
-use p3_air::{AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder};
-#[cfg(debug_assertions)]
-use p3_field::BasedVectorSpace;
-use p3_field::{ExtensionField, Field};
-#[cfg(debug_assertions)]
+use p3_air::{
+    Air, AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder,
+};
+use p3_field::{BasedVectorSpace, ExtensionField, Field};
 use p3_matrix::Matrix;
-#[cfg(debug_assertions)]
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
-#[cfg(debug_assertions)]
-use p3_matrix::stack::VerticalPair;
-use p3_matrix::stack::ViewPair;
-#[cfg(debug_assertions)]
+use p3_matrix::stack::{VerticalPair, ViewPair};
 use tracing::instrument;
 
 /// Runs constraint checks using a given AIR definition and trace matrix.
@@ -270,9 +262,6 @@ mod tests {
                 // New logic: enforce row[i+1] = row[i] + 1, only on transitions
                 builder.when_transition().assert_eq(b, a + F::ONE);
             }
-
-            // New logic: enforce row[i+1] = row[i] + 1, only on transitions
-            builder.when_transition().assert_eq(b, a + F::ONE);
 
             // ======================
             // aux trace

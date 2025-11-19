@@ -45,8 +45,6 @@ mod filtered_builder;
 pub use air::MidenAir;
 pub use builder::MidenAirBuilder;
 pub use filtered_builder::FilteredMidenAirBuilder;
-
-
 // Re-export for convenience
 pub use p3_air::{
     Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, BaseAirWithAuxTrace,

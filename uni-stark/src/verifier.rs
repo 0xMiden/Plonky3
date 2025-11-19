@@ -26,8 +26,8 @@ pub fn verify<SC, A>(
 where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>>
-        + for<'a> Air<VerifierConstraintFolder<'a, SC>>
-        + BaseAirWithAuxTrace<Val<SC>, SC::Challenge>,
+        + BaseAirWithAuxTrace<Val<SC>, SC::Challenge>
+        + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
 {
     let Proof {
         commitments,
