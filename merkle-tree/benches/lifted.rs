@@ -3,13 +3,13 @@ use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
+use p3_commit::Mmcs;
 use p3_field::Field;
 use p3_matrix::Matrix;
 use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_merkle_tree::{build_leaves_cyclic, build_leaves_upsampled, Lifting, MerkleTreeLmcs};
+use p3_merkle_tree::{Lifting, MerkleTreeLmcs, build_leaves_cyclic, build_leaves_upsampled};
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-use p3_commit::Mmcs;
 use p3_util::reverse_slice_index_bits;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -17,7 +17,7 @@ use rand::rngs::SmallRng;
 type F = BabyBear;
 type Packed = <F as Field>::Packing;
 
-// For LMCS benches, we want RATE=16. Since StatefulSponge asserts RATE < WIDTH,
+// Legacy note: LMCS no longer needs a global RATE; the sponge handles its own rate.
 // use a wider Poseidon2 permutation (WIDTH=24).
 const WIDTH: usize = 24;
 const RATE: usize = 16;
@@ -161,8 +161,7 @@ macro_rules! lmcs_benches {
         mod $modname {
             use super::*;
 
-            pub fn components(
-            ) -> (
+            pub fn components() -> (
                 PaddingFreeSponge<$Perm, $WIDTH, $RATE, $DIGEST>,
                 TruncatedPermutation<$Perm, 2, $DIGEST, $WIDTH>,
             ) {
@@ -185,7 +184,9 @@ macro_rules! lmcs_benches {
                 let scenarios: Vec<(&str, Vec<RowMajorMatrix<FField>>)> = vec![
                     (
                         "1x(2^15 x 40)",
-                        vec![RowMajorMatrix::<FField>::rand(&mut rng, ROWS_LARGE, WIDTH_COLS)],
+                        vec![RowMajorMatrix::<FField>::rand(
+                            &mut rng, ROWS_LARGE, WIDTH_COLS,
+                        )],
                     ),
                     (
                         "(2^14,2^15) x 40",
@@ -213,10 +214,7 @@ macro_rules! lmcs_benches {
                             lifting,
                         );
                         group.bench_with_input(
-                            BenchmarkId::new(
-                                format!("{:?}/{label}", lifting),
-                                format!("{dims:?}"),
-                            ),
+                            BenchmarkId::new(format!("{:?}/{label}", lifting), format!("{dims:?}")),
                             &matrices,
                             |b, mats| {
                                 b.iter(|| {
@@ -274,7 +272,8 @@ macro_rules! lmcs_benches {
                         b.iter(|| {
                             let idx = indices[k % indices.len()];
                             let opening_ref = (&openings[k % openings.len()]).into();
-                            lmcs.verify_batch(&commit, &dims_local, idx, opening_ref).unwrap();
+                            lmcs.verify_batch(&commit, &dims_local, idx, opening_ref)
+                                .unwrap();
                             k = k.wrapping_add(1);
                         });
                     });
@@ -288,7 +287,14 @@ macro_rules! lmcs_benches {
 }
 
 // Instantiate benches for BabyBear + Poseidon2 with WIDTH=24, RATE=16, DIGEST=8.
-lmcs_benches!(bb_p2_w24_r16, BabyBear, Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST);
+lmcs_benches!(
+    bb_p2_w24_r16,
+    BabyBear,
+    Poseidon2BabyBear<WIDTH>,
+    WIDTH,
+    RATE,
+    DIGEST
+);
 
 fn setup_criterion() -> Criterion {
     // Configure globally: disable plots, ensure enough time for large inputs, and respect

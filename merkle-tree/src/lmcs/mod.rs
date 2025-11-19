@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
 use p3_field::PackedValue;
 use p3_matrix::{Dimensions, Matrix};
-use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulSponge};
+use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulHasher};
 use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,7 @@ mod merkle_tree;
 mod test_helpers;
 mod utils;
 
-pub use merkle_tree::{LiftedMerkleTree, build_leaves_cyclic, build_leaves_upsampled, Lifting};
+pub use merkle_tree::{LiftedMerkleTree, Lifting, build_leaves_cyclic, build_leaves_upsampled};
 
 use crate::lmcs::utils::validate_heights;
 
@@ -31,16 +31,15 @@ use crate::lmcs::utils::validate_heights;
 /// side into one matrix. The Merkle tree and verification behavior are identical to committing to
 /// and opening that single concatenated matrix.
 #[derive(Clone, Debug)]
-pub struct MerkleTreeLmcs<P, H, C, const WIDTH: usize, const RATE: usize, const DIGEST_ELEMS: usize>
-{
+pub struct MerkleTreeLmcs<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize> {
     sponge: H,
     compress: C,
     lifting: Lifting,
-    _phantom: PhantomData<P>,
+    _phantom: PhantomData<(PF, PD)>,
 }
 
-impl<P, H, C, const WIDTH: usize, const RATE: usize, const DIGEST_ELEMS: usize>
-    MerkleTreeLmcs<P, H, C, WIDTH, RATE, DIGEST_ELEMS>
+impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize>
+    MerkleTreeLmcs<PF, PD, H, C, WIDTH, DIGEST_ELEMS>
 {
     pub const fn new(sponge: H, compress: C, lifting: Lifting) -> Self {
         Self {
@@ -52,28 +51,33 @@ impl<P, H, C, const WIDTH: usize, const RATE: usize, const DIGEST_ELEMS: usize>
     }
 }
 
-impl<P, H, C, const WIDTH: usize, const RATE: usize, const DIGEST_ELEMS: usize> Mmcs<P::Value>
-    for MerkleTreeLmcs<P, H, C, WIDTH, RATE, DIGEST_ELEMS>
+impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize> Mmcs<PF::Value>
+    for MerkleTreeLmcs<PF, PD, H, C, WIDTH, DIGEST_ELEMS>
 where
-    P: PackedValue + Default,
-    P::Value: Copy + Default + Send + Sync + Clone,
-    H: StatefulSponge<P, WIDTH, RATE> + StatefulSponge<P::Value, WIDTH, RATE> + Sync + Clone,
-    C: PseudoCompressionFunction<[P::Value; DIGEST_ELEMS], 2>
-        + PseudoCompressionFunction<[P; DIGEST_ELEMS], 2>
+    PF: PackedValue + Default,
+    PF::Value: Copy + Default + Send + Sync + Clone,
+    PD: PackedValue + Default,
+    PD::Value: Copy + Default + Send + Sync + Clone,
+    H: StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
+        + StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>
         + Sync
         + Clone,
-    [P::Value; DIGEST_ELEMS]: Serialize + for<'de> Deserialize<'de>,
+    C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>
+        + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
+        + Sync
+        + Clone,
+    [PD::Value; DIGEST_ELEMS]: Serialize + for<'de> Deserialize<'de>,
 {
-    type ProverData<M> = LiftedMerkleTree<P::Value, M, DIGEST_ELEMS>;
-    type Commitment = Hash<P::Value, P::Value, DIGEST_ELEMS>;
-    type Proof = Vec<[P::Value; DIGEST_ELEMS]>;
+    type ProverData<M> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST_ELEMS>;
+    type Commitment = Hash<PF::Value, PD::Value, DIGEST_ELEMS>;
+    type Proof = Vec<[PD::Value; DIGEST_ELEMS]>;
     type Error = LmcsError;
 
-    fn commit<M: Matrix<P::Value>>(
+    fn commit<M: Matrix<PF::Value>>(
         &self,
         inputs: Vec<M>,
     ) -> (Self::Commitment, Self::ProverData<M>) {
-        let tree = LiftedMerkleTree::new::<P, H, C, WIDTH, RATE>(
+        let tree = LiftedMerkleTree::new::<PF, PD, H, C, WIDTH>(
             &self.sponge,
             &self.compress,
             self.lifting,
@@ -85,19 +89,19 @@ where
         (root, tree)
     }
 
-    fn open_batch<M: Matrix<P::Value>>(
+    fn open_batch<M: Matrix<PF::Value>>(
         &self,
         index: usize,
         tree: &Self::ProverData<M>,
-    ) -> BatchOpening<P::Value, Self> {
+    ) -> BatchOpening<PF::Value, Self> {
         let final_height = tree.leaves.last().unwrap().height();
         assert!(
             index < final_height,
             "index {index} out of range {final_height}"
         );
 
-        // Map to per-matrix indices and pad to RATE-aligned widths.
-        let opened_rows = tree.rows(index, RATE);
+        // Map to per-matrix indices.
+        let opened_rows = tree.rows(index);
 
         let mut proof = Vec::with_capacity(tree.digest_layers.len().saturating_sub(1));
         let mut layer_index = index;
@@ -113,7 +117,7 @@ where
         BatchOpening::new(opened_rows, proof)
     }
 
-    fn get_matrices<'a, M: Matrix<P::Value>>(&self, tree: &'a Self::ProverData<M>) -> Vec<&'a M> {
+    fn get_matrices<'a, M: Matrix<PF::Value>>(&self, tree: &'a Self::ProverData<M>) -> Vec<&'a M> {
         // Return references to the originally committed matrices in original order.
         tree.leaves.iter().collect()
     }
@@ -123,7 +127,7 @@ where
         commit: &Self::Commitment,
         dimensions: &[Dimensions],
         index: usize,
-        batch_opening: BatchOpeningRef<'_, P::Value, Self>,
+        batch_opening: BatchOpeningRef<'_, PF::Value, Self>,
     ) -> Result<(), Self::Error> {
         let (opened_values, opening_proof) = batch_opening.unpack();
 
@@ -150,11 +154,10 @@ where
         }
 
         for (idx, (opened_row, dimension)) in zip(opened_values, dimensions).enumerate() {
-            let padded_width = dimension.width.next_multiple_of(RATE);
-            if opened_row.len() != padded_width {
+            if opened_row.len() != dimension.width {
                 return Err(LmcsError::WrongWidth {
                     matrix: idx,
-                    expected: padded_width,
+                    expected: dimension.width,
                     actual: opened_row.len(),
                 });
             }
@@ -163,12 +166,13 @@ where
         let sponge_state =
             opened_values
                 .iter()
-                .fold([P::Value::default(); WIDTH], |mut state, opened_row| {
-                    self.sponge.absorb(&mut state, opened_row.iter().copied());
+                .fold([PD::Value::default(); WIDTH], |mut state, opened_row| {
+                    self.sponge
+                        .absorb_into(&mut state, opened_row.iter().copied());
                     state
                 });
 
-        let mut digest = self.sponge.squeeze::<DIGEST_ELEMS>(&sponge_state);
+        let mut digest = self.sponge.squeeze(&sponge_state);
         let mut current_index = index;
         for sibling in opening_proof {
             let (left, right) = if current_index & 1 == 0 {
@@ -230,7 +234,7 @@ mod tests {
 
     use p3_baby_bear::Poseidon2BabyBear;
     use p3_matrix::dense::RowMajorMatrix;
-    use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
+    use p3_symmetric::{StatefulSponge, TruncatedPermutation};
     use rand::rngs::SmallRng;
     use rand::{RngCore, SeedableRng};
 
@@ -238,12 +242,12 @@ mod tests {
     use super::*;
 
     fn components() -> (
-        PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
+        StatefulSponge<Poseidon2BabyBear<WIDTH>, WIDTH, DIGEST, RATE>,
         TruncatedPermutation<Poseidon2BabyBear<WIDTH>, 2, DIGEST, WIDTH>,
     ) {
         let mut rng = SmallRng::seed_from_u64(123);
         let perm = Poseidon2BabyBear::<WIDTH>::new_from_rng_128(&mut rng);
-        let sponge = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(perm.clone());
+        let sponge = StatefulSponge::<_, WIDTH, DIGEST, RATE> { p: perm.clone() };
         let compress = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(perm);
         (sponge, compress)
     }
@@ -256,7 +260,7 @@ mod tests {
     #[test]
     fn commit_open_verify_roundtrip() {
         let (sponge, compress) = components();
-        let lmcs = MerkleTreeLmcs::<P, _, _, WIDTH, RATE, DIGEST>::new(
+        let lmcs = MerkleTreeLmcs::<P, P, _, _, WIDTH, DIGEST>::new(
             sponge.clone(),
             compress.clone(),
             Lifting::Upsample,

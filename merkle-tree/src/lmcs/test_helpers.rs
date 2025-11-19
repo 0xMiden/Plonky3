@@ -5,7 +5,7 @@ use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_field::{Field, PackedValue, PrimeCharacteristicRing};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::{Dimensions, Matrix};
-use p3_symmetric::{PaddingFreeSponge, StatefulSponge, TruncatedPermutation};
+use p3_symmetric::{StatefulHasher, StatefulSponge, TruncatedPermutation};
 use rand::rngs::SmallRng;
 use rand::{RngCore, SeedableRng};
 
@@ -16,13 +16,13 @@ pub(crate) type P = <F as Field>::Packing;
 pub(crate) const WIDTH: usize = 16;
 pub(crate) const RATE: usize = 8;
 pub(crate) const DIGEST: usize = 8;
-pub(crate) type Sponge = PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>;
+pub(crate) type Sponge = StatefulSponge<Poseidon2BabyBear<WIDTH>, WIDTH, DIGEST, RATE>;
 pub(crate) type Compressor = TruncatedPermutation<Poseidon2BabyBear<WIDTH>, 2, DIGEST, WIDTH>;
 
 pub(crate) fn components() -> (Sponge, Compressor) {
     let mut rng = SmallRng::seed_from_u64(123);
     let perm = Poseidon2BabyBear::<WIDTH>::new_from_rng_128(&mut rng);
-    let sponge = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(perm.clone());
+    let sponge = StatefulSponge::<_, WIDTH, DIGEST, RATE> { p: perm.clone() };
     let compress = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(perm);
     (sponge, compress)
 }
@@ -59,7 +59,7 @@ pub(crate) fn build_leaves_single(matrix: &RowMajorMatrix<F>, sponge: &Sponge) -
         .rows()
         .map(|row| {
             let mut state = [F::ZERO; WIDTH];
-            sponge.absorb(&mut state, row);
+            sponge.absorb_into(&mut state, row);
             sponge.squeeze(&state)
         })
         .collect()

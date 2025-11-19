@@ -1,4 +1,3 @@
-use alloc::vec::Vec;
 use core::array;
 
 use p3_field::PackedValue;
@@ -42,19 +41,6 @@ pub fn validate_heights(dims: impl IntoIterator<Item = usize>) -> Result<(), Lmc
         return Err(LmcsError::EmptyBatch);
     }
     Ok(())
-}
-
-/// Pad each row to a multiple of `multiple` by appending default values.
-///
-/// Used to realize the LMCS “virtual horizontal zero-padding” when absorbing rows into the
-/// sponge in chunks of size `RATE`. For each row, extends its length to
-/// `row.len().next_multiple_of(multiple)` by appending `T::default()` values.
-pub fn pad_rows<T: Clone + Default>(mut rows: Vec<Vec<T>>, multiple: usize) -> Vec<Vec<T>> {
-    for row in rows.iter_mut() {
-        let padded_width = row.len().next_multiple_of(multiple);
-        row.resize(padded_width, T::default());
-    }
-    rows
 }
 
 /// Unpack a SIMD-packed array into multiple scalar arrays (one per SIMD lane).

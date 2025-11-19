@@ -9,11 +9,11 @@ use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::{
     IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelSliceMut,
 };
-use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulSponge};
+use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulHasher};
 use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
 
-use super::utils::{pack_arrays, pad_rows, unpack_array_into, validate_heights};
+use super::utils::{pack_arrays, unpack_array_into, validate_heights};
 use crate::LmcsError;
 
 /// Lifting method used to align matrices of different heights to a common height.
@@ -121,7 +121,7 @@ impl Lifting {
 /// This generally shouldn't be used directly. If you're using a Merkle tree as an MMCS,
 /// see the MMCS wrapper types.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct LiftedMerkleTree<F, M, const DIGEST_ELEMS: usize> {
+pub struct LiftedMerkleTree<F, D, M, const DIGEST_ELEMS: usize> {
     /// All leaf matrices in insertion order.
     ///
     /// Matrices must be sorted by height (shortest to tallest) and all heights must be
@@ -141,19 +141,22 @@ pub struct LiftedMerkleTree<F, M, const DIGEST_ELEMS: usize> {
     /// Serialization requires that `[F; DIGEST_ELEMS]` implements `Serialize` and
     /// `Deserialize`. This is automatically satisfied when `F` is a fixed-size type.
     #[serde(
-        bound(serialize = "[F; DIGEST_ELEMS]: Serialize"),
-        bound(deserialize = "[F; DIGEST_ELEMS]: Deserialize<'de>")
+        bound(serialize = "[D; DIGEST_ELEMS]: Serialize"),
+        bound(deserialize = "[D; DIGEST_ELEMS]: Deserialize<'de>")
     )]
-    pub(crate) digest_layers: Vec<Vec<[F; DIGEST_ELEMS]>>,
+    pub(crate) digest_layers: Vec<Vec<[D; DIGEST_ELEMS]>>,
 
     pub(crate) lifting: Lifting,
 
     /// Zero-sized marker for type safety.
-    _phantom: PhantomData<M>,
+    _phantom: PhantomData<(F, D)>,
 }
 
-impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: usize>
-    LiftedMerkleTree<F, M, DIGEST_ELEMS>
+impl<F, D, M, const DIGEST_ELEMS: usize> LiftedMerkleTree<F, D, M, DIGEST_ELEMS>
+where
+    F: Clone + Default + Send + Sync,
+    D: Clone,
+    M: Matrix<F>,
 {
     /// Build a uniform tree from **one or more matrices** with power-of-two heights.
     ///
@@ -173,30 +176,30 @@ impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: 
     /// * If `leaves` is empty.
     /// * If matrices are not sorted by height.
     /// * If any matrix height is not a power of two.
-    pub fn new<
-        P: PackedValue<Value = F> + Default,
-        H: StatefulSponge<P, WIDTH, RATE> + StatefulSponge<F, WIDTH, RATE> + Sync,
-        C: Sync
-            + PseudoCompressionFunction<[F; DIGEST_ELEMS], 2>
-            + PseudoCompressionFunction<[P; DIGEST_ELEMS], 2>,
-        const WIDTH: usize,
-        const RATE: usize,
-    >(
+    pub fn new<PF, PD, H, C, const WIDTH: usize>(
         h: &H,
         c: &C,
         lifting: Lifting,
         leaves: Vec<M>,
-    ) -> Result<Self, LmcsError> {
+    ) -> Result<Self, LmcsError>
+    where
+        PF: PackedValue<Value = F> + Default,
+        PD: PackedValue<Value = D> + Default,
+        H: StatefulHasher<F, [D; WIDTH], [D; DIGEST_ELEMS]>
+            + StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
+            + Sync,
+        C: Sync
+            + PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>
+            + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>,
+    {
         assert!(!leaves.is_empty(), "No matrices given");
 
         // Build leaf digests from matrices using the sponge
         let leaf_digests = match lifting {
             Lifting::Upsample => {
-                build_leaves_upsampled::<P, M, H, WIDTH, RATE, DIGEST_ELEMS>(&leaves, h)
+                build_leaves_upsampled::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h)
             }
-            Lifting::Cyclic => {
-                build_leaves_cyclic::<P, M, H, WIDTH, RATE, DIGEST_ELEMS>(&leaves, h)
-            }
+            Lifting::Cyclic => build_leaves_cyclic::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h),
         }?;
 
         // Build digest layers by repeatedly compressing until we reach the root
@@ -208,7 +211,7 @@ impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: 
                 break;
             }
 
-            let next_layer = compress_uniform::<P, C, DIGEST_ELEMS>(prev_layer, c);
+            let next_layer = compress_uniform::<PD, C, DIGEST_ELEMS>(prev_layer, c);
             digest_layers.push(next_layer);
         }
 
@@ -222,21 +225,20 @@ impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: 
 
     /// Return the root digest of the tree.
     #[must_use]
-    pub fn root(&self) -> Hash<F, F, DIGEST_ELEMS> {
-        self.digest_layers.last().unwrap()[0].into()
+    pub fn root(&self) -> Hash<F, D, DIGEST_ELEMS> {
+        self.digest_layers.last().unwrap()[0].clone().into()
     }
 
-    pub fn rows(&self, index: usize, padding_multiple: usize) -> Vec<Vec<F>> {
+    pub fn rows(&self, index: usize) -> Vec<Vec<F>> {
         let max_height = self.leaves.last().unwrap().height();
-        let mut rows = Vec::with_capacity(self.leaves.len());
 
-        for m in &self.leaves {
-            let row_index = self.lifting.map_index(index, m.height(), max_height);
-            let row = m.row_slice(row_index).unwrap().to_vec();
-
-            rows.push(row);
-        }
-        pad_rows(rows, padding_multiple)
+        self.leaves
+            .iter()
+            .map(|m| {
+                let row_index = self.lifting.map_index(index, m.height(), max_height);
+                m.row_slice(row_index).unwrap().to_vec()
+            })
+            .collect()
     }
 }
 
@@ -251,25 +253,25 @@ impl<F: Clone + Send + Sync + Copy + Default, M: Matrix<F>, const DIGEST_ELEMS: 
 /// - `P::WIDTH` is a power of two.
 ///
 /// Panics in debug builds if preconditions are violated.
-pub fn build_leaves_upsampled<
-    P: PackedValue + Default,
-    M: Matrix<P::Value>,
-    H: StatefulSponge<P, WIDTH, RATE> + StatefulSponge<P::Value, WIDTH, RATE> + Sync,
-    const WIDTH: usize,
-    const RATE: usize,
-    const DIGEST_ELEMS: usize,
->(
+pub fn build_leaves_upsampled<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
     matrices: &[M],
     sponge: &H,
-) -> Result<Vec<[P::Value; DIGEST_ELEMS]>, LmcsError> {
-    const {
-        assert!(P::WIDTH.is_power_of_two());
-    };
+) -> Result<Vec<[PD::Value; DIGEST_ELEMS]>, LmcsError>
+where
+    PF: PackedValue + Default,
+    PD: PackedValue + Default,
+    M: Matrix<PF::Value>,
+    H: StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>
+        + StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
+        + Sync,
+{
+    const { assert!(PF::WIDTH.is_power_of_two()) };
+    const { assert!(PD::WIDTH.is_power_of_two()) };
     validate_heights(matrices.iter().map(|d| d.dimensions().height))?;
 
     let final_height = matrices.last().unwrap().height();
 
-    let scalar_default = [P::Value::default(); WIDTH];
+    let scalar_default = [PD::Value::default(); WIDTH];
 
     // Memory buffers:
     // - states: Per-leaf scalar states (one per final row), maintained across matrices.
@@ -300,14 +302,14 @@ pub fn build_leaves_upsampled<
         }
 
         // Absorb the rows of the matrix into the extended state vector
-        absorb_matrix::<P, _, _, _, _>(&mut states[..height], matrix, sponge);
+        absorb_matrix::<PF, PD, _, _, _, _>(&mut states[..height], matrix, sponge);
 
         active_height = height;
     }
 
     Ok(states
         .par_iter_mut()
-        .map(|state| sponge.squeeze::<DIGEST_ELEMS>(state))
+        .map(|state| sponge.squeeze(state))
         .collect())
 }
 
@@ -323,23 +325,25 @@ pub fn build_leaves_upsampled<
 ///
 /// Panics in debug builds if preconditions are violated.
 #[allow(dead_code)]
-pub fn build_leaves_cyclic<
-    P: PackedValue + Default,
-    M: Matrix<P::Value>,
-    H: StatefulSponge<P, WIDTH, RATE> + StatefulSponge<P::Value, WIDTH, RATE> + Sync,
-    const WIDTH: usize,
-    const RATE: usize,
-    const DIGEST_ELEMS: usize,
->(
+pub fn build_leaves_cyclic<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
     matrices: &[M],
     sponge: &H,
-) -> Result<Vec<[P::Value; DIGEST_ELEMS]>, LmcsError> {
-    const { assert!(P::WIDTH.is_power_of_two()) };
+) -> Result<Vec<[PD::Value; DIGEST_ELEMS]>, LmcsError>
+where
+    PF: PackedValue + Default,
+    PD: PackedValue + Default,
+    M: Matrix<PF::Value>,
+    H: StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>
+        + StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
+        + Sync,
+{
+    const { assert!(PF::WIDTH.is_power_of_two()) };
+    const { assert!(PD::WIDTH.is_power_of_two()) };
     validate_heights(matrices.iter().map(|d| d.dimensions().height))?;
 
     let final_height = matrices.last().unwrap().height();
 
-    let default_state = [P::Value::default(); WIDTH];
+    let default_state = [PD::Value::default(); WIDTH];
     let mut states = vec![default_state; final_height];
     let mut active_height = matrices.first().unwrap().height();
 
@@ -356,14 +360,14 @@ pub fn build_leaves_cyclic<
         }
 
         // Absorb the rows of the matrix into the extended state vector
-        absorb_matrix::<P, _, _, _, _>(&mut states[..height], matrix, sponge);
+        absorb_matrix::<PF, PD, _, _, WIDTH, DIGEST_ELEMS>(&mut states[..height], matrix, sponge);
 
         active_height = height;
     }
 
     Ok(states
         .into_iter()
-        .map(|state| sponge.squeeze::<DIGEST_ELEMS>(&state))
+        .map(|state| sponge.squeeze(&state))
         .collect())
 }
 
@@ -377,38 +381,39 @@ pub fn build_leaves_cyclic<
 /// states mutated; it does not change the lifting shape or squeeze digests.
 ///
 /// The implementation may use scalar or SIMD packing internally depending on the matrix height.
-fn absorb_matrix<
-    P: PackedValue + Default,
-    M: Matrix<P::Value>,
-    H: StatefulSponge<P, WIDTH, RATE> + StatefulSponge<P::Value, WIDTH, RATE> + Sync,
-    const WIDTH: usize,
-    const RATE: usize,
->(
-    states: &mut [[P::Value; WIDTH]],
+fn absorb_matrix<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
+    states: &mut [[PD::Value; WIDTH]],
     matrix: &M,
     sponge: &H,
-) {
+) where
+    PF: PackedValue + Default,
+    PD: PackedValue + Default,
+    M: Matrix<PF::Value>,
+    H: StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>
+        + StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
+        + Sync,
+{
     let height = matrix.height();
     assert_eq!(height, states.len());
 
-    if height < P::WIDTH {
+    if height < PF::WIDTH {
         // Scalar path: walk every final leaf state and absorb the wrapped row for this matrix.
         states
             .iter_mut()
             .zip(matrix.rows())
             .for_each(|(state, row)| {
-                sponge.absorb(state, row);
+                sponge.absorb_into(state, row);
             });
     } else {
         // SIMD path: gather → absorb wrapped packed row → scatter per chunk.
         states
-            .par_chunks_mut(P::WIDTH)
+            .par_chunks_mut(PF::WIDTH)
             .enumerate()
             .for_each(|(packed_idx, states_chunk)| {
-                let mut packed_state: [P; WIDTH] = pack_arrays(states_chunk);
-                let row_idx = packed_idx * P::WIDTH;
+                let mut packed_state: [PD; WIDTH] = pack_arrays(states_chunk);
+                let row_idx = packed_idx * PF::WIDTH;
                 let row = matrix.vertically_packed_row(row_idx);
-                sponge.absorb(&mut packed_state, row);
+                sponge.absorb_into(&mut packed_state, row);
                 unpack_array_into(&packed_state, states_chunk);
             });
     }
@@ -484,11 +489,11 @@ mod tests {
     };
 
     fn build_leaves_cyclic(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
-        super::build_leaves_cyclic::<P, _, _, _, _, _>(matrices, sponge).unwrap()
+        super::build_leaves_cyclic::<P, P, _, _, _, _>(matrices, sponge).unwrap()
     }
 
     fn build_leaves_upsampled(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
-        super::build_leaves_upsampled::<P, _, _, _, _, _>(matrices, sponge).unwrap()
+        super::build_leaves_upsampled::<P, P, _, _, _, _>(matrices, sponge).unwrap()
     }
 
     #[test]
