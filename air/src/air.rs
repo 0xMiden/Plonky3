@@ -31,7 +31,7 @@ pub trait BaseAirWithAuxTrace<F, EF>: BaseAir<F> {
         0
     }
 
-    /// Number of columns (in based field) that is required for aux trace
+    /// Number of columns (in extension field) that is required for aux trace
     fn aux_width(&self) -> usize {
         0
     }

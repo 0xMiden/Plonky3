@@ -20,8 +20,8 @@ pub fn get_log_quotient_degree<F, A>(
     preprocessed_width: usize,
     num_public_values: usize,
     is_zk: usize,
-    aux_width_in_base_field: usize,
-    num_randomness_in_base_field: usize,
+    aux_width: usize,
+    num_randomness: usize,
 ) -> usize
 where
     F: Field,
@@ -33,8 +33,8 @@ where
         air,
         preprocessed_width,
         num_public_values,
-        aux_width_in_base_field,
-        num_randomness_in_base_field,
+        aux_width,
+        num_randomness,
     ) + is_zk)
         .max(2);
 
@@ -49,8 +49,8 @@ pub fn get_max_constraint_degree<F, A>(
     air: &A,
     preprocessed_width: usize,
     num_public_values: usize,
-    aux_width_in_base_field: usize,
-    num_randomness_in_base_field: usize,
+    aux_width: usize,
+    num_randomness: usize,
 ) -> usize
 where
     F: Field,
@@ -60,8 +60,8 @@ where
         air,
         preprocessed_width,
         num_public_values,
-        aux_width_in_base_field,
-        num_randomness_in_base_field,
+        aux_width,
+        num_randomness,
     )
     .iter()
     .map(|c| c.degree_multiple())
@@ -74,8 +74,8 @@ pub fn get_symbolic_constraints<F, A>(
     air: &A,
     preprocessed_width: usize,
     num_public_values: usize,
-    aux_width_in_base_field: usize,
-    num_randomness_in_base_field: usize,
+    aux_width: usize,
+    num_randomness: usize,
 ) -> Vec<SymbolicExpression<F>>
 where
     F: Field,
@@ -84,8 +84,8 @@ where
     let mut builder = SymbolicAirBuilder::new(
         preprocessed_width,
         air.width(),
-        aux_width_in_base_field,
-        num_randomness_in_base_field,
+        aux_width,
+        num_randomness,
         num_public_values,
     );
     air.eval(&mut builder);

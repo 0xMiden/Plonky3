@@ -13,12 +13,10 @@ use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{
-    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
-    StarkGenericConfig, SymbolicAirBuilder, Val, generate_logup_trace, get_log_quotient_degree,
-    get_symbolic_constraints,
+    Commitments, DebugConstraintBuilder, Domain, OpenedValues, PackedChallenge, PackedVal, Proof,
+    ProverConstraintFolder, StarkGenericConfig, SymbolicAirBuilder, Val, check_constraints,
+    generate_logup_trace, get_log_quotient_degree, get_symbolic_constraints,
 };
-#[cfg(debug_assertions)]
-use crate::{DebugConstraintBuilder, check_constraints};
 
 #[instrument(skip_all)]
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
@@ -48,13 +46,13 @@ where
     let log_ext_degree = log_degree + config.is_zk();
 
     // Compute the constraint polynomials as vectors of symbolic expressions.
-    let aux_width_base = air.aux_width();
+    let aux_width = air.aux_width();
     let num_randomness_base = air.num_randomness() * SC::Challenge::DIMENSION;
     let symbolic_constraints = get_symbolic_constraints(
         air,
         0, // pre-processed col = 0
         public_values.len(),
-        aux_width_base,
+        aux_width,
         num_randomness_base,
     );
 
@@ -99,7 +97,7 @@ where
         0,
         public_values.len(),
         config.is_zk(),
-        aux_width_base,
+        aux_width,
         num_randomness_base,
     );
     let quotient_degree = 1 << (log_quotient_degree + config.is_zk());

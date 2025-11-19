@@ -33,29 +33,6 @@ impl<M> FriParameters<M> {
         1 << self.log_folding_factor
     }
 
-    /// Creates new FRI parameters with validation.
-    pub fn new(
-        log_blowup: usize,
-        log_final_poly_len: usize,
-        num_queries: usize,
-        proof_of_work_bits: usize,
-        mmcs: M,
-        log_folding_factor: usize,
-    ) -> Self {
-        assert!(
-            log_folding_factor >= 1,
-            "log_folding_factor must be at least 1"
-        );
-        Self {
-            log_blowup,
-            log_final_poly_len,
-            num_queries,
-            proof_of_work_bits,
-            mmcs,
-            log_folding_factor,
-        }
-    }
-
     /// Returns the soundness bits of this FRI instance based on the
     /// [ethSTARK](https://eprint.iacr.org/2021/582) conjecture.
     ///

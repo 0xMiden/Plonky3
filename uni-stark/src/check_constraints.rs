@@ -22,7 +22,6 @@ use tracing::instrument;
 /// - `aux_randomness`: The randomness values that are used to generate `aux` trace
 /// - `public_values`: Public values provided to the builder
 #[instrument(name = "check constraints", skip_all)]
-#[cfg(debug_assertions)]
 pub(crate) fn check_constraints<F, EF, A>(
     air: &A,
     main: &RowMajorMatrix<F>,
@@ -88,8 +87,7 @@ pub(crate) fn check_constraints<F, EF, A>(
     });
 }
 
-// Helper: convert a flattened base-field row (slice of `F`) into a Vec<EF>
-#[cfg(debug_assertions)]
+/// Helper: convert a flattened base-field row (slice of `F`) into a Vec<EF>
 fn row_to_ext<F, EF>(row: &[F]) -> Vec<EF>
 where
     F: Field,
@@ -218,7 +216,6 @@ impl<'a, F: Field, EF: ExtensionField<F>> PermutationAirBuilder
 }
 
 #[cfg(test)]
-#[cfg(debug_assertions)]
 mod tests {
     use alloc::vec;
 
