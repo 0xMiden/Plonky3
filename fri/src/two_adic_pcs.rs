@@ -146,6 +146,7 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
 
 impl<InputProof, InputError: Debug> TwoAdicFriFolding<InputProof, InputError> {
     pub fn new(log_folding_factor: usize) -> Self {
+        assert!(log_folding_factor > 0);
         Self {
             log_folding_factor,
             _phantom: Default::default(),
