@@ -46,7 +46,7 @@ pub fn prove<
 >(
     config: &SC,
     air: &A,
-    trace: RowMajorMatrix<Val<SC>>,
+    trace: &RowMajorMatrix<Val<SC>>,
     public_values: &[Val<SC>],
 ) -> Proof<SC>
 where
@@ -184,7 +184,7 @@ where
                 .collect();
 
             // Ask config (VM) to build the aux trace if available.
-            let aux_trace_opt = air.build_aux_trace(&trace, &randomness);
+            let aux_trace_opt = air.build_aux_trace(trace, &randomness);
 
             // At the moment, it panics if the aux trace is not available.
             // In a future PR, we will introduce LogUp based permutation as a fall back if aux trace is not available.
@@ -209,7 +209,7 @@ where
     #[cfg(debug_assertions)]
     check_constraints::<Val<SC>, SC::Challenge, _>(
         air,
-        &trace,
+        trace,
         &_aux_trace_opt,
         &randomness,
         &public_values.to_vec(),
@@ -485,29 +485,29 @@ where
                 trace_on_quotient_domain.vertically_packed_row_pair(i_start, next_step),
                 width,
             );
-            let aux = if let Some(aux_trace) = aux_trace_on_quotient_domain.as_ref() {
-                // Aux trace is stored in flattened base field format (each EF element = D base elements)
-                // We need to convert it to packed extension field format
-                let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
-                let base_packed: Vec<PackedVal<SC>> =
-                    aux_trace.vertically_packed_row_pair(i_start, next_step);
-                let ef_width = aux_trace.width() / d;
+            let aux = aux_trace_on_quotient_domain.as_ref().map_or_else(
+                || RowMajorMatrix::new(vec![], 0),
+                |aux_trace| {
+                    // Aux trace is stored in flattened base field format (each EF element = D base elements)
+                    // We need to convert it to packed extension field format
+                    let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
+                    let base_packed: Vec<PackedVal<SC>> =
+                        aux_trace.vertically_packed_row_pair(i_start, next_step);
+                    let ef_width = aux_trace.width() / d;
 
-                // Convert from packed base field to packed extension field
-                // Each EF element is formed from D consecutive base field elements
-                let ef_packed: Vec<PackedChallenge<SC>> = (0..ef_width * 2)
-                    .map(|i| {
-                        PackedChallenge::<SC>::from_basis_coefficients_fn(|j| {
-                            base_packed[i * d + j]
+                    // Convert from packed base field to packed extension field
+                    // Each EF element is formed from D consecutive base field elements
+                    let ef_packed: Vec<PackedChallenge<SC>> = (0..ef_width * 2)
+                        .map(|i| {
+                            PackedChallenge::<SC>::from_basis_coefficients_fn(|j| {
+                                base_packed[i * d + j]
+                            })
                         })
-                    })
-                    .collect();
+                        .collect();
 
-                RowMajorMatrix::new(ef_packed, ef_width)
-            } else {
-                // Create an empty matrix with zero width
-                RowMajorMatrix::new(vec![], 0)
-            };
+                    RowMajorMatrix::new(ef_packed, ef_width)
+                },
+            );
 
             let preprocessed = preprocessed_on_quotient_domain.map(|preprocessed| {
                 let preprocessed_width = preprocessed.width();

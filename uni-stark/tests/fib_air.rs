@@ -143,7 +143,7 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
     let config = MyConfig::new(pcs, challenger);
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
-    let proof = prove(&config, &FibonacciAir {}, trace, &pis);
+    let proof = prove(&config, &FibonacciAir {}, &trace, &pis);
     verify(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");
 }
 
@@ -191,7 +191,7 @@ fn test_zk() {
     let challenger = Challenger::from_hasher(vec![], byte_hash);
     let config = MyHidingConfig::new(pcs, challenger);
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
-    let proof = prove(&config, &FibonacciAir {}, trace, &pis);
+    let proof = prove(&config, &FibonacciAir {}, &trace, &pis);
     verify(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");
 }
 
@@ -227,5 +227,5 @@ fn test_incorrect_public_value() {
         BabyBear::ONE,
         BabyBear::from_u32(123_123), // incorrect result
     ];
-    prove(&config, &FibonacciAir {}, trace, &pis);
+    prove(&config, &FibonacciAir {}, &trace, &pis);
 }

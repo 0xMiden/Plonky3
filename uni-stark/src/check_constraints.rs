@@ -53,6 +53,7 @@ pub(crate) fn check_constraints<F, EF, A>(
         let aux_local_ext;
         let aux_next_ext;
 
+        #[allow(clippy::option_if_let_else)]
         let aux = if let Some(aux_matrix) = aux_trace.as_ref() {
             let aux_local = unsafe { aux_matrix.row_slice_unchecked(row_index) };
             aux_local_ext = row_to_ext::<F, EF>(&aux_local);
@@ -73,7 +74,7 @@ pub(crate) fn check_constraints<F, EF, A>(
             )
         };
 
-        let preprocessed_pair = if let Some(preprocessed_matrix) = preprocessed.as_ref() {
+        let preprocessed_pair = preprocessed.as_ref().map(|preprocessed_matrix| {
             let preprocessed_local = preprocessed_matrix
                 .values
                 .chunks(preprocessed_matrix.width)
@@ -84,13 +85,11 @@ pub(crate) fn check_constraints<F, EF, A>(
                 .chunks(preprocessed_matrix.width)
                 .nth(row_index_next)
                 .unwrap();
-            Some(ViewPair::new(
+            ViewPair::new(
                 RowMajorMatrixView::new_row(preprocessed_local),
                 RowMajorMatrixView::new_row(preprocessed_next),
-            ))
-        } else {
-            None
-        };
+            )
+        });
 
         let mut builder = DebugConstraintBuilder {
             row_index,
@@ -283,7 +282,7 @@ mod tests {
         fn eval(&self, builder: &mut DebugConstraintBuilder<'_, F, EF>) {
             let main = builder.main();
 
-            for col in 0..W {
+            for col in 0..2 {
                 let a = main.top.get(0, col).unwrap();
                 let b = main.bottom.get(0, col).unwrap();
 
@@ -294,7 +293,7 @@ mod tests {
             // Add public value equality on last row for extra coverage
             let public_values = builder.public_values;
             let mut when_last = builder.when(builder.is_last_row);
-            for (i, &pv) in public_values.iter().enumerate().take(W) {
+            for (i, &pv) in public_values.iter().enumerate().take(2) {
                 when_last.assert_eq(main.top.get(0, i).unwrap(), pv);
             }
         }

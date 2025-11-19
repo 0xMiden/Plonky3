@@ -201,7 +201,7 @@ fn test_mul_fib_pair() {
     let num_rows = 1024;
     let config = setup_test_config();
     let trace = generate_trace_rows::<Val>(1, 1, num_rows);
-    let proof = prove(&config, &MulFibPAir::new(num_rows), trace, &[]);
+    let proof = prove(&config, &MulFibPAir::new(num_rows), &trace, &[]);
     verify(&config, &MulFibPAir::new(num_rows), &proof, &[]).expect("verification failed");
 }
 
@@ -210,7 +210,7 @@ fn test_tampered_preprocessed_fails() {
     let num_rows = 1024;
     let config = setup_test_config();
     let trace = generate_trace_rows::<Val>(1, 1, num_rows);
-    let proof = prove(&config, &MulFibPAir::new(num_rows), trace, &[]);
+    let proof = prove(&config, &MulFibPAir::new(num_rows), &trace, &[]);
 
     let result = verify(
         &config,
