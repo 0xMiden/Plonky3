@@ -13,8 +13,7 @@ use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{
-    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
-    StarkGenericConfig, SymbolicAirBuilder, Val, get_log_quotient_degree, get_symbolic_constraints,
+    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder, StarkGenericConfig, SymbolicAirBuilder, Val, generate_logup_trace, get_log_quotient_degree, get_symbolic_constraints
 };
 #[cfg(debug_assertions)]
 use crate::{DebugConstraintBuilder, check_constraints};
@@ -183,8 +182,13 @@ where
                 .map(|_| challenger.sample_algebra_element())
                 .collect();
 
-            // Ask config (VM) to build the aux trace if available.
-            let aux_trace_opt = air.build_aux_trace(&trace, &randomness);
+            // Ask config (VM) to build the aux trace if available; otherwise, fall back to legacy LogUp generator.
+            let aux_trace_opt = air.build_aux_trace(&trace, &randomness).or_else(|| {
+                Some(generate_logup_trace::<SC::Challenge, _>(
+                    &trace,
+                    &randomness[0],
+                ))
+            });
 
             // At the moment, it panics if the aux trace is not available.
             // In a future PR, we will introduce LogUp based permutation as a fall back if aux trace is not available.
