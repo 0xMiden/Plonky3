@@ -245,6 +245,7 @@ pub trait MidenAirBuilder: Sized {
 /// ```
 #[macro_export]
 macro_rules! impl_p3_air_builder_traits {
+    // Non-generic type
     ($builder_type:ty) => {
         impl $crate::AirBuilder for $builder_type {
             type F = <Self as $crate::MidenAirBuilder>::F;
@@ -306,6 +307,90 @@ macro_rules! impl_p3_air_builder_traits {
         impl $crate::PermutationAirBuilder for $builder_type
         where
             Self::F: $crate::Field,
+        {
+            type MP = <Self as $crate::MidenAirBuilder>::MP;
+            type RandomVar = <Self as $crate::MidenAirBuilder>::RandomVar;
+
+            fn permutation(&self) -> Self::MP {
+                <Self as $crate::MidenAirBuilder>::permutation(self)
+            }
+
+            fn permutation_randomness(&self) -> &[Self::RandomVar] {
+                <Self as $crate::MidenAirBuilder>::permutation_randomness(self)
+            }
+        }
+    };
+    // Generic type with bounds (supports lifetimes and types)
+    ($builder_type:ident<$($gen:tt),+> where $($bound:tt)+) => {
+        impl<$($gen),+> $crate::AirBuilder for $builder_type<$($gen),+>
+        where
+            $($bound)+
+        {
+            type F = <Self as $crate::MidenAirBuilder>::F;
+            type Expr = <Self as $crate::MidenAirBuilder>::Expr;
+            type Var = <Self as $crate::MidenAirBuilder>::Var;
+            type M = <Self as $crate::MidenAirBuilder>::M;
+
+            fn main(&self) -> Self::M {
+                <Self as $crate::MidenAirBuilder>::main(self)
+            }
+
+            fn is_first_row(&self) -> Self::Expr {
+                <Self as $crate::MidenAirBuilder>::is_first_row(self)
+            }
+
+            fn is_last_row(&self) -> Self::Expr {
+                <Self as $crate::MidenAirBuilder>::is_last_row(self)
+            }
+
+            fn is_transition_window(&self, size: usize) -> Self::Expr {
+                <Self as $crate::MidenAirBuilder>::is_transition_window(self, size)
+            }
+
+            fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
+                <Self as $crate::MidenAirBuilder>::assert_zero(self, x)
+            }
+        }
+
+        impl<$($gen),+> $crate::AirBuilderWithPublicValues for $builder_type<$($gen),+>
+        where
+            $($bound)+
+        {
+            type PublicVar = <Self as $crate::MidenAirBuilder>::PublicVar;
+
+            fn public_values(&self) -> &[Self::PublicVar] {
+                <Self as $crate::MidenAirBuilder>::public_values(self)
+            }
+        }
+
+        impl<$($gen),+> $crate::PairBuilder for $builder_type<$($gen),+>
+        where
+            $($bound)+
+        {
+            fn preprocessed(&self) -> Self::M {
+                <Self as $crate::MidenAirBuilder>::preprocessed(self)
+            }
+        }
+
+        impl<$($gen),+> $crate::ExtensionBuilder for $builder_type<$($gen),+>
+        where
+            $($bound)+
+        {
+            type EF = <Self as $crate::MidenAirBuilder>::EF;
+            type ExprEF = <Self as $crate::MidenAirBuilder>::ExprEF;
+            type VarEF = <Self as $crate::MidenAirBuilder>::VarEF;
+
+            fn assert_zero_ext<I>(&mut self, x: I)
+            where
+                I: Into<Self::ExprEF>,
+            {
+                <Self as $crate::MidenAirBuilder>::assert_zero_ext(self, x)
+            }
+        }
+
+        impl<$($gen),+> $crate::PermutationAirBuilder for $builder_type<$($gen),+>
+        where
+            $($bound)+
         {
             type MP = <Self as $crate::MidenAirBuilder>::MP;
             type RandomVar = <Self as $crate::MidenAirBuilder>::RandomVar;
