@@ -2,7 +2,7 @@ use core::fmt::Debug;
 use core::marker::PhantomData;
 
 use itertools::Itertools;
-use p3_air::{Air, AirBuilder, BaseAir};
+use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithAuxTrace};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::{DuplexChallenger, HashChallenger, SerializingChallenger32};
 use p3_circle::CirclePcs;
@@ -10,7 +10,7 @@ use p3_commit::ExtensionMmcs;
 use p3_commit::testing::TrivialPcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
-use p3_field::{Field, PrimeCharacteristicRing};
+use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
 use p3_fri::{FriParameters, HidingFriPcs, TwoAdicFriPcs, create_test_fri_params_zk};
 use p3_keccak::Keccak256Hash;
 use p3_matrix::Matrix;
@@ -32,7 +32,6 @@ const TRACE_WIDTH: usize = REPETITIONS * 3;
 /*
 In its basic form, asserts a^(self.degree-1) * b = c
 (so that the total constraint degree is self.degree)
-
 
 If `uses_transition_constraints`, checks that on transition rows, the first a = row number
 */
@@ -86,6 +85,13 @@ impl<F> BaseAir<F> for MulAir {
     fn width(&self) -> usize {
         TRACE_WIDTH
     }
+}
+
+impl<F, EF> BaseAirWithAuxTrace<F, EF> for MulAir
+where
+    F: Field,
+    EF: ExtensionField<F>,
+{
 }
 
 impl<AB: AirBuilder> Air<AB> for MulAir {

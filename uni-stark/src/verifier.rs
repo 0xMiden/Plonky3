@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use itertools::Itertools;
-use p3_air::Air;
+use p3_air::{Air, BaseAirWithAuxTrace};
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing};
@@ -73,6 +73,9 @@ pub fn verify_constraints<SC, A, PcsErr>(
     trace_next: &[SC::Challenge],
     preprocessed_local: Option<&[SC::Challenge]>,
     preprocessed_next: Option<&[SC::Challenge]>,
+    aux_local: Option<&[SC::Challenge]>,
+    aux_next: Option<&[SC::Challenge]>,
+    randomness: &[SC::Challenge],
     public_values: &[Val<SC>],
     trace_domain: Domain<SC>,
     zeta: SC::Challenge,
@@ -98,8 +101,24 @@ where
         _ => None,
     };
 
+    let aux = match (aux_local, aux_next) {
+        (Some(local), Some(next)) => VerticalPair::new(
+            RowMajorMatrixView::new_row(local),
+            RowMajorMatrixView::new_row(next),
+        ),
+        _ => {
+            // Create an empty ViewPair with zero width
+            let empty: &[SC::Challenge] = &[];
+            VerticalPair::new(
+                RowMajorMatrixView::new_row(empty),
+                RowMajorMatrixView::new_row(empty),
+            )
+        }
+    };
     let mut folder = VerifierConstraintFolder {
         main,
+        aux,
+        randomness,
         preprocessed,
         public_values,
         is_first_row: sels.is_first_row,
@@ -180,7 +199,9 @@ pub fn verify<SC, A>(
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
     SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>>>
+        + for<'a> Air<VerifierConstraintFolder<'a, SC>>
+        + BaseAirWithAuxTrace<Val<SC>, SC::Challenge>,
 {
     let Proof {
         commitments,
@@ -191,6 +212,9 @@ where
 
     let pcs = config.pcs();
     let degree = 1 << degree_bits;
+    let aux_width_base = air.aux_width();
+    let num_randomness_base = air.num_randomness() * SC::Challenge::DIMENSION;
+
     let trace_domain = pcs.natural_domain_for_degree(degree);
     // TODO: allow moving preprocessed commitment to preprocess time, if known in advance
     let (preprocessed_width, preprocessed_commit) =
@@ -201,6 +225,8 @@ where
         preprocessed_width,
         public_values.len(),
         config.is_zk(),
+        aux_width_base,
+        num_randomness_base,
     );
     let quotient_degree = 1 << (log_quotient_degree + config.is_zk());
     let mut challenger = config.initialise_challenger();
@@ -223,20 +249,6 @@ where
         return Err(VerificationError::RandomizationError);
     }
 
-    let air_width = A::width(air);
-    let valid_shape = opened_values.trace_local.len() == air_width
-        && opened_values.trace_next.len() == air_width
-        && opened_values.quotient_chunks.len() == quotient_degree
-        && opened_values
-            .quotient_chunks
-            .iter()
-            .all(|qc| qc.len() == SC::Challenge::DIMENSION)
-        // We've already checked that opened_values.random is present if and only if ZK is enabled.
-        && opened_values.random.as_ref().is_none_or(|r_comm| r_comm.len() == SC::Challenge::DIMENSION);
-    if !valid_shape {
-        return Err(VerificationError::InvalidProofShape);
-    }
-
     // Observe the instance.
     challenger.observe(Val::<SC>::from_usize(proof.degree_bits));
     challenger.observe(Val::<SC>::from_usize(proof.degree_bits - config.is_zk()));
@@ -246,17 +258,67 @@ where
     // Practically speaking though, the only related known attack is from failing to include public
     // values. It's not clear if failing to include other instance data could enable a transcript
     // collision, since most such changes would completely change the set of satisfying witnesses.
+
     challenger.observe(commitments.trace.clone());
     if preprocessed_width > 0 {
         challenger.observe(preprocessed_commit.as_ref().unwrap().clone());
     }
     challenger.observe_slice(public_values);
 
+    // begin processing aux trace (optional)
+    let num_randomness = air.num_randomness();
+
+    let air_width = A::width(air);
+    let valid_shape = opened_values.trace_local.len() == air_width
+        && opened_values.trace_next.len() == air_width
+        && opened_values.quotient_chunks.len() == quotient_degree
+        && opened_values
+            .quotient_chunks
+            .iter()
+            .all(|qc| qc.len() == SC::Challenge::DIMENSION)
+        // We've already checked that opened_values.random is present if and only if ZK is enabled.
+        && if let Some(r_comm) = &opened_values.random {
+            r_comm.len() == SC::Challenge::DIMENSION
+        } else {
+            true
+        }
+        // Check aux trace shape
+        && if num_randomness > 0 {
+            match (&opened_values.aux_trace_local, &opened_values.aux_trace_next) {
+                (Some(l), Some(n)) => l.len() == aux_width_base && n.len() == aux_width_base,
+                _ => false,
+            }
+        } else {
+            opened_values.aux_trace_local.is_none() && opened_values.aux_trace_next.is_none()
+        };
+    if !valid_shape {
+        return Err(VerificationError::InvalidProofShape);
+    }
+    let randomness = if num_randomness != 0 {
+        let randomness: Vec<SC::Challenge> = (0..num_randomness)
+            .map(|_| challenger.sample_algebra_element())
+            .collect();
+
+        if let Some(aux_commit) = &commitments.aux {
+            challenger.observe(aux_commit.clone());
+        } else {
+            return Err(VerificationError::InvalidProofShape);
+        }
+        randomness
+    } else {
+        // No aux trace expected
+        if commitments.aux.is_some() {
+            return Err(VerificationError::InvalidProofShape);
+        }
+        vec![]
+    };
+
     // Get the first Fiat Shamir challenge which will be used to combine all constraint polynomials
     // into a single polynomial.
     //
     // Soundness Error: n/|EF| where n is the number of constraints.
     let alpha = challenger.sample_algebra_element();
+
     challenger.observe(commitments.quotient_chunks.clone());
 
     // We've already checked that commitments.random is present if and only if ZK is enabled.
@@ -310,15 +372,43 @@ where
         ),
     ]);
 
+    // Add aux trace verification if present
+    if let Some(aux_commit) = &commitments.aux {
+        let aux_local = opened_values
+            .aux_trace_local
+            .as_ref()
+            .ok_or(VerificationError::InvalidProofShape)?;
+        let aux_next = opened_values
+            .aux_trace_next
+            .as_ref()
+            .ok_or(VerificationError::InvalidProofShape)?;
+        coms_to_verify.push((
+            aux_commit.clone(),
+            vec![(
+                trace_domain,
+                vec![(zeta, aux_local.clone()), (zeta_next, aux_next.clone())],
+            )],
+        ));
+    }
+
     // Add preprocessed commitment verification if present
     if preprocessed_width > 0 {
+        let preprocessed_local = opened_values
+            .preprocessed_local
+            .as_ref()
+            .ok_or(VerificationError::InvalidProofShape)?;
+        let preprocessed_next = opened_values
+            .preprocessed_next
+            .as_ref()
+            .ok_or(VerificationError::InvalidProofShape)?;
+
         coms_to_verify.push((
             preprocessed_commit.unwrap(),
             vec![(
                 trace_domain,
                 vec![
-                    (zeta, opened_values.preprocessed_local.clone().unwrap()),
-                    (zeta_next, opened_values.preprocessed_next.clone().unwrap()),
+                    (zeta, preprocessed_local.clone()),
+                    (zeta_next, preprocessed_next.clone()),
                 ],
             )],
         ));
@@ -339,6 +429,9 @@ where
         &opened_values.trace_next,
         opened_values.preprocessed_local.as_deref(),
         opened_values.preprocessed_next.as_deref(),
+        opened_values.aux_trace_local.as_deref(),
+        opened_values.aux_trace_next.as_deref(),
+        &randomness,
         public_values,
         init_trace_domain,
         zeta,

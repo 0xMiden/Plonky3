@@ -2,7 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use itertools::Itertools;
-use p3_air::Air;
+use p3_air::{Air, BaseAirWithAuxTrace};
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, PackedValue, PrimeCharacteristicRing};
@@ -16,6 +16,8 @@ use crate::{
     Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
     StarkGenericConfig, SymbolicAirBuilder, Val, get_log_quotient_degree, get_symbolic_constraints,
 };
+#[cfg(debug_assertions)]
+use crate::{DebugConstraintBuilder, check_constraints};
 
 /// Commits the preprocessed trace if present.
 /// Returns the commitment hash and prover data (available iff preprocessed is Some).
@@ -39,7 +41,7 @@ where
 #[allow(clippy::multiple_bound_locations, clippy::type_repetition_in_bounds)] // cfg not supported in where clauses?
 pub fn prove<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    #[cfg(debug_assertions)] A: for<'a> Air<DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>>,
     #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
@@ -49,11 +51,10 @@ pub fn prove<
 ) -> Proof<SC>
 where
     SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>>>
+        + for<'a> Air<ProverConstraintFolder<'a, SC>>
+        + BaseAirWithAuxTrace<Val<SC>, SC::Challenge>,
 {
-    #[cfg(debug_assertions)]
-    crate::check_constraints::check_constraints(air, &trace, public_values);
-
     // Compute the height `N = 2^n` and `log_2(height)`, `n`, of the trace.
     let degree = trace.height();
     let log_degree = log2_strict_usize(degree);
@@ -64,8 +65,15 @@ where
     let preprocessed_width = preprocessed_trace.as_ref().map(|m| m.width).unwrap_or(0);
 
     // Compute the constraint polynomials as vectors of symbolic expressions.
-    let symbolic_constraints =
-        get_symbolic_constraints(air, preprocessed_width, public_values.len());
+    let aux_width_base = air.aux_width();
+    let num_randomness = air.num_randomness();
+    let symbolic_constraints = get_symbolic_constraints(
+        air,
+        preprocessed_width,
+        public_values.len(),
+        aux_width_base,
+        num_randomness,
+    );
 
     // Count the number of constraints that we have.
     let constraint_count = symbolic_constraints.len();
@@ -108,8 +116,9 @@ where
         preprocessed_width,
         public_values.len(),
         config.is_zk(),
+        aux_width_base,
+        num_randomness,
     );
-
     let quotient_degree = 1 << (log_quotient_degree + config.is_zk());
 
     // Initialize the PCS and the Challenger.
@@ -135,8 +144,8 @@ where
     //      trace_data contains the entire tree.
     //          - trace_data.leaves is the matrix containing `ET`.
     // Note: commit() automatically uses the optimized single-matrix path when given a single matrix
-    let (trace_commit, trace_data) =
-        info_span!("commit to trace data").in_scope(|| pcs.commit([(ext_trace_domain, trace)]));
+    let (trace_commit, trace_data) = info_span!("commit to trace data")
+        .in_scope(|| pcs.commit([(ext_trace_domain, trace.clone())]));
 
     let (preprocessed_commit, preprocessed_data) = preprocessed_trace.map_or_else(
         || (None, None),
@@ -164,6 +173,47 @@ where
 
     // Observe the public input values.
     challenger.observe_slice(public_values);
+
+    // begin aux trace generation (optional)
+    let num_randomness = air.num_randomness();
+
+    let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness) =
+        if num_randomness > 0 {
+            let randomness: Vec<SC::Challenge> = (0..num_randomness)
+                .map(|_| challenger.sample_algebra_element())
+                .collect();
+
+            // Ask config (VM) to build the aux trace if available.
+            let aux_trace_opt = air.build_aux_trace(&trace, &randomness);
+
+            // At the moment, it panics if the aux trace is not available.
+            // In a future PR, we will introduce LogUp based permutation as a fall back if aux trace is not available.
+            let aux_trace = aux_trace_opt
+                .expect("aux_challenges > 0 but no aux trace was provided or generated");
+
+            let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
+                .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
+
+            challenger.observe(aux_trace_commit.clone());
+
+            (
+                Some(aux_trace_commit),
+                Some(aux_trace),
+                Some(aux_trace_data),
+                randomness,
+            )
+        } else {
+            (None, None, None, vec![])
+        };
+
+    #[cfg(debug_assertions)]
+    check_constraints::<Val<SC>, SC::Challenge, _>(
+        air,
+        &trace,
+        &_aux_trace_opt,
+        &randomness,
+        &public_values.to_vec(),
+    );
 
     // Get the first Fiat Shamir challenge which will be used to combine all constraint polynomials
     // into a single polynomial.
@@ -199,6 +249,10 @@ where
     // This only works if the trace domain is `gH'` and the quotient domain is `gK` for some subgroup `K` contained in `H'`.
     // TODO: Make this explicit in `get_evaluations_on_domain` or otherwise fix this.
     let trace_on_quotient_domain = pcs.get_evaluations_on_domain(&trace_data, 0, quotient_domain);
+    let aux_trace_on_quotient_domain = aux_trace_data_opt
+        .as_ref()
+        .map(|data| pcs.get_evaluations_on_domain(data, 0, quotient_domain));
+
     let preprocessed_on_quotient_domain = preprocessed_data
         .as_ref()
         .map(|data| pcs.get_evaluations_on_domain(data, 0, quotient_domain));
@@ -213,6 +267,8 @@ where
         trace_domain,
         quotient_domain,
         &trace_on_quotient_domain,
+        aux_trace_on_quotient_domain.as_ref(),
+        &randomness,
         preprocessed_on_quotient_domain.as_ref(),
         alpha,
         constraint_count,
@@ -270,6 +326,7 @@ where
     // will be passed to the verifier.
     let commitments = Commitments {
         trace: trace_commit,
+        aux: aux_trace_commit_opt,
         quotient_chunks: quotient_commit,
         random: opt_r_commit.clone(),
     };
@@ -296,38 +353,52 @@ where
 
     let is_random = opt_r_data.is_some();
     let (opened_values, opening_proof) = info_span!("open").in_scope(|| {
-        let round0 = opt_r_data.as_ref().map(|r_data| (r_data, vec![vec![zeta]]));
-        let round1 = (&trace_data, vec![vec![zeta, zeta_next]]);
-        let round2 = (&quotient_data, vec![vec![zeta]; quotient_degree]); // open every chunk at zeta
-        let round3 = preprocessed_data
-            .as_ref()
-            .map(|data| (data, vec![vec![zeta, zeta_next]]));
-
-        let rounds = round0
-            .into_iter()
-            .chain([round1, round2])
-            .chain(round3)
-            .collect();
+        let mut rounds = vec![];
+        if let Some(r_data) = opt_r_data.as_ref() {
+            rounds.push((r_data, vec![vec![zeta]]));
+        }
+        rounds.push((&trace_data, vec![vec![zeta, zeta_next]]));
+        rounds.push((&quotient_data, vec![vec![zeta]; quotient_degree])); // open every chunk at zeta
+        if let Some(aux_data) = aux_trace_data_opt.as_ref() {
+            rounds.push((aux_data, vec![vec![zeta, zeta_next]]));
+        }
+        if let Some(preprocessed_data) = preprocessed_data.as_ref() {
+            rounds.push((preprocessed_data, vec![vec![zeta, zeta_next]]));
+        }
 
         pcs.open(rounds, &mut challenger)
     });
-    let trace_idx = SC::Pcs::TRACE_IDX;
-    let quotient_idx = SC::Pcs::QUOTIENT_IDX;
-    let trace_local = opened_values[trace_idx][0][0].clone();
-    let trace_next = opened_values[trace_idx][0][1].clone();
-    let quotient_chunks = opened_values[quotient_idx]
-        .iter()
-        .map(|v| v[0].clone())
-        .collect_vec();
+
     let random = if is_random {
         Some(opened_values[0][0][0].clone())
     } else {
         None
     };
+
+    let mut cur_index = SC::Pcs::TRACE_IDX;
+    let trace_local = opened_values[cur_index][0][0].clone();
+    let trace_next = opened_values[cur_index][0][1].clone();
+
+    cur_index = SC::Pcs::QUOTIENT_IDX;
+    let quotient_chunks = opened_values[cur_index]
+        .iter()
+        .map(|v| v[0].clone())
+        .collect_vec();
+    cur_index += 1;
+
+    let (aux_trace_local, aux_trace_next) = if aux_trace_data_opt.is_some() {
+        let aux_local = opened_values[cur_index][0][0].clone();
+        let aux_next = opened_values[cur_index][0][1].clone();
+        cur_index += 1;
+        (Some(aux_local), Some(aux_next))
+    } else {
+        (None, None)
+    };
+
     let (preprocessed_local, preprocessed_next) = if preprocessed_width > 0 {
         (
-            Some(opened_values[SC::Pcs::PREPROCESSED_TRACE_IDX][0][0].clone()),
-            Some(opened_values[SC::Pcs::PREPROCESSED_TRACE_IDX][0][1].clone()),
+            Some(opened_values[cur_index][0][0].clone()),
+            Some(opened_values[cur_index][0][1].clone()),
         )
     } else {
         (None, None)
@@ -335,6 +406,8 @@ where
     let opened_values = OpenedValues {
         trace_local,
         trace_next,
+        aux_trace_local,
+        aux_trace_next,
         preprocessed_local,
         preprocessed_next,
         quotient_chunks,
@@ -357,6 +430,8 @@ pub fn quotient_values<SC, A, Mat>(
     trace_domain: Domain<SC>,
     quotient_domain: Domain<SC>,
     trace_on_quotient_domain: &Mat,
+    aux_trace_on_quotient_domain: Option<&Mat>,
+    randomness: &[SC::Challenge],
     preprocessed_on_quotient_domain: Option<&Mat>,
     alpha: SC::Challenge,
     constraint_count: usize,
@@ -410,6 +485,29 @@ where
                 trace_on_quotient_domain.vertically_packed_row_pair(i_start, next_step),
                 width,
             );
+            let aux = if let Some(aux_trace) = aux_trace_on_quotient_domain.as_ref() {
+                // Aux trace is stored in flattened base field format (each EF element = D base elements)
+                // We need to convert it to packed extension field format
+                let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
+                let base_packed: Vec<PackedVal<SC>> =
+                    aux_trace.vertically_packed_row_pair(i_start, next_step);
+                let ef_width = aux_trace.width() / d;
+
+                // Convert from packed base field to packed extension field
+                // Each EF element is formed from D consecutive base field elements
+                let ef_packed: Vec<PackedChallenge<SC>> = (0..ef_width * 2)
+                    .map(|i| {
+                        PackedChallenge::<SC>::from_basis_coefficients_fn(|j| {
+                            base_packed[i * d + j]
+                        })
+                    })
+                    .collect();
+
+                RowMajorMatrix::new(ef_packed, ef_width)
+            } else {
+                // Create an empty matrix with zero width
+                RowMajorMatrix::new(vec![], 0)
+            };
 
             let preprocessed = preprocessed_on_quotient_domain.map(|preprocessed| {
                 let preprocessed_width = preprocessed.width();
@@ -419,9 +517,14 @@ where
                 )
             });
 
+            // Pack challenges for constraint evaluation
+            let packed_randomness: Vec<PackedChallenge<SC>> =
+                randomness.iter().copied().map(Into::into).collect();
+
             let accumulator = PackedChallenge::<SC>::ZERO;
             let mut folder = ProverConstraintFolder {
                 main: main.as_view(),
+                aux: aux.as_view(),
                 preprocessed: preprocessed.as_ref().map(|m| m.as_view()),
                 public_values,
                 is_first_row,
@@ -431,6 +534,7 @@ where
                 decomposed_alpha_powers: &decomposed_alpha_powers,
                 accumulator,
                 constraint_index: 0,
+                packed_randomness,
             };
             air.eval(&mut folder);
 
