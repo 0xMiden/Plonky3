@@ -65,11 +65,14 @@ where
 
     /// Build an aux trace (EF-based) given the main trace and EF challenges.
     /// Return None to indicate no aux or to fall back to legacy behavior.
-    fn build_aux_trace(
+    fn build_aux_trace<AB>(
         &self,
         _main: &RowMajorMatrix<F>,
         _challenges: &[EF],
-    ) -> Option<RowMajorMatrix<F>> {
+    ) -> Option<RowMajorMatrix<EF>>
+    where
+        AB: MidenAirBuilder<F = F, EF = EF>,
+    {
         None
     }
 
@@ -78,7 +81,7 @@ where
     /// An aux builder takes in a main matrix and a randomness, and generate a aux matrix.
     fn with_aux_builder<Builder>(&mut self, _builder: Builder)
     where
-        Builder: Fn(&RowMajorMatrix<F>, &[EF]) -> RowMajorMatrix<F> + Send + Sync + 'static,
+        Builder: Fn(&RowMajorMatrix<F>, &[EF]) -> RowMajorMatrix<EF> + Send + Sync + 'static,
     {
         // default: do nothing
     }
