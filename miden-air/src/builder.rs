@@ -185,6 +185,11 @@ pub trait MidenAirBuilder: Sized {
     /// Return the list of public variables.
     fn public_values(&self) -> &[Self::PublicVar];
 
+    // ==================== AirBuilderWithPeriodicValues Methods ====================
+
+    /// Return the list of periodic values.
+    fn periodic_evals(&self) -> &[Self::F];
+
     // ==================== PairBuilder Methods ====================
 
     /// Return a matrix of preprocessed registers.
@@ -221,6 +226,11 @@ pub trait MidenAirBuilder: Sized {
 
     /// Return the list of randomness values for permutation argument.
     fn permutation_randomness(&self) -> &[Self::RandomVar];
+
+    // ==================== AuxAirBuilder Methods ====================
+
+    /// Aux bus boundary values: EF finals, one per aux/bus column, carried in the proof.
+    fn aux_bus_boundary_values(&self) -> &[Self::VarEF];
 }
 
 /// Helper macro to implement p3-air builder traits by delegating to MidenAirBuilder.

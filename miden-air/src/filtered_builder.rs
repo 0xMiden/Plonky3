@@ -58,6 +58,10 @@ impl<AB: MidenAirBuilder> MidenAirBuilder for FilteredMidenAirBuilder<'_, AB> {
         self.inner.public_values()
     }
 
+    fn periodic_evals(&self) -> &[Self::F] {
+        self.inner.periodic_evals()
+    }
+
     fn preprocessed(&self) -> Self::M {
         self.inner.preprocessed()
     }
@@ -75,5 +79,9 @@ impl<AB: MidenAirBuilder> MidenAirBuilder for FilteredMidenAirBuilder<'_, AB> {
 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         self.inner.permutation_randomness()
+    }
+
+    fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {
+        self.inner.aux_bus_boundary_values()
     }
 }

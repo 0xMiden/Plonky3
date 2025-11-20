@@ -44,6 +44,13 @@ where
         0
     }
 
+    // ==================== BaseAirWithPeriodicTables Methods ====================
+
+    /// Return the periodic table data.
+    fn periodic_table(&self) -> Vec<Vec<F>> {
+        vec![]
+    }
+
     // ==================== BaseAirWithAuxTrace Methods ====================
 
     /// Number of challenges (extension fields) that is required to compute the aux trace
