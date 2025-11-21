@@ -1,16 +1,16 @@
 use std::hint::black_box;
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_commit::Mmcs;
 use p3_field::Field;
-use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
+use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::{Lifting, MerkleTreeLmcs, MerkleTreeMmcs};
 use p3_symmetric::{PaddingFreeSponge, StatefulSponge, TruncatedPermutation};
-use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use rand::rngs::SmallRng;
 
 type F = BabyBear;
 type P = <F as Field>::Packing;
@@ -103,7 +103,8 @@ fn bench_commit(c: &mut Criterion) {
         );
 
         // MMCS
-        let mmcs = MerkleTreeMmcs::<P, P, _, _, DIGEST>::new(mmcs_hasher.clone(), compressor.clone());
+        let mmcs =
+            MerkleTreeMmcs::<P, P, _, _, DIGEST>::new(mmcs_hasher.clone(), compressor.clone());
         group.bench_with_input(
             BenchmarkId::new(format!("MMCS/{label}"), format!("{dims:?}")),
             &matrices,
@@ -180,16 +181,10 @@ fn bench_verify(c: &mut Criterion) {
 
         // MMCS
         {
-            let mmcs = MerkleTreeMmcs::<P, P, _, _, DIGEST>::new(
-                mmcs_hasher.clone(),
-                compressor.clone(),
-            );
+            let mmcs =
+                MerkleTreeMmcs::<P, P, _, _, DIGEST>::new(mmcs_hasher.clone(), compressor.clone());
             let (commit, tree) = mmcs.commit(matrices.clone());
-            let final_h = dims
-                .iter()
-                .map(|d| d.height)
-                .max()
-                .expect("non-empty");
+            let final_h = dims.iter().map(|d| d.height).max().expect("non-empty");
             let mut indices: Vec<usize> = (0..16).map(|i| i * (final_h / 16)).collect();
             if indices.is_empty() {
                 indices.push(0);
@@ -229,4 +224,3 @@ criterion_group! {
     targets = bench_commit, bench_verify
 }
 criterion_main!(benches);
-
