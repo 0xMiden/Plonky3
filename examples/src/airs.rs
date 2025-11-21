@@ -49,8 +49,9 @@ pub enum ProofObjective<
 /// the output of some number of hashes using a given hash function.
 pub trait ExampleHashAir<F: Field, SC: StarkGenericConfig>:
     BaseAir<F>
-    + for<'a> Air<DebugConstraintBuilder<'a, F, SC::Challenge>>
+    + BaseAirWithAuxTrace<F, SC::Challenge>
     + Air<SymbolicAirBuilder<F>>
+    + for<'a> Air<DebugConstraintBuilder<'a, F, SC::Challenge>>
     + for<'a> Air<ProverConstraintFolder<'a, SC>>
     + for<'a> Air<VerifierConstraintFolder<'a, SC>>
 where

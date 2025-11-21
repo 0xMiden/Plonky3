@@ -10,7 +10,7 @@ use p3_commit::ExtensionMmcs;
 use p3_commit::testing::TrivialPcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
-use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
+use p3_field::{Field, PrimeCharacteristicRing};
 use p3_fri::{FriParameters, HidingFriPcs, TwoAdicFriPcs, create_test_fri_params_zk};
 use p3_keccak::Keccak256Hash;
 use p3_matrix::Matrix;
@@ -87,12 +87,7 @@ impl<F> BaseAir<F> for MulAir {
     }
 }
 
-impl<F, EF> BaseAirWithAuxTrace<F, EF> for MulAir
-where
-    F: Field,
-    EF: ExtensionField<F>,
-{
-}
+impl<F, EF> BaseAirWithAuxTrace<F, EF> for MulAir {}
 
 impl<AB: AirBuilder> Air<AB> for MulAir {
     fn eval(&self, builder: &mut AB) {
