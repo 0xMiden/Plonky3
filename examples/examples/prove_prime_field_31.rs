@@ -124,21 +124,28 @@ fn main() {
                     DftChoice::Recursive(RecursiveDft::new(trace_height << 1))
                 }
                 DftOptions::Radix2DitParallel => DftChoice::Parallel(Radix2DitParallel::default()),
+                DftOptions::SmallBatch => {
+                    DftChoice::SmallBatch(p3_dft::Radix2DFTSmallBatch::new(trace_height << 1))
+                }
                 DftOptions::None => panic!(
-                    "Please specify what dft to use. Options are recursive-dft and radix-2-dit-parallel"
+                    "Please specify what dft to use. Options are recursive-dft, radix-2-dit-parallel and small-batch-dft"
                 ),
             };
 
             match args.merkle_hash {
                 MerkleHashOptions::KeccakF => {
-                    let result = prove_monty31_keccak::<_, EF, _, _>(proof_goal, dft, num_hashes);
+                    let result = prove_monty31_keccak::<_, EF, _, _>(&proof_goal, dft, num_hashes);
                     report_result(result);
                 }
                 MerkleHashOptions::Poseidon2 => {
                     let perm16 = Poseidon2KoalaBear::<16>::new_from_rng_128(&mut rng);
                     let perm24 = Poseidon2KoalaBear::<24>::new_from_rng_128(&mut rng);
                     let result = prove_monty31_poseidon2::<_, EF, _, _, _, _>(
-                        proof_goal, dft, num_hashes, perm16, perm24,
+                        &proof_goal,
+                        dft,
+                        num_hashes,
+                        perm16,
+                        perm24,
                     );
                     report_result(result);
                 }
@@ -177,21 +184,28 @@ fn main() {
                     DftChoice::Recursive(RecursiveDft::new(trace_height << 1))
                 }
                 DftOptions::Radix2DitParallel => DftChoice::Parallel(Radix2DitParallel::default()),
+                DftOptions::SmallBatch => {
+                    DftChoice::SmallBatch(p3_dft::Radix2DFTSmallBatch::new(trace_height << 1))
+                }
                 DftOptions::None => panic!(
-                    "Please specify what dft to use. Options are recursive-dft and radix-2-dit-parallel"
+                    "Please specify what dft to use. Options are recursive-dft, radix-2-dit-parallel and small-batch-dft"
                 ),
             };
 
             match args.merkle_hash {
                 MerkleHashOptions::KeccakF => {
-                    let result = prove_monty31_keccak::<_, EF, _, _>(proof_goal, dft, num_hashes);
+                    let result = prove_monty31_keccak::<_, EF, _, _>(&proof_goal, dft, num_hashes);
                     report_result(result);
                 }
                 MerkleHashOptions::Poseidon2 => {
                     let perm16 = Poseidon2BabyBear::<16>::new_from_rng_128(&mut rng);
                     let perm24 = Poseidon2BabyBear::<24>::new_from_rng_128(&mut rng);
                     let result = prove_monty31_poseidon2::<_, EF, _, _, _, _>(
-                        proof_goal, dft, num_hashes, perm16, perm24,
+                        &proof_goal,
+                        dft,
+                        num_hashes,
+                        perm16,
+                        perm24,
                     );
                     report_result(result);
                 }
@@ -234,14 +248,17 @@ fn main() {
 
             match args.merkle_hash {
                 MerkleHashOptions::KeccakF => {
-                    let result = prove_m31_keccak(proof_goal, num_hashes);
+                    let result = prove_m31_keccak(&proof_goal, num_hashes);
                     report_result(result);
                 }
                 MerkleHashOptions::Poseidon2 => {
                     let perm16 = Poseidon2Mersenne31::<16>::new_from_rng_128(&mut rng);
                     let perm24 = Poseidon2Mersenne31::<24>::new_from_rng_128(&mut rng);
                     let result = prove_m31_poseidon2::<_, EF, _, _, _>(
-                        proof_goal, num_hashes, perm16, perm24,
+                        &proof_goal,
+                        num_hashes,
+                        perm16,
+                        perm24,
                     );
                     report_result(result);
                 }

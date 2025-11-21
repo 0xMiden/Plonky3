@@ -7,6 +7,14 @@ use p3_field::{BasedVectorSpace, ExtensionField, Field};
 use p3_matrix::Matrix;
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_matrix::stack::{VerticalPair, ViewPair};
+use p3_air::{
+    AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder, PermutationAirBuilder,
+};
+use p3_field::{ExtensionField, Field};
+use p3_matrix::stack::ViewPair;
+#[cfg(debug_assertions)]
+use p3_matrix::{Matrix, dense::RowMajorMatrix, dense::RowMajorMatrixView};
+#[cfg(debug_assertions)]
 use tracing::instrument;
 
 /// Runs constraint checks using a given AIR definition and trace matrix.
@@ -27,13 +35,14 @@ pub(crate) fn check_constraints<F, EF, A>(
     main: &RowMajorMatrix<F>,
     aux_trace: &Option<RowMajorMatrix<F>>,
     aux_randomness: &[EF],
-    public_values: &Vec<F>,
+    public_values: &alloc::vec::Vec<F>,
 ) where
     F: Field,
-    EF: ExtensionField<F> + BasedVectorSpace<F>,
-    A: for<'a> Air<DebugConstraintBuilder<'a, F, EF>>,
+    EF: ExtensionField<F> + p3_field::BasedVectorSpace<F>,
+    A: for<'a> p3_air::Air<DebugConstraintBuilder<'a, F, EF>>,
 {
     let height = main.height();
+    let preprocessed = air.preprocessed_trace();
 
     (0..height).for_each(|row_index| {
         let row_index_next = (row_index + 1) % height;
@@ -42,7 +51,7 @@ pub(crate) fn check_constraints<F, EF, A>(
         let local = unsafe { main.row_slice_unchecked(row_index) };
         // row_index_next < height so we can used unchecked indexing.
         let next = unsafe { main.row_slice_unchecked(row_index_next) };
-        let main = VerticalPair::new(
+        let main = ViewPair::new(
             RowMajorMatrixView::new_row(&*local),
             RowMajorMatrixView::new_row(&*next),
         );
@@ -52,6 +61,7 @@ pub(crate) fn check_constraints<F, EF, A>(
         let aux_local_ext;
         let aux_next_ext;
 
+        #[allow(clippy::option_if_let_else)]
         let aux = if let Some(aux_matrix) = aux_trace.as_ref() {
             let aux_local = unsafe { aux_matrix.row_slice_unchecked(row_index) };
             aux_local_ext = row_to_ext::<F, EF>(&aux_local);
@@ -59,24 +69,42 @@ pub(crate) fn check_constraints<F, EF, A>(
             let aux_next = unsafe { aux_matrix.row_slice_unchecked(row_index_next) };
             aux_next_ext = row_to_ext::<F, EF>(&aux_next);
 
-            VerticalPair::new(
+            p3_matrix::stack::VerticalPair::new(
                 RowMajorMatrixView::new_row(&aux_local_ext),
                 RowMajorMatrixView::new_row(&aux_next_ext),
             )
         } else {
             // Create an empty ViewPair with zero width
             let empty: &[EF] = &[];
-            VerticalPair::new(
+            p3_matrix::stack::VerticalPair::new(
                 RowMajorMatrixView::new_row(empty),
                 RowMajorMatrixView::new_row(empty),
             )
         };
+
+        let preprocessed_pair = preprocessed.as_ref().map(|preprocessed_matrix| {
+            let preprocessed_local = preprocessed_matrix
+                .values
+                .chunks(preprocessed_matrix.width)
+                .nth(row_index)
+                .unwrap();
+            let preprocessed_next = preprocessed_matrix
+                .values
+                .chunks(preprocessed_matrix.width)
+                .nth(row_index_next)
+                .unwrap();
+            ViewPair::new(
+                RowMajorMatrixView::new_row(preprocessed_local),
+                RowMajorMatrixView::new_row(preprocessed_next),
+            )
+        });
 
         let mut builder = DebugConstraintBuilder {
             row_index,
             main,
             aux,
             aux_randomness,
+            preprocessed: preprocessed_pair,
             public_values,
             is_first_row: F::from_bool(row_index == 0),
             is_last_row: F::from_bool(row_index == height - 1),
@@ -91,7 +119,7 @@ pub(crate) fn check_constraints<F, EF, A>(
 fn row_to_ext<F, EF>(row: &[F]) -> Vec<EF>
 where
     F: Field,
-    EF: ExtensionField<F> + BasedVectorSpace<F>,
+    EF: ExtensionField<F> + p3_field::BasedVectorSpace<F>,
 {
     row.chunks(EF::DIMENSION)
         .map(|chunk| EF::from_basis_coefficients_slice(chunk).unwrap())
@@ -112,6 +140,8 @@ pub struct DebugConstraintBuilder<'a, F: Field, EF: ExtensionField<F>> {
     aux: ViewPair<'a, EF>,
     /// randomness that is used to compute aux trace
     aux_randomness: &'a [EF],
+    /// A view of the preprocessed current and next row as a vertical pair (if present).
+    preprocessed: Option<ViewPair<'a, F>>,
     /// The public values provided for constraint validation (e.g. inputs or outputs).
     public_values: &'a [F],
     /// A flag indicating whether this is the first row.
@@ -215,6 +245,13 @@ impl<'a, F: Field, EF: ExtensionField<F>> PermutationAirBuilder
     }
 }
 
+impl<'a, F: Field, EF: ExtensionField<F>> PairBuilder for DebugConstraintBuilder<'a, F, EF> {
+    fn preprocessed(&self) -> Self::M {
+        self.preprocessed
+            .expect("DebugConstraintBuilder requires preprocessed columns when used as PairBuilder")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;
@@ -233,17 +270,17 @@ mod tests {
     /// This is useful for validating constraint evaluation, transition logic,
     /// and row condition flags (first/last/transition).
     #[derive(Debug)]
-    struct RowLogicAir<const W: usize>;
+    struct RowLogicAir;
 
-    impl<F: Field, const W: usize> BaseAir<F> for RowLogicAir<W> {
+    impl<F: Field> BaseAir<F> for RowLogicAir {
         fn width(&self) -> usize {
-            W
+            2
         }
     }
 
-    impl<F: Field, const W: usize> BaseAirWithPublicValues<F> for RowLogicAir<W> {}
+    impl<F: Field> BaseAirWithPublicValues<F> for RowLogicAir {}
 
-    impl<F, EF, const W: usize> Air<DebugConstraintBuilder<'_, F, EF>> for RowLogicAir<W>
+    impl<F, EF> p3_air::Air<DebugConstraintBuilder<'_, F, EF>> for RowLogicAir
     where
         F: Field,
         EF: ExtensionField<F>,
@@ -252,7 +289,7 @@ mod tests {
             let main = builder.main();
             let aux_pair = builder.aux;
 
-            for col in 0..W {
+            for col in 0..2 {
                 let a = main.top.get(0, col).unwrap();
                 let b = main.bottom.get(0, col).unwrap();
 
@@ -310,7 +347,7 @@ mod tests {
             // Add public value equality on last row for extra coverage
             let public_values = builder.public_values;
             let mut when_last = builder.when(builder.is_last_row);
-            for (i, &pv) in public_values.iter().enumerate().take(W) {
+            for (i, &pv) in public_values.iter().enumerate().take(2) {
                 when_last.assert_eq(main.top.get(0, i).unwrap(), pv);
             }
         }
@@ -320,7 +357,7 @@ mod tests {
     fn test_incremental_rows_with_last_row_check() {
         // Each row = previous + 1, with 4 rows total, 2 columns.
         // Last row must match public values [4, 4]
-        let air = RowLogicAir::<2>;
+        let air = RowLogicAir;
         let values = vec![
             BabyBear::ONE,
             BabyBear::ONE, // Row 0
@@ -345,7 +382,7 @@ mod tests {
     #[should_panic]
     fn test_incorrect_increment_logic() {
         // Row 2 does not equal row 1 + 1 → should fail on transition from row 1 to 2.
-        let air = RowLogicAir::<2>;
+        let air = RowLogicAir;
         let values = vec![
             BabyBear::ONE,
             BabyBear::ONE, // Row 0
@@ -370,7 +407,7 @@ mod tests {
     #[should_panic]
     fn test_wrong_last_row_public_value() {
         // The transition logic is fine, but public value check fails at the last row.
-        let air = RowLogicAir::<2>;
+        let air = RowLogicAir;
         let values = vec![
             BabyBear::ONE,
             BabyBear::ONE, // Row 0
@@ -397,7 +434,7 @@ mod tests {
         // A single-row matrix still performs a wraparound check with itself.
         // row[0] == row[0] + 1 ⇒ fails unless handled properly by transition logic.
         // Here: is_transition == false ⇒ so no assertions are enforced.
-        let air = RowLogicAir::<2>;
+        let air = RowLogicAir;
         let values = vec![
             BabyBear::new(99),
             BabyBear::new(77), // Row 0

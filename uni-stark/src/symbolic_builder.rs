@@ -104,7 +104,7 @@ pub struct SymbolicAirBuilder<F: Field> {
 }
 
 impl<F: Field> SymbolicAirBuilder<F> {
-    pub(crate) fn new(
+    pub fn new(
         preprocessed_width: usize,
         width: usize,
         aux_width: usize,
@@ -150,7 +150,7 @@ impl<F: Field> SymbolicAirBuilder<F> {
         }
     }
 
-    pub(crate) fn constraints(self) -> Vec<SymbolicExpression<F>> {
+    pub fn constraints(self) -> Vec<SymbolicExpression<F>> {
         self.constraints
     }
 
@@ -235,9 +235,6 @@ impl<F: Field> PairBuilder for SymbolicAirBuilder<F> {
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
-    use alloc::vec::Vec;
-
     use p3_air::BaseAir;
     use p3_baby_bear::BabyBear;
 
@@ -397,7 +394,7 @@ mod tests {
     fn test_symbolic_air_builder_assert_zero() {
         let mut builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 0, 0, 3);
         let expr = SymbolicExpression::Constant(BabyBear::new(5));
-        builder.assert_zero(expr.clone());
+        builder.assert_zero(expr);
 
         let constraints = builder.constraints();
         assert_eq!(constraints.len(), 1, "One constraint should be recorded");
