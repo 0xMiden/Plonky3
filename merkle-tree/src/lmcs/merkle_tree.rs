@@ -5,89 +5,14 @@ use core::marker::PhantomData;
 
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
-// use p3_matrix::lifted::LiftableMatrix;
 use p3_maybe_rayon::prelude::{
     IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelSliceMut,
 };
 use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulHasher};
-use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
 
 use super::utils::{pack_arrays, unpack_array_into, validate_heights};
-use crate::LmcsError;
-
-/// Lifting method used to align matrices of different heights to a common height.
-///
-/// Consider matrices `M_0, …, M_{t-1}` with heights `h_0 ≤ h_1 ≤ … ≤ h_{t-1}` (each a power of
-/// two), and let `H = h_{t-1}`. For each matrix `M_i`, lifting defines a row-index mapping
-/// `f_i: {0,…,H-1} → {0,…,h_i-1}` and thereby a virtual height-`H` matrix `M_i^↑` of the same
-/// width, whose `r`-th row is `row_{f_i(r)}(M_i)`. In other words, lifting “extends” each matrix
-/// vertically to height `H` without changing its width. The LMCS leaf at position `r` then uses,
-/// in order, the row `r` from each lifted matrix `M_i^↑` as input to the sponge (with per-matrix
-/// zero padding to a multiple of `RATE` for absorption).
-///
-/// Two canonical choices for `f_i` are supported:
-/// - Upsample (nearest-neighbor): each original row is repeated contiguously
-///   `s_i = H / h_i` times; with `s_i = 2^k`, we have `f_i(r) = r >> k = floor(r / s_i)`.
-/// - Cyclic: the entire `h_i`-row matrix is repeated periodically until height `H`;
-///   equivalently `f_i(r) = r mod h_i = r & (h_i - 1)`.
-///
-/// Example (h_i = 4, H = 8):
-/// - Original rows of `M_i`: `[r0, r1, r2, r3]`.
-/// - Upsample (s_i = 2): `M_i^↑` rows by index `r = 0..7` are
-///   `[r0, r0, r1, r1, r2, r2, r3, r3]` (blocks of length 2).
-/// - Cyclic: `M_i^↑` rows are `[r0, r1, r2, r3, r0, r1, r2, r3]` (period 4).
-///
-/// Summary view:
-/// - Upsample lifting: virtually extend by repeating each row `s_i` times (blocks of identical
-///   rows), width unchanged.
-/// - Cyclic lifting: virtually extend by tiling the `h_i` original rows `s_i` times, width
-///   unchanged.
-///
-/// The implementation realizes these semantics incrementally by maintaining one sponge state per
-/// final row `r ∈ [0, H)`. As taller matrices are processed, states are duplicated contiguously
-/// (upsample) or tiled in cycles (cyclic) so that each state continues to absorb
-/// `row_{f_i(r)}(M_i)` from the current matrix’s virtual extension.
-///
-/// Power-of-two requirement: All matrix heights and the final height `H` must be powers of two.
-/// The implementation relies on this (via bit-shifts and masks) and rejects non-powers-of-two.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum Lifting {
-    /// Nearest-neighbor upsampling. For a matrix of height `h` lifted to `H`, each original row is
-    /// duplicated contiguously `s = H / h` times, and the lifted index map is
-    /// `r ↦ floor(r / s)` (with `s` a power of two). This produces blocks of identical rows.
-    Upsample,
-    /// Cyclic repetition. For a matrix of height `h` lifted to `H`, the lifted index map is
-    /// `r ↦ r mod h`, i.e. rows repeat with period `h` across the final height.
-    Cyclic,
-}
-
-impl Lifting {
-    /// Map a final leaf row index `index ∈ [0, max_height)` to the corresponding row index of a
-    /// particular matrix of height `height`, according to this lifting.
-    ///
-    /// Preconditions:
-    /// - `height` and `max_height` are powers of two with `height ≤ max_height`.
-    /// - `index < max_height`.
-    ///
-    /// Semantics:
-    /// - Upsample: returns `floor(index / (max_height / height))`.
-    /// - Cyclic: returns `index mod height`.
-    pub fn map_index(&self, index: usize, height: usize, max_height: usize) -> usize {
-        assert!(index < max_height);
-        assert!(height.is_power_of_two());
-        assert!(max_height.is_power_of_two());
-        assert!(height <= max_height);
-
-        match self {
-            Self::Upsample => {
-                let log_scaling_factor = log2_strict_usize(max_height / height);
-                index >> log_scaling_factor
-            }
-            Self::Cyclic => index & (height - 1),
-        }
-    }
-}
+use crate::{Lifting, LmcsError};
 
 /// A uniform binary Merkle tree whose leaves are constructed from matrices with power-of-two heights.
 ///

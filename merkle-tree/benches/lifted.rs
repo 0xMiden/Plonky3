@@ -1,14 +1,14 @@
 use std::hint::black_box;
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_commit::Mmcs;
 use p3_field::Field;
+use p3_matrix::Matrix;
 use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_matrix::Matrix;
-use p3_merkle_tree::{build_leaves_cyclic, build_leaves_upsampled, Lifting, MerkleTreeLmcs};
+use p3_merkle_tree::{build_leaves_cyclic, build_leaves_upsampled};
 use p3_symmetric::{StatefulSponge, TruncatedPermutation};
 use p3_util::reverse_slice_index_bits;
 use rand::SeedableRng;
@@ -30,7 +30,9 @@ fn poseidon_components() -> (
 ) {
     let mut rng = SmallRng::seed_from_u64(1);
     let permutation = Poseidon2BabyBear::<WIDTH>::new_from_rng_128(&mut rng);
-    let sponge = StatefulSponge::<_, WIDTH, DIGEST, RATE> { p: permutation.clone() };
+    let sponge = StatefulSponge::<_, WIDTH, DIGEST, RATE> {
+        p: permutation.clone(),
+    };
     let compressor = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(permutation);
     (sponge, compressor)
 }
