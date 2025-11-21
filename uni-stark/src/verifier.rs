@@ -26,8 +26,8 @@ pub fn verify<SC, A>(
 where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>>
-        + for<'a> Air<VerifierConstraintFolder<'a, SC>>
-        + BaseAirWithAuxTrace<Val<SC>, SC::Challenge>,
+        + BaseAirWithAuxTrace<Val<SC>, SC::Challenge>
+        + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
 {
     let Proof {
         commitments,
@@ -39,15 +39,15 @@ where
     let pcs = config.pcs();
 
     let degree = 1 << degree_bits;
-    let aux_width_base = air.aux_width();
-    let num_randomness_base = air.num_randomness() * SC::Challenge::DIMENSION;
+    let aux_width = air.aux_width();
+    let num_randomness = air.num_randomness();
     let log_quotient_degree = get_log_quotient_degree::<Val<SC>, A>(
         air,
         0,
         public_values.len(),
         config.is_zk(),
-        aux_width_base,
-        num_randomness_base,
+        aux_width,
+        num_randomness,
     );
     let quotient_degree = 1 << (log_quotient_degree + config.is_zk());
 
@@ -104,6 +104,7 @@ where
         }
         // Check aux trace shape
         && if num_randomness > 0 {
+            let aux_width_base = aux_width * SC::Challenge::DIMENSION;
             match (&opened_values.aux_trace_local, &opened_values.aux_trace_next) {
                 (Some(l), Some(n)) => l.len() == aux_width_base && n.len() == aux_width_base,
                 _ => false,

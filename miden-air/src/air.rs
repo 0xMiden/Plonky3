@@ -1,4 +1,4 @@
-use crate::{ExtensionField, Field, MidenAirBuilder, RowMajorMatrix};
+use crate::{MidenAirBuilder, RowMajorMatrix};
 
 /// Super trait for all AIR definitions in the Miden VM ecosystem.
 ///
@@ -22,11 +22,7 @@ use crate::{ExtensionField, Field, MidenAirBuilder, RowMajorMatrix};
 /// # Optional Methods (with default implementations)
 ///
 /// All other methods have default implementations that can be overridden as needed.
-pub trait MidenAir<F, EF>: Sync
-where
-    F: Field,
-    EF: ExtensionField<F>,
-{
+pub trait MidenAir<F, EF>: Sync {
     // ==================== BaseAir Methods ====================
 
     /// The number of columns (a.k.a. registers) in this AIR.
