@@ -1,15 +1,15 @@
 use std::hint::black_box;
 use std::time::Duration;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_commit::Mmcs;
 use p3_field::Field;
-use p3_matrix::Matrix;
 use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_merkle_tree::{Lifting, MerkleTreeLmcs, build_leaves_cyclic, build_leaves_upsampled};
-use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
+use p3_matrix::Matrix;
+use p3_merkle_tree::{build_leaves_cyclic, build_leaves_upsampled, Lifting, MerkleTreeLmcs};
+use p3_symmetric::{StatefulSponge, TruncatedPermutation};
 use p3_util::reverse_slice_index_bits;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -17,13 +17,12 @@ use rand::rngs::SmallRng;
 type F = BabyBear;
 type Packed = <F as Field>::Packing;
 
-// Legacy note: LMCS no longer needs a global RATE; the sponge handles its own rate.
-// use a wider Poseidon2 permutation (WIDTH=24).
+// Use a wider Poseidon2 permutation (WIDTH=24) and explicit rate.
 const WIDTH: usize = 24;
 const RATE: usize = 16;
 const DIGEST: usize = 8;
 
-type Sponge = PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>;
+type Sponge = StatefulSponge<Poseidon2BabyBear<WIDTH>, WIDTH, DIGEST, RATE>;
 
 fn poseidon_components() -> (
     Sponge,
@@ -31,7 +30,7 @@ fn poseidon_components() -> (
 ) {
     let mut rng = SmallRng::seed_from_u64(1);
     let permutation = Poseidon2BabyBear::<WIDTH>::new_from_rng_128(&mut rng);
-    let sponge = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(permutation.clone());
+    let sponge = StatefulSponge::<_, WIDTH, DIGEST, RATE> { p: permutation.clone() };
     let compressor = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(permutation);
     (sponge, compressor)
 }
@@ -87,22 +86,12 @@ fn bench_lifted(c: &mut Criterion) {
         };
 
         group.throughput(Throughput::Bytes(padded_bytes(&dims)));
-        let padded_bytes = |ds: &[p3_matrix::Dimensions]| -> u64 {
-            let bytes: usize = ds
-                .iter()
-                .map(|d| d.height * d.width.next_multiple_of(RATE))
-                .sum::<usize>()
-                * core::mem::size_of::<F>();
-            bytes as u64
-        };
-
-        group.throughput(Throughput::Bytes(padded_bytes(&dims)));
         group.bench_with_input(
             BenchmarkId::new(format!("cyclic/{label}"), format!("{dims:?}")),
             &matrices,
             |b, mats| {
                 b.iter(|| {
-                    let out = build_leaves_cyclic::<Packed, _, _, WIDTH, RATE, DIGEST>(
+                    let out = build_leaves_cyclic::<Packed, Packed, _, _, WIDTH, DIGEST>(
                         black_box(&mats[..]),
                         black_box(&sponge),
                     )
@@ -113,13 +102,12 @@ fn bench_lifted(c: &mut Criterion) {
         );
 
         group.throughput(Throughput::Bytes(padded_bytes(&dims)));
-        group.throughput(Throughput::Bytes(padded_bytes(&dims)));
         group.bench_with_input(
             BenchmarkId::new(format!("upsampled/{label}"), format!("{dims:?}")),
             &matrices,
             |b, mats| {
                 b.iter(|| {
-                    let out = build_leaves_upsampled::<Packed, _, _, WIDTH, RATE, DIGEST>(
+                    let out = build_leaves_upsampled::<Packed, Packed, _, _, WIDTH, DIGEST>(
                         black_box(&mats[..]),
                         black_box(&sponge),
                     )
@@ -134,13 +122,12 @@ fn bench_lifted(c: &mut Criterion) {
             .map(|m| m.as_view().bit_reverse_rows())
             .collect();
         group.throughput(Throughput::Bytes(padded_bytes(&dims)));
-        group.throughput(Throughput::Bytes(padded_bytes(&dims)));
         group.bench_with_input(
             BenchmarkId::new(format!("bitrev/upsampled/{label}"), format!("{dims:?}")),
             &matrices,
             |b, _mats| {
                 b.iter(|| {
-                    let mut out = build_leaves_upsampled::<Packed, _, _, WIDTH, RATE, DIGEST>(
+                    let mut out = build_leaves_upsampled::<Packed, Packed, _, _, WIDTH, DIGEST>(
                         black_box(&mats_bitrev[..]),
                         black_box(&sponge),
                     )
@@ -162,12 +149,12 @@ macro_rules! lmcs_benches {
             use super::*;
 
             pub fn components() -> (
-                PaddingFreeSponge<$Perm, $WIDTH, $RATE, $DIGEST>,
+                StatefulSponge<$Perm, $WIDTH, $DIGEST, $RATE>,
                 TruncatedPermutation<$Perm, 2, $DIGEST, $WIDTH>,
             ) {
                 let mut rng = SmallRng::seed_from_u64(42);
                 let perm = <$Perm>::new_from_rng_128(&mut rng);
-                let sponge = PaddingFreeSponge::<_, $WIDTH, $RATE, $DIGEST>::new(perm.clone());
+                let sponge = StatefulSponge::<_, $WIDTH, $DIGEST, $RATE> { p: perm.clone() };
                 let compressor = TruncatedPermutation::<_, 2, $DIGEST, $WIDTH>::new(perm);
                 (sponge, compressor)
             }
@@ -208,7 +195,7 @@ macro_rules! lmcs_benches {
                     group.throughput(Throughput::Bytes(bytes as u64));
 
                     for lifting in [Lifting::Upsample, Lifting::Cyclic] {
-                        let lmcs = MerkleTreeLmcs::<Packed, _, _, $WIDTH, $RATE, $DIGEST>::new(
+                        let lmcs = MerkleTreeLmcs::<Packed, Packed, _, _, $WIDTH, $DIGEST>::new(
                             sponge.clone(),
                             compressor.clone(),
                             lifting,
@@ -250,7 +237,7 @@ macro_rules! lmcs_benches {
                 group.throughput(Throughput::Bytes(bytes as u64));
 
                 for lifting in [Lifting::Upsample, Lifting::Cyclic] {
-                    let lmcs = MerkleTreeLmcs::<Packed, _, _, $WIDTH, $RATE, $DIGEST>::new(
+                    let lmcs = MerkleTreeLmcs::<Packed, Packed, _, _, $WIDTH, $DIGEST>::new(
                         sponge.clone(),
                         compressor.clone(),
                         lifting,
