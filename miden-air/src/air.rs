@@ -65,13 +65,11 @@ where
 
     /// Build an aux trace (EF-based) given the main trace and EF challenges.
     /// Return None to indicate no aux or to fall back to legacy behavior.
-    fn build_aux_trace<AB>(
+    fn build_aux_trace(
         &self,
         _main: &RowMajorMatrix<F>,
         _challenges: &[EF],
     ) -> Option<RowMajorMatrix<EF>>
-    where
-        AB: MidenAirBuilder<F = F, EF = EF>,
     {
         None
     }
