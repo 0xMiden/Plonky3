@@ -8,7 +8,7 @@ use p3_field::Field;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::{Lifting, MerkleTreeLmcs, MerkleTreeMmcs};
-use p3_symmetric::{PaddingFreeSponge, StatefulSponge, TruncatedPermutation};
+use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
@@ -19,14 +19,14 @@ const WIDTH: usize = 24;
 const RATE: usize = 16;
 const DIGEST: usize = 8;
 
-type LMcsSponge = StatefulSponge<Poseidon2BabyBear<WIDTH>, WIDTH, DIGEST, RATE>;
+type LMcsSponge = PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>;
 type MmcsHash = PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>;
 type Compress = TruncatedPermutation<Poseidon2BabyBear<WIDTH>, 2, DIGEST, WIDTH>;
 
 fn components() -> (LMcsSponge, MmcsHash, Compress) {
     let mut rng = SmallRng::seed_from_u64(2024);
     let perm = Poseidon2BabyBear::<WIDTH>::new_from_rng_128(&mut rng);
-    let lmcs_sponge = StatefulSponge::<_, WIDTH, DIGEST, RATE> { p: perm.clone() };
+    let lmcs_sponge = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(perm.clone());
     let mmcs_hasher = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(perm.clone());
     let compressor = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(perm);
     (lmcs_sponge, mmcs_hasher, compressor)

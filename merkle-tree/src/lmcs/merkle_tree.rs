@@ -5,9 +5,7 @@ use core::marker::PhantomData;
 
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
-use p3_maybe_rayon::prelude::{
-    IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelSliceMut,
-};
+use p3_maybe_rayon::prelude::*;
 use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulHasher};
 use serde::{Deserialize, Serialize};
 
@@ -28,12 +26,14 @@ use crate::{Lifting, LmcsError};
 /// The per-leaf row composition follows the chosen [`Lifting`]: each matrix `M_i` is virtually
 /// extended to height `H` (width unchanged) via the index map described in [`Lifting`]. For leaf
 /// row `r`, the sponge absorbs the `r`-th row from each lifted matrix in sequence (with
-/// per-matrix zero padding to a multiple of `RATE` for absorption).
+/// per-matrix zero padding to a multiple of the hasher's padding width for
+/// absorption).
 ///
 /// Equivalent single-matrix view: this commitment is equivalent to first forming a single
 /// height-`H` matrix by (a) lifting every input matrix to height `H` (per [`Lifting`]), (b)
-/// padding each lifted matrix horizontally with zero columns so each width is a multiple of
-/// `RATE`, and (c) concatenating the results side-by-side. The leaf digest at row `r` is then the
+/// padding each lifted matrix horizontally with zero columns so each width is a multiple of the
+/// hasher's padding width, and (c) concatenating the results side-by-side. The leaf digest at
+/// row `r` is then the
 /// sponge of that single concatenated matrix’s row `r`. From the verifier’s perspective, the two
 /// constructions are indistinguishable: verification absorbs the same padded row segments in the
 /// same order and checks the same Merkle path.
@@ -170,8 +170,9 @@ where
 /// Build leaf digests using the upsampled view; see [`Lifting::Upsample`] for semantics.
 /// Conceptually, each matrix is virtually extended to height `H` by repeating each row
 /// `L = H / h` times (width unchanged), and the leaf `r` absorbs the `r`-th row from each
-/// extended matrix in order. Each absorbed row is virtually padded with zeros to a multiple of
-/// `RATE` for absorption; see [`LiftedMerkleTree`] docs for the equivalent single-matrix view.
+/// extended matrix in order. Each absorbed row is virtually padded with zeros to a multiple of the
+/// hasher's padding width for absorption; see [`LiftedMerkleTree`] docs for the equivalent
+/// single-matrix view.
 ///
 /// # Preconditions
 /// - `matrices` is non-empty and sorted by non-decreasing power-of-two heights.
@@ -242,7 +243,8 @@ where
 /// Conceptually, each matrix is virtually extended to height `H` by repeating its `h` rows
 /// `L = H / h` times in a cycle (width unchanged), and the leaf `r` absorbs the `r`-th row from
 /// each extended matrix in order. Each absorbed row is virtually padded with zeros to a multiple
-/// of `RATE` for absorption; see [`LiftedMerkleTree`] docs for the equivalent single-matrix view.
+/// of the hasher's padding width for absorption; see [`LiftedMerkleTree`] docs for the
+/// equivalent single-matrix view.
 ///
 /// # Preconditions
 /// - `matrices` is non-empty and sorted by non-decreasing power-of-two heights.

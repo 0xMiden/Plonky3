@@ -8,8 +8,8 @@ use p3_field::Field;
 use p3_matrix::Matrix;
 use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_merkle_tree::{build_leaves_cyclic, build_leaves_upsampled};
-use p3_symmetric::{StatefulSponge, TruncatedPermutation};
+use p3_merkle_tree::{Lifting, MerkleTreeLmcs, build_leaves_cyclic, build_leaves_upsampled};
+use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_util::reverse_slice_index_bits;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -22,7 +22,7 @@ const WIDTH: usize = 24;
 const RATE: usize = 16;
 const DIGEST: usize = 8;
 
-type Sponge = StatefulSponge<Poseidon2BabyBear<WIDTH>, WIDTH, DIGEST, RATE>;
+type Sponge = PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>;
 
 fn poseidon_components() -> (
     Sponge,
@@ -30,9 +30,7 @@ fn poseidon_components() -> (
 ) {
     let mut rng = SmallRng::seed_from_u64(1);
     let permutation = Poseidon2BabyBear::<WIDTH>::new_from_rng_128(&mut rng);
-    let sponge = StatefulSponge::<_, WIDTH, DIGEST, RATE> {
-        p: permutation.clone(),
-    };
+    let sponge = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(permutation.clone());
     let compressor = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(permutation);
     (sponge, compressor)
 }

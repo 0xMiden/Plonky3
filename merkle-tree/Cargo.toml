@@ -27,6 +27,7 @@ tracing.workspace = true
 p3-baby-bear.workspace = true
 p3-blake3.workspace = true
 p3-keccak.workspace = true
+p3-sha256.workspace = true
 p3-mds.workspace = true
 p3-rescue.workspace = true
 
@@ -42,6 +43,10 @@ harness = false
 
 [[bench]]
 name = "lmcs_vs_mmcs"
+harness = false
+
+[[bench]]
+name = "lmcs_hashes"
 harness = false
 
 [lints]
