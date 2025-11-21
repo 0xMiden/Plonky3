@@ -28,6 +28,7 @@ impl<AB: MidenAirBuilder> MidenAirBuilder for FilteredMidenAirBuilder<'_, AB> {
     type Var = AB::Var;
     type M = AB::M;
     type PublicVar = AB::PublicVar;
+    type PeriodicVal = AB::PeriodicVal;
     type EF = AB::EF;
     type ExprEF = AB::ExprEF;
     type VarEF = AB::VarEF;
@@ -58,7 +59,7 @@ impl<AB: MidenAirBuilder> MidenAirBuilder for FilteredMidenAirBuilder<'_, AB> {
         self.inner.public_values()
     }
 
-    fn periodic_evals(&self) -> &[Self::F] {
+    fn periodic_evals(&self) -> &[Self::PeriodicVal] {
         self.inner.periodic_evals()
     }
 

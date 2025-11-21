@@ -66,6 +66,11 @@ pub trait MidenAirBuilder: Sized {
     /// Type representing a public variable.
     type PublicVar: Into<Self::Expr> + Copy;
 
+    // ==================== Associated Types from AirBuilderWithPeriodicValues ====================
+
+    /// Type representing a periodic value.
+    type PeriodicVal: Into<Self::ExprEF> + Copy;
+
     // ==================== Associated Types from ExtensionBuilder ====================
 
     /// Extension field type.
@@ -188,7 +193,7 @@ pub trait MidenAirBuilder: Sized {
     // ==================== AirBuilderWithPeriodicValues Methods ====================
 
     /// Return the list of periodic values.
-    fn periodic_evals(&self) -> &[Self::F];
+    fn periodic_evals(&self) -> &[Self::PeriodicVal];
 
     // ==================== PairBuilder Methods ====================
 
