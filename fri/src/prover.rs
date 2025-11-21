@@ -174,8 +174,9 @@ where
     while folded.len() > params.blowup() * params.final_poly_len() {
         // As folded is in bit reversed order, it looks like:
         //      `[f_i(h^0), f_i(h^{N/2}), f_i(h^{N/4}), f_i(h^{3N/4}), ...] = [f_i(1), f_i(-1), f_i(h^{N/4}), f_i(-h^{N/4}), ...]`
-        // so the relevant evaluations are adjacent and we can just reinterpret the vector as a matrix of width 2.
-        let leaves = RowMajorMatrix::new(folded, 2);
+        // so the relevant evaluations are adjacent and we can just reinterpret the vector as a matrix with width = folding_factor.
+        let folding_factor = 1 << folding.log_folding_factor();
+        let leaves = RowMajorMatrix::new(folded, folding_factor);
 
         // Commit to these evaluations and observe the commitment.
         let (commit, prover_data) = params.mmcs.commit_matrix(leaves);
@@ -188,7 +189,9 @@ where
         // We passed ownership of `leaves` to the MMCS, so get a reference to it
         let leaves = params.mmcs.get_matrices(&prover_data).pop().unwrap();
         // Do the folding operation:
+        // if the folding factor = 2 then
         //      `f_{i + 1}'(x^2) = (f_i(x) + f_i(-x))/2 + beta_i (f_i(x) - f_i(-x))/2x`
+        // note the folding factor can be an arbitrary power of 2
         folded = folding.fold_matrix(beta, leaves.as_view());
 
         data.push(prover_data);
@@ -222,15 +225,15 @@ where
     }
 }
 
-/// Given an `index` produce a proof that the chain of folds at `index, index >> 1, ... ` are correct.
+/// Given an `index` produce a proof that the chain of folds at `index, index >> log_folding_factor, ... ` are correct.
 /// This is the prover's complement to the verifier's [`verify_query`] function.
 ///
 /// In addition to the output of this function, the prover must also supply the verifier with the input values
 /// (with associated opening proofs). These are produced by the `open_input` function passed into `prove_fri`.
 ///
-/// For each `i` in `[0, ..., num_folds)` this returns the value at `(index >> i) ^ 1` in round `i` along with
-/// an opening proof. The verifier can then use the values in round `i` at `index >> i` and `(index >> i) ^ 1`
-/// along with possibly an input value to compute the value at `index >> (i + 1)` in round `i + 1`.
+/// For each `i` in `[0, ..., num_folds)` this returns the values of all siblings of `index >> (i * log_folding_factor)`
+/// in round `i` along with an opening proof. The verifier can then use these values along with possibly an input
+/// value to compute the value at `index >> ((i + 1) * log_folding_factor)` in round `i + 1`.
 ///
 /// We repeat until we reach the final round where the verifier can check the value against the
 /// polynomial they were sent.
@@ -250,29 +253,49 @@ where
     F: Field,
     M: Mmcs<F>,
 {
+    let log_folding_factor = config.log_folding_factor;
+    let folding_factor = config.folding_factor();
+
     folded_polynomial_commits
         .iter()
         .enumerate()
         .map(|(i, commit)| {
-            // After i folding rounds, the current index we are looking at is `index >> i`.
-            let index_i = start_index >> i;
-            let index_i_sibling = index_i ^ 1;
-            let index_pair = index_i >> 1;
+            // After i folding rounds, the current index we are looking at is `index >> (i * log_folding_factor)`.
+            let index_i = start_index >> (i * log_folding_factor);
+            // Get the index within the folding group
+            let index_in_group = index_i % folding_factor;
+            // Get the index of the folding group (row in the committed matrix)
+            let group_index = index_i >> log_folding_factor;
 
-            // Get a proof that the pair of indices are correct.
+            // Get a proof that the entire row (all siblings in the folding group) is correct.
             let (mut opened_rows, opening_proof) =
-                config.mmcs.open_batch(index_pair, commit).unpack();
+                config.mmcs.open_batch(group_index, commit).unpack();
 
-            // opened_rows should contain just the value at index_i and its sibling.
-            // We just need to get the sibling.
+            // opened_rows should contain just the row at group_index.
             assert_eq!(opened_rows.len(), 1);
-            let opened_row = &opened_rows.pop().unwrap();
-            assert_eq!(opened_row.len(), 2, "Committed data should be in pairs");
-            let sibling_value = opened_row[index_i_sibling % 2];
+            let opened_row = opened_rows.pop().unwrap();
+            assert_eq!(
+                opened_row.len(),
+                folding_factor,
+                "Committed data should have width equal to folding factor"
+            );
 
-            // Add the sibling and the proof to the vector.
+            // We need to send all values in the row EXCEPT the one at index_in_group,
+            // since the verifier already knows that value (it's the folded evaluation from the previous round).
+            let sibling_values: Vec<F> = opened_row
+                .into_iter()
+                .enumerate()
+                .filter_map(|(idx, val)| {
+                    if idx != index_in_group {
+                        Some(val)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
             CommitPhaseProofStep {
-                sibling_value,
+                sibling_values,
                 opening_proof,
             }
         })

@@ -3,6 +3,7 @@ use core::marker::PhantomData;
 use p3_challenger::{CanObserve, CanSample, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{ExtensionField, Field};
+use p3_matrix::dense::RowMajorMatrix;
 
 pub type PcsError<SC> = <<SC as StarkGenericConfig>::Pcs as Pcs<
     <SC as StarkGenericConfig>::Challenge,
@@ -20,6 +21,10 @@ pub type PackedVal<SC> = <Val<SC> as Field>::Packing;
 
 pub type PackedChallenge<SC> =
     <<SC as StarkGenericConfig>::Challenge as ExtensionField<Val<SC>>>::ExtensionPacking;
+
+/// An aux builder takes in a main matrix and a randomness, and generate a aux matrix.
+pub type AuxBuilder<Val, Challenge> =
+    dyn Fn(&RowMajorMatrix<Val>, &[Challenge]) -> RowMajorMatrix<Val> + Send + Sync;
 
 pub trait StarkGenericConfig {
     /// The PCS used to commit to trace polynomials.
@@ -45,12 +50,12 @@ pub trait StarkGenericConfig {
     }
 }
 
-#[derive(Debug)]
 pub struct StarkConfig<Pcs, Challenge, Challenger> {
     /// The PCS used to commit polynomials and prove opening proofs.
     pcs: Pcs,
     /// An initialised instance of the challenger.
     challenger: Challenger,
+
     _phantom: PhantomData<Challenge>,
 }
 

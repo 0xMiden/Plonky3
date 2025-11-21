@@ -1,10 +1,10 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_air::Air;
+use p3_air::{Air, BaseAirWithAuxTrace};
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
-use p3_field::PrimeCharacteristicRing;
+use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_uni_stark::{
@@ -31,7 +31,9 @@ pub struct StarkInstance<'a, SC: SGC, A> {
 pub fn prove_batch<SC, A>(config: &SC, instances: Vec<StarkInstance<'_, SC, A>>) -> BatchProof<SC>
 where
     SC: SGC,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>>>
+        + for<'a> Air<ProverConstraintFolder<'a, SC>>
+        + BaseAirWithAuxTrace<Val<SC>, Challenge<SC>>,
 {
     let pcs = config.pcs();
     let mut challenger = config.initialise_challenger();
@@ -66,7 +68,16 @@ where
         .iter()
         .zip(pub_vals.iter())
         .map(|(air, pv)| {
-            let lqd = get_log_quotient_degree::<Val<SC>, A>(air, 0, pv.len(), config.is_zk());
+            let aux_width_base = air.aux_width();
+            let num_randomness_base = air.num_randomness() * SC::Challenge::DIMENSION;
+            let lqd = get_log_quotient_degree::<Val<SC>, A>(
+                air,
+                0,
+                pv.len(),
+                config.is_zk(),
+                aux_width_base,
+                num_randomness_base,
+            );
             let qd = 1 << (lqd + config.is_zk());
             (lqd, qd)
         })
@@ -122,7 +133,16 @@ where
             ext_trace_domains[i].create_disjoint_domain(1 << (log_ext_degrees[i] + lqd));
 
         // Count constraints to size alpha powers packing.
-        let constraint_cnt = get_symbolic_constraints(airs[i], 0, pub_vals[i].len()).len();
+        let aux_width_base = airs[i].aux_width();
+        let num_randomness_base = airs[i].num_randomness() * Challenge::<SC>::DIMENSION;
+        let constraint_cnt = get_symbolic_constraints(
+            airs[i],
+            0,
+            pub_vals[i].len(),
+            aux_width_base,
+            num_randomness_base,
+        )
+        .len();
 
         // Get evaluations on quotient domain from the main commitment.
         let trace_on_quotient_domain =
@@ -135,6 +155,8 @@ where
             *trace_domain,
             quotient_domain,
             &trace_on_quotient_domain,
+            None, // multi-stark doesn't support aux trace yet
+            &[],  // no randomness for multi-stark yet
             None, // multi-stark doesn't support preprocessed columns yet
             alpha,
             constraint_cnt,
@@ -222,6 +244,8 @@ where
         per_instance.push(OpenedValues {
             trace_local,
             trace_next,
+            aux_trace_local: None, // multi-stark doesn't support aux trace yet
+            aux_trace_next: None,
             preprocessed_local: None, // multi-stark doesn't support preprocessed columns yet
             preprocessed_next: None,
             quotient_chunks: qcs,

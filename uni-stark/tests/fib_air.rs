@@ -1,12 +1,12 @@
 use core::borrow::Borrow;
 
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir};
+use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, BaseAirWithAuxTrace};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::{DuplexChallenger, HashChallenger, SerializingChallenger32};
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
-use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
+use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField64};
 use p3_fri::{HidingFriPcs, TwoAdicFriPcs, create_test_fri_params};
 use p3_keccak::{Keccak256Hash, KeccakF};
 use p3_matrix::Matrix;
@@ -26,6 +26,13 @@ impl<F> BaseAir<F> for FibonacciAir {
     fn width(&self) -> usize {
         NUM_FIBONACCI_COLS
     }
+}
+
+impl<F, EF> BaseAirWithAuxTrace<F, EF> for FibonacciAir
+where
+    F: Field,
+    EF: ExtensionField<F>,
+{
 }
 
 impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {
@@ -136,7 +143,7 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
     let config = MyConfig::new(pcs, challenger);
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
-    let proof = prove(&config, &FibonacciAir {}, trace, &pis);
+    let proof = prove(&config, &FibonacciAir {}, &trace, &pis);
     verify(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");
 }
 
@@ -184,7 +191,7 @@ fn test_zk() {
     let challenger = Challenger::from_hasher(vec![], byte_hash);
     let config = MyHidingConfig::new(pcs, challenger);
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
-    let proof = prove(&config, &FibonacciAir {}, trace, &pis);
+    let proof = prove(&config, &FibonacciAir {}, &trace, &pis);
     verify(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");
 }
 
@@ -220,5 +227,5 @@ fn test_incorrect_public_value() {
         BabyBear::ONE,
         BabyBear::from_u32(123_123), // incorrect result
     ];
-    prove(&config, &FibonacciAir {}, trace, &pis);
+    prove(&config, &FibonacciAir {}, &trace, &pis);
 }

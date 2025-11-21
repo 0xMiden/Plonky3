@@ -25,7 +25,8 @@ pub struct Proof<SC: StarkGenericConfig> {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Commitments<Com> {
-    pub trace: Com,
+    pub trace: Com,       // main trace
+    pub aux: Option<Com>, // aux trace
     pub quotient_chunks: Com,
     pub random: Option<Com>,
 }
@@ -34,6 +35,8 @@ pub struct Commitments<Com> {
 pub struct OpenedValues<Challenge> {
     pub trace_local: Vec<Challenge>,
     pub trace_next: Vec<Challenge>,
+    pub aux_trace_local: Option<Vec<Challenge>>,
+    pub aux_trace_next: Option<Vec<Challenge>>,
     pub preprocessed_local: Option<Vec<Challenge>>,
     pub preprocessed_next: Option<Vec<Challenge>>, // may not always be necessary
     pub quotient_chunks: Vec<Vec<Challenge>>,

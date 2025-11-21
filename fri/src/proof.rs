@@ -31,10 +31,10 @@ pub struct QueryProof<F: Field, M: Mmcs<F>, InputProof> {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(bound = "")]
 pub struct CommitPhaseProofStep<F: Field, M: Mmcs<F>> {
-    /// The opening of the commit phase codeword at the sibling location.
-    // This may change to Vec<FC::Challenge> if the library is generalized to support other FRI
-    // folding arities besides 2, meaning that there can be multiple siblings.
-    pub sibling_value: F,
+    /// The openings of the commit phase codeword at all sibling locations.
+    /// For folding factor 2, this contains 1 value (the single sibling).
+    /// For folding factor k, this contains k-1 values (all siblings except the queried index).
+    pub sibling_values: Vec<F>,
 
     pub opening_proof: M::Proof,
 }

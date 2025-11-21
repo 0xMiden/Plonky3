@@ -1,5 +1,6 @@
 use core::fmt::Debug;
 
+use p3_air::BaseAirWithAuxTrace;
 use p3_challenger::{DuplexChallenger, SerializingChallenger32};
 use p3_circle::CirclePcs;
 use p3_commit::ExtensionMmcs;
@@ -83,7 +84,7 @@ pub fn prove_monty31_keccak<
     F: PrimeField32 + TwoAdicField,
     EF: ExtensionField<F>,
     DFT: TwoAdicSubgroupDft<F>,
-    PG: ExampleHashAir<F, KeccakStarkConfig<F, EF, DFT>>,
+    PG: ExampleHashAir<F, KeccakStarkConfig<F, EF, DFT>> + BaseAirWithAuxTrace<F, EF>,
 >(
     proof_goal: &PG,
     dft: DFT,
@@ -104,7 +105,7 @@ where
 
     let config = KeccakStarkConfig::new(pcs, challenger);
 
-    let proof = prove(&config, proof_goal, trace, &[]);
+    let proof = prove(&config, proof_goal, &trace, &[]);
     report_proof_size(&proof);
 
     verify(&config, proof_goal, &proof, &[])
@@ -123,7 +124,8 @@ pub fn prove_monty31_poseidon2<
     DFT: TwoAdicSubgroupDft<F>,
     Perm16: CryptographicPermutation<[F; 16]> + CryptographicPermutation<[F::Packing; 16]>,
     Perm24: CryptographicPermutation<[F; 24]> + CryptographicPermutation<[F::Packing; 24]>,
-    PG: ExampleHashAir<F, Poseidon2StarkConfig<F, EF, DFT, Perm16, Perm24>>,
+    PG: ExampleHashAir<F, Poseidon2StarkConfig<F, EF, DFT, Perm16, Perm24>>
+        + BaseAirWithAuxTrace<F, EF>,
 >(
     proof_goal: &PG,
     dft: DFT,
@@ -146,7 +148,7 @@ where
 
     let config = Poseidon2StarkConfig::new(pcs, challenger);
 
-    let proof = prove(&config, proof_goal, trace, &[]);
+    let proof = prove(&config, proof_goal, &trace, &[]);
     report_proof_size(&proof);
 
     verify(&config, proof_goal, &proof, &[])
@@ -163,7 +165,7 @@ pub fn prove_m31_keccak<
     PG: ExampleHashAir<
             Mersenne31,
             KeccakCircleStarkConfig<Mersenne31, BinomialExtensionField<Mersenne31, 3>>,
-        >,
+        > + BaseAirWithAuxTrace<Mersenne31, BinomialExtensionField<Mersenne31, 3>>,
 >(
     proof_goal: &PG,
     num_hashes: usize,
@@ -182,7 +184,7 @@ pub fn prove_m31_keccak<
 
     let config = KeccakCircleStarkConfig::new(pcs, challenger);
 
-    let proof = prove(&config, proof_goal, trace, &[]);
+    let proof = prove(&config, proof_goal, &trace, &[]);
     report_proof_size(&proof);
 
     verify(&config, proof_goal, &proof, &[])
@@ -200,7 +202,8 @@ pub fn prove_m31_poseidon2<
     EF: ExtensionField<F>,
     Perm16: CryptographicPermutation<[F; 16]> + CryptographicPermutation<[F::Packing; 16]>,
     Perm24: CryptographicPermutation<[F; 24]> + CryptographicPermutation<[F::Packing; 24]>,
-    PG: ExampleHashAir<F, Poseidon2CircleStarkConfig<F, EF, Perm16, Perm24>>,
+    PG: ExampleHashAir<F, Poseidon2CircleStarkConfig<F, EF, Perm16, Perm24>>
+        + BaseAirWithAuxTrace<F, EF>,
 >(
     proof_goal: &PG,
     num_hashes: usize,
@@ -222,7 +225,7 @@ where
 
     let config = Poseidon2CircleStarkConfig::new(pcs, challenger);
 
-    let proof = prove(&config, proof_goal, trace, &[]);
+    let proof = prove(&config, proof_goal, &trace, &[]);
     report_proof_size(&proof);
 
     verify(&config, proof_goal, &proof, &[])

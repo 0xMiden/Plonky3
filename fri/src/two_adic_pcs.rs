@@ -26,7 +26,7 @@ use p3_field::coset::TwoAdicMultiplicativeCoset;
 use p3_field::{
     ExtensionField, PackedFieldExtension, TwoAdicField, batch_multiplicative_inverse, dot_product,
 };
-use p3_interpolation::interpolate_coset_with_precomputation;
+use p3_interpolation::{interpolate_coset_with_precomputation, lagrange_interpolate_ext};
 use p3_matrix::Matrix;
 use p3_matrix::bitrev::{BitReversedMatrixView, BitReversibleMatrix};
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
@@ -88,7 +88,19 @@ pub type CommitmentWithOpeningPoints<Challenge, Commitment, Domain> = (
     )>,
 );
 
-pub struct TwoAdicFriFolding<InputProof, InputError>(pub PhantomData<(InputProof, InputError)>);
+pub struct TwoAdicFriFolding<InputProof, InputError> {
+    pub log_folding_factor: usize,
+    pub _phantom: PhantomData<(InputProof, InputError)>,
+}
+
+impl<InputProof, InputError> TwoAdicFriFolding<InputProof, InputError> {
+    pub const fn new(log_folding_factor: usize) -> Self {
+        Self {
+            log_folding_factor,
+            _phantom: PhantomData,
+        }
+    }
+}
 
 pub type TwoAdicFriFoldingForMmcs<F, M> =
     TwoAdicFriFolding<Vec<BatchOpening<F, M>>, <M as Mmcs<F>>::Error>;
@@ -103,6 +115,10 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
         0
     }
 
+    fn log_folding_factor(&self) -> usize {
+        self.log_folding_factor
+    }
+
     fn fold_row(
         &self,
         index: usize,
@@ -110,6 +126,36 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
         beta: EF,
         evals: impl Iterator<Item = EF>,
     ) -> EF {
+        let folding_factor = 1 << self.log_folding_factor;
+        if folding_factor == 2 {
+            self.fold_row_2(index, log_height, beta, evals)
+        } else {
+            self.fold_row_arbitrary(index, log_height, beta, evals, folding_factor)
+        }
+    }
+
+    fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, m: M) -> Vec<EF> {
+        let folding_factor = 1 << self.log_folding_factor;
+        if folding_factor == 2 {
+            self.fold_matrix_2(beta, &m)
+        } else {
+            self.fold_matrix_arbitrary(beta, &m, folding_factor)
+        }
+    }
+}
+
+impl<InputProof, InputError: Debug> TwoAdicFriFolding<InputProof, InputError> {
+    fn fold_row_2<EF, F>(
+        &self,
+        index: usize,
+        log_height: usize,
+        beta: EF,
+        evals: impl Iterator<Item = EF>,
+    ) -> EF
+    where
+        EF: ExtensionField<F>,
+        F: TwoAdicField,
+    {
         let arity = 2;
         let log_arity = 1;
         let (e0, e1) = evals
@@ -131,7 +177,50 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
         // Note we do not want to do an EF division as that is far more expensive.
     }
 
-    fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, m: M) -> Vec<EF> {
+    fn fold_row_arbitrary<EF, F>(
+        &self,
+        index: usize,
+        log_height: usize,
+        beta: EF,
+        evals: impl Iterator<Item = EF>,
+        folding_factor: usize,
+    ) -> EF
+    where
+        EF: ExtensionField<F>,
+        F: TwoAdicField,
+    {
+        let arity = folding_factor;
+        let log_arity = log2_strict_usize(arity); // panics if arity is not a power of 2
+
+        let evals: Vec<EF> = evals.collect();
+        assert_eq!(
+            evals.len(),
+            folding_factor,
+            "Expected {} evaluations, got {}",
+            folding_factor,
+            evals.len()
+        );
+
+        // If performance critical, make this API stateful to avoid this
+        // This is a bit more math than is necessary, but leaving it here
+        // in case we want higher arity in the future.
+        let subgroup_start = F::two_adic_generator(log_height + log_arity)
+            .exp_u64(reverse_bits_len(index, log_height) as u64);
+        let mut xs = F::two_adic_generator(log_arity)
+            .shifted_powers(subgroup_start)
+            .collect_n(arity);
+        reverse_slice_index_bits(&mut xs);
+
+        // Perform Lagrange interpolation at beta
+        // We optimize by keeping denominators in base field F
+        lagrange_interpolate_ext(&xs, &evals, beta)
+    }
+
+    fn fold_matrix_2<EF, F, M: Matrix<EF>>(&self, beta: EF, m: &M) -> Vec<EF>
+    where
+        EF: ExtensionField<F>,
+        F: TwoAdicField,
+    {
         // We use the fact that
         //     p_e(x^2) = (p(x) + p(-x)) / 2
         //     p_o(x^2) = (p(x) - p(-x)) / (2 x)
@@ -157,6 +246,48 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
             .map(|(mut row, halve_inv_power)| {
                 let (lo, hi) = row.next_tuple().unwrap();
                 (lo + hi).halve() + (lo - hi) * beta * halve_inv_power
+            })
+            .collect()
+    }
+
+    /// Same as applying fold_row to every row, possibly faster.
+    fn fold_matrix_arbitrary<EF, F, M: Matrix<EF>>(
+        &self,
+        beta: EF,
+        m: &M,
+        folding_factor: usize,
+    ) -> Vec<EF>
+    where
+        EF: ExtensionField<F>,
+        F: TwoAdicField,
+    {
+        let log_arity = log2_strict_usize(folding_factor);
+        let log_height = log2_strict_usize(m.height());
+
+        // Precompute domain points for each row
+        let g = F::two_adic_generator(log_height + log_arity);
+
+        // For each row index, compute its domain points
+        let domain_points: Vec<Vec<F>> = (0..m.height())
+            .map(|index| {
+                let subgroup_start = g.exp_u64(reverse_bits_len(index, log_height) as u64);
+                let mut xs = F::two_adic_generator(log_arity)
+                    .shifted_powers(subgroup_start)
+                    .collect_n(folding_factor);
+                reverse_slice_index_bits(&mut xs);
+                xs
+            })
+            .collect();
+
+        // Process each row in parallel
+        m.par_rows()
+            .zip(domain_points)
+            .map(|(row, xs)| {
+                let evals: Vec<EF> = row.collect();
+                assert_eq!(evals.len(), folding_factor);
+
+                // Perform Lagrange interpolation at beta
+                lagrange_interpolate_ext(&xs, &evals, beta)
             })
             .collect()
     }
@@ -505,7 +636,10 @@ where
         // low degree functions.
         let fri_input = reduced_openings.into_iter().rev().flatten().collect_vec();
 
-        let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding(PhantomData);
+        let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding {
+            log_folding_factor: self.fri.log_folding_factor,
+            _phantom: PhantomData,
+        };
 
         // Produce the FRI proof.
         let fri_proof = prover::prove_fri(
@@ -542,7 +676,10 @@ where
             }
         }
 
-        let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding(PhantomData);
+        let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding {
+            log_folding_factor: self.fri.log_folding_factor,
+            _phantom: PhantomData,
+        };
 
         verifier::verify_fri(
             &folding,

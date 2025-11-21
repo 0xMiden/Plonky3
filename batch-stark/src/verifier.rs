@@ -1,7 +1,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_air::Air;
+use p3_air::{Air, BaseAirWithAuxTrace};
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
@@ -27,7 +27,9 @@ pub fn verify_batch<SC, A>(
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
     SC: SGC,
-    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>>>
+        + for<'a> Air<VerifierConstraintFolder<'a, SC>>
+        + BaseAirWithAuxTrace<Val<SC>, Challenge<SC>>,
     Challenge<SC>: BasedVectorSpace<Val<SC>>,
 {
     let BatchProof {
@@ -63,7 +65,16 @@ where
         .iter()
         .zip(public_values.iter())
         .map(|(air, pv)| {
-            let lqd = get_log_quotient_degree::<Val<SC>, A>(air, 0, pv.len(), config.is_zk());
+            let aux_width_base = air.aux_width();
+            let num_randomness_base = air.num_randomness() * SC::Challenge::DIMENSION;
+            let lqd = get_log_quotient_degree::<Val<SC>, A>(
+                air,
+                0,
+                pv.len(),
+                config.is_zk(),
+                aux_width_base,
+                num_randomness_base,
+            );
             let qd = 1 << (lqd + config.is_zk());
             (lqd, qd)
         })
@@ -201,6 +212,9 @@ where
             &opened_values.instances[i].trace_next,
             opened_values.instances[i].preprocessed_local.as_deref(),
             opened_values.instances[i].preprocessed_next.as_deref(),
+            None,
+            None,
+            &[],
             &public_values[i],
             init_trace_domain,
             zeta,
