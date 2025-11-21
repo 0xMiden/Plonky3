@@ -38,9 +38,9 @@ where
         1
     }
 
-    /// Number of columns (in based field) that is required for aux trace
+    /// Number of columns (in extension field) that is required for aux trace
     fn aux_width(&self) -> usize {
-        3 * EF::DIMENSION
+        3
     }
 
     /// Build an aux trace (EF-based) given the main trace and EF challenges.

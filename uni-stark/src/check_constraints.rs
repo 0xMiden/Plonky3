@@ -1,20 +1,12 @@
-#[cfg(debug_assertions)]
 use alloc::vec::Vec;
 
-#[cfg(debug_assertions)]
-use p3_air::Air;
-use p3_air::{AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder};
-#[cfg(debug_assertions)]
-use p3_field::BasedVectorSpace;
-use p3_field::{ExtensionField, Field};
-#[cfg(debug_assertions)]
+use p3_air::{
+    Air, AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder,
+};
+use p3_field::{BasedVectorSpace, ExtensionField, Field};
 use p3_matrix::Matrix;
-#[cfg(debug_assertions)]
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
-#[cfg(debug_assertions)]
-use p3_matrix::stack::VerticalPair;
-use p3_matrix::stack::ViewPair;
-#[cfg(debug_assertions)]
+use p3_matrix::stack::{VerticalPair, ViewPair};
 use tracing::instrument;
 
 /// Runs constraint checks using a given AIR definition and trace matrix.
@@ -30,7 +22,6 @@ use tracing::instrument;
 /// - `aux_randomness`: The randomness values that are used to generate `aux` trace
 /// - `public_values`: Public values provided to the builder
 #[instrument(name = "check constraints", skip_all)]
-#[cfg(debug_assertions)]
 pub(crate) fn check_constraints<F, EF, A>(
     air: &A,
     main: &RowMajorMatrix<F>,
@@ -96,8 +87,7 @@ pub(crate) fn check_constraints<F, EF, A>(
     });
 }
 
-// Helper: convert a flattened base-field row (slice of `F`) into a Vec<EF>
-#[cfg(debug_assertions)]
+/// Helper: convert a flattened base-field row (slice of `F`) into a Vec<EF>
 fn row_to_ext<F, EF>(row: &[F]) -> Vec<EF>
 where
     F: Field,
@@ -226,7 +216,6 @@ impl<'a, F: Field, EF: ExtensionField<F>> PermutationAirBuilder
 }
 
 #[cfg(test)]
-#[cfg(debug_assertions)]
 mod tests {
     use alloc::vec;
 
@@ -270,9 +259,6 @@ mod tests {
                 // New logic: enforce row[i+1] = row[i] + 1, only on transitions
                 builder.when_transition().assert_eq(b, a + F::ONE);
             }
-
-            // New logic: enforce row[i+1] = row[i] + 1, only on transitions
-            builder.when_transition().assert_eq(b, a + F::ONE);
 
             // ======================
             // aux trace

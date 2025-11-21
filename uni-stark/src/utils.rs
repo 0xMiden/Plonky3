@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
-use p3_air::ExtensionBuilder;
-use p3_air::PermutationAirBuilder;
+
+use p3_air::{ExtensionBuilder, PermutationAirBuilder};
 use p3_field::Field;
 use p3_matrix::Matrix;
 
