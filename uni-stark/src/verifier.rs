@@ -101,11 +101,46 @@ where
         _ => None,
     };
 
+    // Convert aux trace opened values from base field coefficient representation to extension field elements
+    //
+    // The opened values are extension field values (from evaluating base field polynomials at zeta).
+    // We have aux_width * DIMENSION values, which need to be regrouped into aux_width extension field elements.
+    // Each group of DIMENSION consecutive values represents the basis coefficients of one extension field element.
+    let aux_local_converted;
+    let aux_next_converted;
     let aux = match (aux_local, aux_next) {
-        (Some(local), Some(next)) => VerticalPair::new(
-            RowMajorMatrixView::new_row(local),
-            RowMajorMatrixView::new_row(next),
-        ),
+        (Some(local), Some(next)) => {
+            // First, flatten all extension field values to their base field coefficients
+            let local_base: Vec<Val<SC>> = local
+                .iter()
+                .flat_map(|ef| ef.as_basis_coefficients_slice().to_vec())
+                .collect();
+            let next_base: Vec<Val<SC>> = next
+                .iter()
+                .flat_map(|ef| ef.as_basis_coefficients_slice().to_vec())
+                .collect();
+
+            // Then, regroup into aux_width extension field elements
+            aux_local_converted = local_base
+                .chunks(SC::Challenge::DIMENSION)
+                .map(|chunk| {
+                    SC::Challenge::from_basis_coefficients_slice(chunk)
+                        .expect("Invalid basis coefficients")
+                })
+                .collect::<Vec<_>>();
+            aux_next_converted = next_base
+                .chunks(SC::Challenge::DIMENSION)
+                .map(|chunk| {
+                    SC::Challenge::from_basis_coefficients_slice(chunk)
+                        .expect("Invalid basis coefficients")
+                })
+                .collect::<Vec<_>>();
+
+            VerticalPair::new(
+                RowMajorMatrixView::new_row(&aux_local_converted),
+                RowMajorMatrixView::new_row(&aux_next_converted),
+            )
+        }
         _ => {
             // Create an empty ViewPair with zero width
             let empty: &[SC::Challenge] = &[];

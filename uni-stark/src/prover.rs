@@ -15,7 +15,7 @@ use tracing::{debug_span, info_span, instrument};
 use crate::{
     Commitments, DebugConstraintBuilder, Domain, OpenedValues, PackedChallenge, PackedVal, Proof,
     ProverConstraintFolder, StarkGenericConfig, SymbolicAirBuilder, Val, check_constraints,
-    generate_logup_trace, get_log_quotient_degree, get_symbolic_constraints,
+    get_log_quotient_degree, get_symbolic_constraints,
 };
 
 /// Commits the preprocessed trace if present.
@@ -65,13 +65,13 @@ where
 
     // Compute the constraint polynomials as vectors of symbolic expressions.
     let aux_width = air.aux_width();
-    let num_randomness_base = air.num_randomness() * SC::Challenge::DIMENSION;
+    let num_randomness = air.num_randomness();
     let symbolic_constraints = get_symbolic_constraints(
         air,
         preprocessed_width,
         public_values.len(),
         aux_width,
-        num_randomness_base,
+        num_randomness,
     );
 
     // Count the number of constraints that we have.
@@ -116,7 +116,7 @@ where
         public_values.len(),
         config.is_zk(),
         aux_width,
-        num_randomness_base,
+        num_randomness,
     );
     let quotient_degree = 1 << (log_quotient_degree + config.is_zk());
 

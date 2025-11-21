@@ -1,20 +1,12 @@
 use alloc::vec::Vec;
 
 use p3_air::{
-    Air, AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PermutationAirBuilder,
-};
-use p3_field::{BasedVectorSpace, ExtensionField, Field};
-use p3_matrix::Matrix;
-use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
-use p3_matrix::stack::{VerticalPair, ViewPair};
-use p3_air::{
     AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder, PermutationAirBuilder,
 };
 use p3_field::{ExtensionField, Field};
+use p3_matrix::Matrix;
+use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_matrix::stack::ViewPair;
-#[cfg(debug_assertions)]
-use p3_matrix::{Matrix, dense::RowMajorMatrix, dense::RowMajorMatrixView};
-#[cfg(debug_assertions)]
 use tracing::instrument;
 
 /// Runs constraint checks using a given AIR definition and trace matrix.
@@ -287,7 +279,6 @@ mod tests {
     {
         fn eval(&self, builder: &mut DebugConstraintBuilder<'_, F, EF>) {
             let main = builder.main();
-            let aux_pair = builder.aux;
 
             for col in 0..2 {
                 let a = main.top.get(0, col).unwrap();
@@ -297,53 +288,6 @@ mod tests {
                 builder.when_transition().assert_eq(b, a + F::ONE);
             }
 
-            // ======================
-            // aux trace
-            // ======================
-            // Note: For now this is hard coded with LogUp
-            // To show that {x_i} and {y_i} are permutations of each other
-            // We compute
-            // |    aux1           |    aux2           |   aux3                          |
-            // | t_i = 1/(r - x_i) | w_i = 1/(r - y_i) | aux3[i] = aux3[i-1] + t_i - w_i |
-            //
-            // - r is the input randomness
-            // - in practice x_i and y_i should be copied from corresponding main trace (with selectors)
-            //
-            // ZZ note:
-            // This is practically LogUp with univariate. This requires 3 extension columns = 12 base columns.
-            // It is better than checking \prod(r-xi) == \prod(r-yi) which requires 4 extension columns (the last two store the running product)
-
-            // aux row computation is correct
-            let xi = main.top.get(0, 0).unwrap();
-            let yi = main.top.get(0, 1).unwrap();
-
-            // let aux_ef = DebugEfView::<F, EF>::new(aux_pair);
-            let r = builder.aux_randomness[0];
-
-            // current row EF elements
-            let t_i = aux_pair.get(0, 0).unwrap();
-            let w_i = aux_pair.get(0, 1).unwrap();
-            let s_i = aux_pair.get(0, 2).unwrap();
-            // next row EF elements
-            let t_next = aux_pair.get(1, 0).unwrap();
-            let w_next = aux_pair.get(1, 1).unwrap();
-            let s_next = aux_pair.get(1, 2).unwrap();
-
-            // t * (r - x_i) == 1  and  w * (r - y_i) == 1
-            builder.assert_eq_ext(t_i * (r - EF::from(xi)), EF::ONE);
-            builder.assert_eq_ext(w_i * (r - EF::from(yi)), EF::ONE);
-
-            // transition is correct: s' = s + t' - w'
-            builder
-                .when_transition()
-                .assert_eq_ext(s_next, s_i + t_next - w_next);
-
-            // a3[last] = Σ(t - w) == 0 if multisets match
-            builder.when_last_row().assert_zero_ext(s_i);
-
-            // ======================
-            // public input
-            // ======================
             // Add public value equality on last row for extra coverage
             let public_values = builder.public_values;
             let mut when_last = builder.when(builder.is_last_row);

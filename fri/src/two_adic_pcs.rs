@@ -102,15 +102,6 @@ impl<InputProof, InputError> Default for TwoAdicFriFolding<InputProof, InputErro
     }
 }
 
-impl<InputProof, InputError> TwoAdicFriFolding<InputProof, InputError> {
-    pub const fn new(log_folding_factor: usize) -> Self {
-        Self {
-            log_folding_factor,
-            _phantom: PhantomData,
-        }
-    }
-}
-
 pub type TwoAdicFriFoldingForMmcs<F, M> =
     TwoAdicFriFolding<Vec<BatchOpening<F, M>>, <M as Mmcs<F>>::Error>;
 
