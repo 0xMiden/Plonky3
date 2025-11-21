@@ -26,7 +26,7 @@ use crate::lmcs::utils::validate_heights;
 /// width, whose `r`-th row is `row_{f_i(r)}(M_i)`. In other words, lifting “extends” each matrix
 /// vertically to height `H` without changing its width. The LMCS leaf at position `r` then uses,
 /// in order, the row `r` from each lifted matrix `M_i^↑` as input to the sponge (with per-matrix
-/// zero padding to a multiple of `RATE` for absorption).
+/// zero padding to a multiple of the hasher's padding width for absorption).
 ///
 /// Two canonical choices for `f_i` are supported:
 /// - Upsample (nearest-neighbor): each original row is repeated contiguously
@@ -100,7 +100,7 @@ impl Lifting {
 /// row-index mapping.
 ///
 /// Equivalent single-matrix view: the scheme is equivalent to lifting every matrix to height `H`,
-/// padding each horizontally with zeros to a multiple of `RATE`, and concatenating them side-by-
+/// padding each horizontally with zeros to a multiple of the hasher's padding width, and concatenating them side-by-
 /// side into one matrix. The Merkle tree and verification behavior are identical to committing to
 /// and opening that single concatenated matrix.
 #[derive(Clone, Debug)]
@@ -174,7 +174,17 @@ where
         );
 
         // Map to per-matrix indices.
-        let opened_rows = tree.rows(index);
+        let mut opened_rows = tree.rows(index);
+        // Pad each row to a multiple of the hasher's padding width with zeros.
+        let pad = <H as StatefulHasher<PF::Value, _, _>>::PADDING_WIDTH;
+        if pad > 1 {
+            for row in &mut opened_rows {
+                let target = row.len().next_multiple_of(pad);
+                if target > row.len() {
+                    row.resize(target, PF::Value::default());
+                }
+            }
+        }
 
         let mut proof = Vec::with_capacity(tree.digest_layers.len().saturating_sub(1));
         let mut layer_index = index;
@@ -226,11 +236,17 @@ where
             });
         }
 
+        let pad = <H as StatefulHasher<PF::Value, _, _>>::PADDING_WIDTH;
         for (idx, (opened_row, dimension)) in zip(opened_values, dimensions).enumerate() {
-            if opened_row.len() != dimension.width {
+            let expected_width = if pad > 1 {
+                dimension.width.next_multiple_of(pad)
+            } else {
+                dimension.width
+            };
+            if opened_row.len() != expected_width {
                 return Err(LmcsError::WrongWidth {
                     matrix: idx,
-                    expected: dimension.width,
+                    expected: expected_width,
                     actual: opened_row.len(),
                 });
             }
@@ -307,7 +323,7 @@ mod tests {
 
     use p3_baby_bear::Poseidon2BabyBear;
     use p3_matrix::dense::RowMajorMatrix;
-    use p3_symmetric::{StatefulSponge, TruncatedPermutation};
+    use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
     use rand::rngs::SmallRng;
     use rand::{RngCore, SeedableRng};
 
@@ -315,12 +331,12 @@ mod tests {
     use super::*;
 
     fn components() -> (
-        StatefulSponge<Poseidon2BabyBear<WIDTH>, WIDTH, DIGEST, RATE>,
+        PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
         TruncatedPermutation<Poseidon2BabyBear<WIDTH>, 2, DIGEST, WIDTH>,
     ) {
         let mut rng = SmallRng::seed_from_u64(123);
         let perm = Poseidon2BabyBear::<WIDTH>::new_from_rng_128(&mut rng);
-        let sponge = StatefulSponge::<_, WIDTH, DIGEST, RATE> { p: perm.clone() };
+        let sponge = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(perm.clone());
         let compress = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(perm);
         (sponge, compress)
     }
@@ -333,11 +349,8 @@ mod tests {
     #[test]
     fn commit_open_verify_roundtrip() {
         let (sponge, compress) = components();
-        let lmcs = MerkleTreeLmcs::<P, P, _, _, WIDTH, DIGEST>::new(
-            sponge.clone(),
-            compress.clone(),
-            Lifting::Upsample,
-        );
+        let lmcs =
+            MerkleTreeLmcs::<P, P, _, _, WIDTH, DIGEST>::new(sponge, compress, Lifting::Upsample);
 
         let mut rng = SmallRng::seed_from_u64(9);
         let matrices = vec![

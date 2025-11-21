@@ -6,6 +6,7 @@ use p3_field::{Field, PrimeField, PrimeField32, reduce_32};
 
 use crate::hasher::CryptographicHasher;
 use crate::permutation::CryptographicPermutation;
+use crate::stateful::StatefulHasher;
 
 /// A padding-free, overwrite-mode sponge function.
 ///
@@ -57,37 +58,15 @@ where
     }
 }
 
-/// Trait for stateful sponge operations with default implementations
-pub trait StatefulHasher<Item, State, Out>
+// Implement the stateful interface for the padding-free sponge construction.
+impl<P, T, const WIDTH: usize, const RATE: usize, const OUT: usize>
+    StatefulHasher<T, [T; WIDTH], [T; OUT]> for PaddingFreeSponge<P, WIDTH, RATE, OUT>
 where
-    Item: Default,
-{
-    /// Absorb elements into sponge state with zero-padding.
-    ///
-    /// Elements are processed in chunks of RATE. Each chunk overwrites the first RATE
-    /// positions of the state, with zero-padding if the chunk is incomplete. After each
-    /// chunk (including padded chunks), the permutation is applied.
-    fn absorb_into<I>(&self, state: &mut State, input: I)
-    where
-        I: IntoIterator<Item = Item>;
-
-    /// Squeeze output from sponge state.
-    ///
-    /// Extracts the first OUT elements from the state.
-    fn squeeze(&self, state: &State) -> Out;
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct StatefulSponge<P, const WIDTH: usize, const OUT: usize, const RATE: usize> {
-    pub p: P,
-}
-
-impl<P, T, const WIDTH: usize, const OUT: usize, const RATE: usize>
-    StatefulHasher<T, [T; WIDTH], [T; OUT]> for StatefulSponge<P, WIDTH, OUT, RATE>
-where
-    T: Default + Copy,
+    T: Default + Clone,
     P: CryptographicPermutation<[T; WIDTH]>,
 {
+    const PADDING_WIDTH: usize = RATE;
+
     fn absorb_into<I>(&self, state: &mut [T; WIDTH], input: I)
     where
         I: IntoIterator<Item = T>,
@@ -102,21 +81,18 @@ where
                 } else {
                     if i != 0 {
                         state[i..RATE].fill(T::default());
-                        self.p.permute_mut(state);
+                        self.permutation.permute_mut(state);
                     }
                     break 'outer;
                 }
             }
-            self.p.permute_mut(state);
+            self.permutation.permute_mut(state);
         }
     }
 
-    /// Squeeze output from sponge state.
-    ///
-    /// Extracts the first OUT elements from the state.
     fn squeeze(&self, state: &[T; WIDTH]) -> [T; OUT] {
         const { assert!(OUT < WIDTH) }
-        state[..OUT].try_into().unwrap()
+        core::array::from_fn(|i| state[i].clone())
     }
 }
 
