@@ -103,7 +103,7 @@ impl Lifting {
 /// padding each horizontally with zeros to a multiple of the hasher's padding width, and concatenating them side-by-
 /// side into one matrix. The Merkle tree and verification behavior are identical to committing to
 /// and opening that single concatenated matrix.
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct MerkleTreeLmcs<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize> {
     sponge: H,
     compress: C,
@@ -128,17 +128,13 @@ impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize> Mmcs<PF::Value
     for MerkleTreeLmcs<PF, PD, H, C, WIDTH, DIGEST_ELEMS>
 where
     PF: PackedValue + Default,
-    PF::Value: Copy + Default + Send + Sync + Clone,
     PD: PackedValue + Default,
-    PD::Value: Copy + Default + Send + Sync + Clone,
     H: StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
         + StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>
-        + Sync
-        + Clone,
+        + Sync,
     C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>
         + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
-        + Sync
-        + Clone,
+        + Sync,
     [PD::Value; DIGEST_ELEMS]: Serialize + for<'de> Deserialize<'de>,
 {
     type ProverData<M> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST_ELEMS>;

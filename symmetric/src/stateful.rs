@@ -13,7 +13,7 @@
 ///   For example, a field-to-bytes adapter has `PADDING_WIDTH = 1`
 ///   (one more field element extends the input by one item), while a field-native
 ///   sponge with rate `R` has `PADDING_WIDTH = R` (in field elements).
-pub trait StatefulHasher<Item, State, Out> {
+pub trait StatefulHasher<Item, State, Out>: Clone {
     /// The horizontal padding width for absorption, expressed in `Item` units.
     /// Default is 1.
     const PADDING_WIDTH: usize = 1;
