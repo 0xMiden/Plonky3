@@ -142,146 +142,126 @@ fn bench_lifted(c: &mut Criterion) {
     group.finish();
 }
 
-// Macro to declare LMCS commit/verify benches for a (Field, Permutation, WIDTH, RATE, DIGEST) tuple.
-macro_rules! lmcs_benches {
-    ($modname:ident, $F:ty, $Perm:ty, $WIDTH:expr, $RATE:expr, $DIGEST:expr) => {
-        mod $modname {
-            use super::*;
-
-            pub fn components() -> (
-                StatefulSponge<$Perm, $WIDTH, $DIGEST, $RATE>,
-                TruncatedPermutation<$Perm, 2, $DIGEST, $WIDTH>,
-            ) {
-                let mut rng = SmallRng::seed_from_u64(42);
-                let perm = <$Perm>::new_from_rng_128(&mut rng);
-                let sponge = StatefulSponge::<_, $WIDTH, $DIGEST, $RATE> { p: perm.clone() };
-                let compressor = TruncatedPermutation::<_, 2, $DIGEST, $WIDTH>::new(perm);
-                (sponge, compressor)
-            }
-
-            pub fn bench_lmcs_commit(c: &mut Criterion) {
-                type FField = $F;
-                type Packed = <FField as Field>::Packing;
-                let (sponge, compressor) = components();
-
-                const ROWS_LARGE: usize = 1 << 15;
-                const WIDTH_COLS: usize = 40;
-
-                let mut rng = SmallRng::seed_from_u64(77);
-                let scenarios: Vec<(&str, Vec<RowMajorMatrix<FField>>)> = vec![
-                    (
-                        "1x(2^15 x 40)",
-                        vec![RowMajorMatrix::<FField>::rand(
-                            &mut rng, ROWS_LARGE, WIDTH_COLS,
-                        )],
-                    ),
-                    (
-                        "(2^14,2^15) x 40",
-                        vec![
-                            RowMajorMatrix::<FField>::rand(&mut rng, ROWS_LARGE / 2, WIDTH_COLS),
-                            RowMajorMatrix::<FField>::rand(&mut rng, ROWS_LARGE, WIDTH_COLS),
-                        ],
-                    ),
-                ];
-
-                let mut group = c.benchmark_group(concat!("LMCS_Commit_", stringify!($modname)));
-                for (label, matrices) in scenarios {
-                    let dims: Vec<_> = matrices.iter().map(|m| m.dimensions()).collect();
-                    let bytes: usize = dims
-                        .iter()
-                        .map(|d| d.height * d.width.next_multiple_of($RATE))
-                        .sum::<usize>()
-                        * core::mem::size_of::<FField>();
-                    group.throughput(Throughput::Bytes(bytes as u64));
-
-                    for lifting in [Lifting::Upsample, Lifting::Cyclic] {
-                        let lmcs = MerkleTreeLmcs::<Packed, Packed, _, _, $WIDTH, $DIGEST>::new(
-                            sponge.clone(),
-                            compressor.clone(),
-                            lifting,
-                        );
-                        group.bench_with_input(
-                            BenchmarkId::new(format!("{:?}/{label}", lifting), format!("{dims:?}")),
-                            &matrices,
-                            |b, mats| {
-                                b.iter(|| {
-                                    let _ = lmcs.commit(mats.clone());
-                                });
-                            },
-                        );
-                    }
-                }
-                group.finish();
-            }
-
-            pub fn bench_lmcs_verify(c: &mut Criterion) {
-                type FField = $F;
-                type Packed = <FField as Field>::Packing;
-                let (sponge, compressor) = components();
-
-                const ROWS: usize = 1 << 15;
-                const COLS: usize = 40;
-
-                let mut rng = SmallRng::seed_from_u64(1234);
-                let small = RowMajorMatrix::<FField>::rand(&mut rng, ROWS / 2, COLS);
-                let large = RowMajorMatrix::<FField>::rand(&mut rng, ROWS, COLS);
-                let dims = vec![small.dimensions(), large.dimensions()];
-                let matrices = vec![small, large];
-
-                let mut group = c.benchmark_group(concat!("LMCS_Verify_", stringify!($modname)));
-                let bytes: usize = dims
-                    .iter()
-                    .map(|d| d.height * d.width.next_multiple_of($RATE))
-                    .sum::<usize>()
-                    * core::mem::size_of::<FField>();
-                group.throughput(Throughput::Bytes(bytes as u64));
-
-                for lifting in [Lifting::Upsample, Lifting::Cyclic] {
-                    let lmcs = MerkleTreeLmcs::<Packed, Packed, _, _, $WIDTH, $DIGEST>::new(
-                        sponge.clone(),
-                        compressor.clone(),
-                        lifting,
-                    );
-                    let (commit, tree) = lmcs.commit(matrices.clone());
-                    let final_h = dims.last().unwrap().height;
-                    let mut indices: Vec<usize> = (0..16).map(|i| i * (final_h / 16)).collect();
-                    if indices.is_empty() {
-                        indices.push(0);
-                    }
-                    let openings: Vec<_> = indices
-                        .iter()
-                        .map(|&idx| lmcs.open_batch(idx, &tree))
-                        .collect();
-                    let dims_local = dims.clone();
-
-                    group.bench_function(format!("{:?}", lifting), |b| {
-                        let mut k = 0usize;
-                        b.iter(|| {
-                            let idx = indices[k % indices.len()];
-                            let opening_ref = (&openings[k % openings.len()]).into();
-                            lmcs.verify_batch(&commit, &dims_local, idx, opening_ref)
-                                .unwrap();
-                            k = k.wrapping_add(1);
-                        });
-                    });
-                }
-                group.finish();
-            }
-        }
-
-        // No re-exports; reference as `$modname::bench_lmcs_*` at call site.
-    };
+// Flat (non-macro) benches equivalent to the previous single macro instantiation.
+fn lmcs_components() -> (
+    PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
+    TruncatedPermutation<Poseidon2BabyBear<WIDTH>, 2, DIGEST, WIDTH>,
+) {
+    let mut rng = SmallRng::seed_from_u64(42);
+    let perm = <Poseidon2BabyBear<WIDTH>>::new_from_rng_128(&mut rng);
+    let sponge = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(perm.clone());
+    let compressor = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(perm);
+    (sponge, compressor)
 }
 
-// Instantiate benches for BabyBear + Poseidon2 with WIDTH=24, RATE=16, DIGEST=8.
-lmcs_benches!(
-    bb_p2_w24_r16,
-    BabyBear,
-    Poseidon2BabyBear<WIDTH>,
-    WIDTH,
-    RATE,
-    DIGEST
-);
+fn bench_lmcs_commit(c: &mut Criterion) {
+    type FField = BabyBear;
+    type Packed = <FField as Field>::Packing;
+    let (sponge, compressor) = lmcs_components();
+
+    const ROWS_LARGE: usize = 1 << 15;
+    const WIDTH_COLS: usize = 40;
+
+    let mut rng = SmallRng::seed_from_u64(77);
+    let scenarios: Vec<(&str, Vec<RowMajorMatrix<FField>>)> = vec![
+        (
+            "1x(2^15 x 40)",
+            vec![RowMajorMatrix::<FField>::rand(
+                &mut rng, ROWS_LARGE, WIDTH_COLS,
+            )],
+        ),
+        (
+            "(2^14,2^15) x 40",
+            vec![
+                RowMajorMatrix::<FField>::rand(&mut rng, ROWS_LARGE / 2, WIDTH_COLS),
+                RowMajorMatrix::<FField>::rand(&mut rng, ROWS_LARGE, WIDTH_COLS),
+            ],
+        ),
+    ];
+
+    let mut group = c.benchmark_group("LMCS_Commit_bb_p2_w24_r16");
+    for (label, matrices) in scenarios {
+        let dims: Vec<_> = matrices.iter().map(|m| m.dimensions()).collect();
+        let bytes: usize = dims
+            .iter()
+            .map(|d| d.height * d.width.next_multiple_of(RATE))
+            .sum::<usize>()
+            * core::mem::size_of::<FField>();
+        group.throughput(Throughput::Bytes(bytes as u64));
+
+        for lifting in [Lifting::Upsample, Lifting::Cyclic] {
+            let lmcs = MerkleTreeLmcs::<Packed, Packed, _, _, WIDTH, DIGEST>::new(
+                sponge.clone(),
+                compressor.clone(),
+                lifting,
+            );
+            group.bench_with_input(
+                BenchmarkId::new(format!("{:?}/{label}", lifting), format!("{dims:?}")),
+                &matrices,
+                |b, mats| {
+                    b.iter(|| {
+                        let _ = lmcs.commit(mats.clone());
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+fn bench_lmcs_verify(c: &mut Criterion) {
+    type FField = BabyBear;
+    type Packed = <FField as Field>::Packing;
+    let (sponge, compressor) = lmcs_components();
+
+    const ROWS: usize = 1 << 15;
+    const COLS: usize = 40;
+
+    let mut rng = SmallRng::seed_from_u64(1234);
+    let small = RowMajorMatrix::<FField>::rand(&mut rng, ROWS / 2, COLS);
+    let large = RowMajorMatrix::<FField>::rand(&mut rng, ROWS, COLS);
+    let dims = vec![small.dimensions(), large.dimensions()];
+    let matrices = vec![small, large];
+
+    let mut group = c.benchmark_group("LMCS_Verify_bb_p2_w24_r16");
+    let bytes: usize = dims
+        .iter()
+        .map(|d| d.height * d.width.next_multiple_of(RATE))
+        .sum::<usize>()
+        * core::mem::size_of::<FField>();
+    group.throughput(Throughput::Bytes(bytes as u64));
+
+    for lifting in [Lifting::Upsample, Lifting::Cyclic] {
+        let lmcs = MerkleTreeLmcs::<Packed, Packed, _, _, WIDTH, DIGEST>::new(
+            sponge.clone(),
+            compressor.clone(),
+            lifting,
+        );
+        let (commit, tree) = lmcs.commit(matrices.clone());
+        let final_h = dims.last().unwrap().height;
+        let mut indices: Vec<usize> = (0..16).map(|i| i * (final_h / 16)).collect();
+        if indices.is_empty() {
+            indices.push(0);
+        }
+        let openings: Vec<_> = indices
+            .iter()
+            .map(|&idx| lmcs.open_batch(idx, &tree))
+            .collect();
+        let dims_local = dims.clone();
+
+        group.bench_function(format!("{:?}", lifting), |b| {
+            let mut k = 0usize;
+            b.iter(|| {
+                let idx = indices[k % indices.len()];
+                let opening_ref = (&openings[k % openings.len()]).into();
+                lmcs.verify_batch(&commit, &dims_local, idx, opening_ref)
+                    .unwrap();
+                k = k.wrapping_add(1);
+            });
+        });
+    }
+    group.finish();
+}
 
 fn setup_criterion() -> Criterion {
     // Configure globally: disable plots, ensure enough time for large inputs, and respect
@@ -296,6 +276,6 @@ fn setup_criterion() -> Criterion {
 criterion_group! {
     name = benches;
     config = setup_criterion();
-    targets = bench_lifted, bb_p2_w24_r16::bench_lmcs_commit, bb_p2_w24_r16::bench_lmcs_verify
+    targets = bench_lifted, bench_lmcs_commit, bench_lmcs_verify
 }
 criterion_main!(benches);
