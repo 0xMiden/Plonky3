@@ -74,13 +74,12 @@ pub struct LiftedMerkleTree<F, D, M, const DIGEST_ELEMS: usize> {
     pub(crate) lifting: Lifting,
 
     /// Zero-sized marker for type safety.
-    _phantom: PhantomData<(F, D)>,
+    _phantom: PhantomData<F>,
 }
 
 impl<F, D, M, const DIGEST_ELEMS: usize> LiftedMerkleTree<F, D, M, DIGEST_ELEMS>
 where
-    F: Clone + Default + Send + Sync,
-    D: Clone,
+    F: Clone + Send + Sync,
     M: Matrix<F>,
 {
     /// Build a uniform tree from **one or more matrices** with power-of-two heights.
@@ -108,14 +107,14 @@ where
         leaves: Vec<M>,
     ) -> Result<Self, LmcsError>
     where
-        PF: PackedValue<Value = F> + Default,
-        PD: PackedValue<Value = D> + Default,
+        PF: PackedValue<Value = F>,
+        PD: PackedValue<Value = D>,
         H: StatefulHasher<F, [D; WIDTH], [D; DIGEST_ELEMS]>
             + StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
             + Sync,
-        C: Sync
-            + PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>
-            + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>,
+        C: PseudoCompressionFunction<[D; DIGEST_ELEMS], 2>
+            + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
+            + Sync,
     {
         assert!(!leaves.is_empty(), "No matrices given");
 
@@ -150,8 +149,11 @@ where
 
     /// Return the root digest of the tree.
     #[must_use]
-    pub fn root(&self) -> Hash<F, D, DIGEST_ELEMS> {
-        self.digest_layers.last().unwrap()[0].clone().into()
+    pub fn root(&self) -> Hash<F, D, DIGEST_ELEMS>
+    where
+        D: Copy,
+    {
+        self.digest_layers.last().unwrap()[0].into()
     }
 
     pub fn rows(&self, index: usize) -> Vec<Vec<F>> {
@@ -184,8 +186,8 @@ pub fn build_leaves_upsampled<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELE
     sponge: &H,
 ) -> Result<Vec<[PD::Value; DIGEST_ELEMS]>, LmcsError>
 where
-    PF: PackedValue + Default,
-    PD: PackedValue + Default,
+    PF: PackedValue,
+    PD: PackedValue,
     M: Matrix<PF::Value>,
     H: StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>
         + StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
@@ -257,8 +259,8 @@ pub fn build_leaves_cyclic<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS:
     sponge: &H,
 ) -> Result<Vec<[PD::Value; DIGEST_ELEMS]>, LmcsError>
 where
-    PF: PackedValue + Default,
-    PD: PackedValue + Default,
+    PF: PackedValue,
+    PD: PackedValue,
     M: Matrix<PF::Value>,
     H: StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>
         + StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
@@ -313,8 +315,8 @@ fn absorb_matrix<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
     matrix: &M,
     sponge: &H,
 ) where
-    PF: PackedValue + Default,
-    PD: PackedValue + Default,
+    PF: PackedValue,
+    PD: PackedValue,
     M: Matrix<PF::Value>,
     H: StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>
         + StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
@@ -357,9 +359,9 @@ fn absorb_matrix<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
 /// requiring no scalar fallback for remainders.
 fn compress_uniform<
     P: PackedValue,
-    C: Sync
-        + PseudoCompressionFunction<[P::Value; DIGEST_ELEMS], 2>
-        + PseudoCompressionFunction<[P; DIGEST_ELEMS], 2>,
+    C: PseudoCompressionFunction<[P::Value; DIGEST_ELEMS], 2>
+        + PseudoCompressionFunction<[P; DIGEST_ELEMS], 2>
+        + Sync,
     const DIGEST_ELEMS: usize,
 >(
     prev_layer: &[[P::Value; DIGEST_ELEMS]],
