@@ -18,6 +18,7 @@ tiny-keccak = { workspace = true, features = ["keccak"] }
 
 [dev-dependencies]
 p3-mersenne-31.workspace = true
+p3-baby-bear.workspace = true
 
 criterion.workspace = true
 
