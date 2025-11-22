@@ -28,6 +28,7 @@ impl<AB: MidenAirBuilder> MidenAirBuilder for FilteredMidenAirBuilder<'_, AB> {
     type Var = AB::Var;
     type M = AB::M;
     type PublicVar = AB::PublicVar;
+    type PeriodicVal = AB::PeriodicVal;
     type EF = AB::EF;
     type ExprEF = AB::ExprEF;
     type VarEF = AB::VarEF;
@@ -58,6 +59,10 @@ impl<AB: MidenAirBuilder> MidenAirBuilder for FilteredMidenAirBuilder<'_, AB> {
         self.inner.public_values()
     }
 
+    fn periodic_evals(&self) -> &[Self::PeriodicVal] {
+        self.inner.periodic_evals()
+    }
+
     fn preprocessed(&self) -> Self::M {
         self.inner.preprocessed()
     }
@@ -75,5 +80,9 @@ impl<AB: MidenAirBuilder> MidenAirBuilder for FilteredMidenAirBuilder<'_, AB> {
 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         self.inner.permutation_randomness()
+    }
+
+    fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {
+        self.inner.aux_bus_boundary_values()
     }
 }
