@@ -4,15 +4,14 @@ use p3_baby_bear::BabyBear as F;
 use p3_field::{PrimeCharacteristicRing, RawDataSerializable};
 use p3_keccak::{Keccak256Hash, KeccakF};
 use p3_symmetric::{
-    ChainedStateful, CryptographicHasher, PaddingFreeSponge, SerializingHasher, StatefulHasher,
+    ChainingHasher, CryptographicHasher, PaddingFreeSponge, SerializingHasher, StatefulHasher,
 };
 
 #[test]
-fn chained_stateful_keccak_u8_matches_manual() {
+fn chaining_keccak_u8_matches_manual() {
     type H = Keccak256Hash;
     const N: usize = 32; // Keccak-256 output size in bytes
-    let h = H {};
-    let chained = ChainedStateful::<H, u8, N>::new(h);
+    let h = ChainingHasher::new(H {});
 
     // Deterministic BabyBear inputs
     let inputs: Vec<F> = (0..37).map(|i| F::from_u32(i as u32)).collect();
@@ -31,19 +30,15 @@ fn chained_stateful_keccak_u8_matches_manual() {
     // Adapter stateful path
     let mut state_adapter = [0u8; N];
     for seg in segments {
-        chained.absorb_into(&mut state_adapter, seg.iter().copied());
+        h.absorb_into(&mut state_adapter, seg.iter().copied());
     }
 
-    // Manual chaining: state <- H(state || encode(seg)) when seg non-empty
+    // Manual chaining: state <- H(state || encode(seg))
     let mut state_manual = [0u8; N];
     for seg in segments {
-        let bytes: Vec<u8> = F::into_byte_stream(seg.iter().copied())
-            .into_iter()
-            .collect();
-        if !bytes.is_empty() {
-            let h2 = Keccak256Hash {};
-            state_manual = h2.hash_iter(state_manual.into_iter().chain(bytes.into_iter()));
-        }
+        let prefix = state_manual.into_iter();
+        let bytes = F::into_byte_stream(seg.iter().copied());
+        state_manual = H {}.hash_iter(prefix.chain(bytes));
     }
     let out_manual = state_manual;
 
@@ -51,12 +46,11 @@ fn chained_stateful_keccak_u8_matches_manual() {
 }
 
 #[test]
-fn chained_stateful_keccak_u64_matches_manual() {
+fn chaining_keccak_u64_matches_manual() {
     // Build a Keccak-based sponge hasher over u64s: WIDTH=25, RATE=17, OUT=4
     type H = PaddingFreeSponge<KeccakF, 25, 17, 4>;
     const N: usize = 4;
-    let h = H::new(KeccakF {});
-    let chained = ChainedStateful::<H, u64, N>::new(h);
+    let h = ChainingHasher::new(H::new(KeccakF {}));
 
     // Deterministic BabyBear inputs
     let inputs: Vec<F> = (0..41).map(|i| F::from_u32((i * 3 + 1) as u32)).collect();
@@ -74,19 +68,16 @@ fn chained_stateful_keccak_u64_matches_manual() {
 
     let mut state_adapter = [0u64; N];
     for seg in segments {
-        chained.absorb_into(&mut state_adapter, seg.iter().copied());
+        h.absorb_into(&mut state_adapter, seg.iter().copied());
     }
 
     // Manual chaining using the same hasher
     let mut state_manual = [0u64; N];
-    let h2 = PaddingFreeSponge::<KeccakF, 25, 17, N>::new(KeccakF {});
+    let h2 = H::new(KeccakF {});
     for seg in segments {
-        let words: Vec<u64> = F::into_u64_stream(seg.iter().copied())
-            .into_iter()
-            .collect();
-        if !words.is_empty() {
-            state_manual = h2.hash_iter(state_manual.into_iter().chain(words.into_iter()));
-        }
+        let prefix = state_manual.into_iter();
+        let words = F::into_u64_stream(seg.iter().copied());
+        state_manual = h2.hash_iter(prefix.chain(words));
     }
     let out_manual = state_manual;
 

@@ -2,13 +2,13 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
-use p3_field::{Field, PackedValue};
+use p3_baby_bear::{BabyBear, Poseidon2BabyBear, default_babybear_poseidon2_24};
+use p3_field::Field;
 use p3_keccak::KeccakF;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::build_leaves_upsampled;
 use p3_sha256::Sha256;
-use p3_symmetric::{ChainedStateful, PaddingFreeSponge};
+use p3_symmetric::{ChainingHasher, PaddingFreeSponge};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
@@ -21,17 +21,29 @@ const P2_RATE: usize = 16;
 const P2_DIGEST: usize = 8;
 type P2Sponge = PaddingFreeSponge<Poseidon2BabyBear<P2_WIDTH>, P2_WIDTH, P2_RATE, P2_DIGEST>;
 
+// Deterministic Poseidon2 sponge factory (BabyBear, width 24)
+#[inline]
+fn p2_sponge() -> P2Sponge {
+    P2Sponge::new(default_babybear_poseidon2_24())
+}
+
 // Keccak-f sponge over u64 lanes, digests are 4 u64 words
 const K_DIGEST: usize = 4;
-const K_WIDTH: usize = K_DIGEST; // state treated as digest-length in chained adapter
-type KHash = ChainedStateful<PaddingFreeSponge<KeccakF, 25, 17, K_DIGEST>, u64, K_DIGEST>;
-type KPD = [u64; P::WIDTH];
+const K_WIDTH: usize = K_DIGEST;
+type KInner = PaddingFreeSponge<KeccakF, 25, 17, K_DIGEST>;
+type KHash = ChainingHasher<KInner>;
+
+// Constant Keccak-f based chaining hasher
+static K_INNER: KInner = PaddingFreeSponge::new(KeccakF);
+static K_HASH: KHash = ChainingHasher::new(K_INNER);
 
 // SHA256 over bytes, digests are 32 bytes
 const S_DIGEST: usize = 32;
-const S_WIDTH: usize = S_DIGEST; // state treated as digest-length in chained adapter
-type SHash = ChainedStateful<Sha256, u8, S_DIGEST>;
-type SPD = [u8; P::WIDTH];
+const S_WIDTH: usize = S_DIGEST;
+type SHash = ChainingHasher<Sha256>;
+
+// Constant SHA-256 based chaining hasher
+static S_HASH: SHash = ChainingHasher::new(Sha256);
 
 fn rand_matrices(rng: &mut SmallRng, scenarios: &[(usize, usize)]) -> Vec<RowMajorMatrix<F>> {
     scenarios
@@ -60,12 +72,11 @@ fn benchmark_lmcs_hashes(c: &mut Criterion) {
         ),
     ];
 
-    // Poseidon2 path
+    // Poseidon2 path (deterministic constants)
     {
         let group_name = "lmcs_upsampled_poseidon2";
         let mut group = c.benchmark_group(group_name);
-        let perm = Poseidon2BabyBear::<P2_WIDTH>::new_from_rng_128(&mut rng);
-        let sponge = P2Sponge::new(perm);
+        let sponge = p2_sponge();
 
         for (label, dims) in &scenarios {
             let mats = rand_matrices(&mut rng, dims);
@@ -89,11 +100,11 @@ fn benchmark_lmcs_hashes(c: &mut Criterion) {
         group.finish();
     }
 
-    // SHA256 path
+    // SHA256 path (deterministic)
     {
         let group_name = "lmcs_upsampled_sha256";
         let mut group = c.benchmark_group(group_name);
-        let hash = SHash::new(Sha256);
+        let hash = &S_HASH;
 
         for (label, dims) in &scenarios {
             let mats = rand_matrices(&mut rng, dims);
@@ -106,9 +117,9 @@ fn benchmark_lmcs_hashes(c: &mut Criterion) {
             group.throughput(Throughput::Bytes(bytes));
             group.bench_with_input(BenchmarkId::new("upsampled", *label), &mats, |b, mats| {
                 b.iter(|| {
-                    let out = build_leaves_upsampled::<P, SPD, _, _, S_WIDTH, S_DIGEST>(
+                    let out = build_leaves_upsampled::<F, u8, _, _, S_WIDTH, S_DIGEST>(
                         black_box(mats),
-                        black_box(&hash),
+                        black_box(hash),
                     )
                     .unwrap();
                     black_box(out)
@@ -118,11 +129,11 @@ fn benchmark_lmcs_hashes(c: &mut Criterion) {
         group.finish();
     }
 
-    // Keccak-f path
+    // Keccak-f path (deterministic)
     {
         let group_name = "lmcs_upsampled_keccakf";
         let mut group = c.benchmark_group(group_name);
-        let hash = KHash::new(PaddingFreeSponge::<KeccakF, 25, 17, K_DIGEST>::new(KeccakF));
+        let hash = &K_HASH;
 
         for (label, dims) in &scenarios {
             let mats = rand_matrices(&mut rng, dims);
@@ -135,10 +146,14 @@ fn benchmark_lmcs_hashes(c: &mut Criterion) {
             group.throughput(Throughput::Bytes(bytes));
             group.bench_with_input(BenchmarkId::new("upsampled", *label), &mats, |b, mats| {
                 b.iter(|| {
-                    let out = build_leaves_upsampled::<P, KPD, _, _, K_WIDTH, K_DIGEST>(
-                        black_box(mats),
-                        black_box(&hash),
-                    )
+                    let out = build_leaves_upsampled::<
+                        [F; p3_keccak::VECTOR_LEN],
+                        [u64; p3_keccak::VECTOR_LEN],
+                        _,
+                        _,
+                        K_WIDTH,
+                        K_DIGEST,
+                    >(black_box(mats), black_box(hash))
                     .unwrap();
                     black_box(out)
                 });
