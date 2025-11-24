@@ -501,8 +501,8 @@ mod tests {
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
-    use crate::lmcs::merkle_tree::Lifting;
-    use crate::lmcs::test_helpers::{
+    use crate::lifted::merkle_tree::Lifting;
+    use crate::lifted::test_helpers::{
         DIGEST, F, P, RATE, Sponge, build_leaves_single, components, concatenate_matrices,
         lift_matrix, matrix_scenarios, rand_matrix,
     };
