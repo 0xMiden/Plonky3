@@ -12,17 +12,18 @@ use crate::LmcsError;
 /// - Heights are in non-decreasing order (sorted by height), so the last height is the maximum
 ///   `H` used by lifting.
 ///
-/// Returns `Ok(())` if all checks pass; otherwise returns a specific [`LmcsError`]:
+/// Returns `Ok(max_height)` with the maximum height if all checks pass; otherwise returns a
+/// specific [`LmcsError`]:
 /// - [`LmcsError::ZeroHeightMatrix`]
 /// - [`LmcsError::NonPowerOfTwoHeight`]
 /// - [`LmcsError::UnsortedByHeight`]
 /// - [`LmcsError::EmptyBatch`]
 ///
 /// The `matrix` index in the errors refers to the position within the provided iterator.
-pub fn validate_heights(dims: impl IntoIterator<Item = usize>) -> Result<(), LmcsError> {
+pub fn validate_heights(heights: impl IntoIterator<Item = usize>) -> Result<usize, LmcsError> {
     let mut active_height = 0;
 
-    for (matrix, height) in dims.into_iter().enumerate() {
+    for (matrix, height) in heights.into_iter().enumerate() {
         if height == 0 {
             return Err(LmcsError::ZeroHeightMatrix { matrix });
         }
@@ -40,7 +41,7 @@ pub fn validate_heights(dims: impl IntoIterator<Item = usize>) -> Result<(), Lmc
     if active_height == 0 {
         return Err(LmcsError::EmptyBatch);
     }
-    Ok(())
+    Ok(active_height)
 }
 
 /// Unpack a SIMD-packed array into multiple scalar arrays (one per SIMD lane).

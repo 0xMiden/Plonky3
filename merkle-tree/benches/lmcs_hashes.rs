@@ -6,7 +6,7 @@ use p3_baby_bear::{BabyBear, Poseidon2BabyBear, default_babybear_poseidon2_24};
 use p3_field::Field;
 use p3_keccak::KeccakF;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_merkle_tree::build_leaves_upsampled;
+use p3_merkle_tree::build_leaf_states_upsampled;
 use p3_sha256::Sha256;
 use p3_symmetric::{ChainingHasher, PaddingFreeSponge};
 use rand::SeedableRng;
@@ -88,7 +88,7 @@ fn benchmark_lmcs_hashes(c: &mut Criterion) {
             group.throughput(Throughput::Bytes(bytes));
             group.bench_with_input(BenchmarkId::new("upsampled", *label), &mats, |b, mats| {
                 b.iter(|| {
-                    let out = build_leaves_upsampled::<P, P, _, _, P2_WIDTH, P2_DIGEST>(
+                    let out = build_leaf_states_upsampled::<P, P, _, _, P2_WIDTH, P2_DIGEST>(
                         black_box(mats),
                         black_box(&sponge),
                     )
@@ -117,7 +117,7 @@ fn benchmark_lmcs_hashes(c: &mut Criterion) {
             group.throughput(Throughput::Bytes(bytes));
             group.bench_with_input(BenchmarkId::new("upsampled", *label), &mats, |b, mats| {
                 b.iter(|| {
-                    let out = build_leaves_upsampled::<F, u8, _, _, S_WIDTH, S_DIGEST>(
+                    let out = build_leaf_states_upsampled::<F, u8, _, _, S_WIDTH, S_DIGEST>(
                         black_box(mats),
                         black_box(hash),
                     )
@@ -146,7 +146,7 @@ fn benchmark_lmcs_hashes(c: &mut Criterion) {
             group.throughput(Throughput::Bytes(bytes));
             group.bench_with_input(BenchmarkId::new("upsampled", *label), &mats, |b, mats| {
                 b.iter(|| {
-                    let out = build_leaves_upsampled::<
+                    let out = build_leaf_states_upsampled::<
                         [F; p3_keccak::VECTOR_LEN],
                         [u64; p3_keccak::VECTOR_LEN],
                         _,
