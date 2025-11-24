@@ -9,14 +9,14 @@ use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulHasher};
 use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
 
+mod hiding_lmcs;
 mod merkle_tree;
 #[cfg(test)]
 mod test_helpers;
 mod utils;
 
-pub use merkle_tree::{LiftedMerkleTree, build_leaves_cyclic, build_leaves_upsampled};
-
-use crate::lmcs::utils::validate_heights;
+pub use hiding_lmcs::MerkleTreeHidingLmcs;
+pub use merkle_tree::{LiftedMerkleTree, build_leaf_states_cyclic, build_leaf_states_upsampled};
 
 /// Lifting method used to align matrices of different heights to a common height.
 ///
@@ -75,11 +75,17 @@ impl Lifting {
     /// Semantics:
     /// - Upsample: returns `floor(index / (max_height / height))`.
     /// - Cyclic: returns `index mod height`.
+    ///
+    /// # Panics
+    /// Panics in debug builds if preconditions are violated.
     pub fn map_index(&self, index: usize, height: usize, max_height: usize) -> usize {
-        assert!(index < max_height);
-        assert!(height.is_power_of_two());
-        assert!(max_height.is_power_of_two());
-        assert!(height <= max_height);
+        debug_assert!(index < max_height, "index must be < max_height");
+        debug_assert!(height.is_power_of_two(), "height must be power of two");
+        debug_assert!(
+            max_height.is_power_of_two(),
+            "max_height must be power of two"
+        );
+        debug_assert!(height <= max_height, "height must be <= max_height ");
 
         match self {
             Self::Upsample => {
@@ -122,6 +128,92 @@ impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize>
             _phantom: PhantomData,
         }
     }
+
+    /// Recompute the Merkle root from opened rows and an authentication path.
+    ///
+    /// Used internally during verification to reconstruct the root hash from:
+    /// - `rows`: the opened matrix rows at the given index
+    /// - `index`: the leaf index that was opened
+    /// - `dimensions`: the dimensions of each committed matrix
+    /// - `proof`: the Merkle authentication path (sibling digests)
+    /// - `salt`: optional salt row that was absorbed after the matrix rows
+    ///
+    /// This absorbs the rows (and optional salt) into a fresh sponge state, squeezes to
+    /// get the leaf digest, then follows the authentication path up to the root.
+    ///
+    /// # Errors
+    /// Returns `LmcsError` if any validation fails (wrong dimensions, out of bounds index, etc.).
+    fn compute_root(
+        &self,
+        rows: &[Vec<PF::Value>],
+        index: usize,
+        dimensions: &[Dimensions],
+        proof: &[[PD::Value; DIGEST_ELEMS]],
+        salt: Option<&[PF::Value]>,
+    ) -> Result<Hash<PF::Value, PD::Value, DIGEST_ELEMS>, LmcsError>
+    where
+        PF: PackedValue + Default,
+        PD: PackedValue + Default,
+        H: StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>,
+        C: PseudoCompressionFunction<[PD::Value; DIGEST_ELEMS], 2>,
+    {
+        // Verify that the number of opened rows matches the number of matrix dimensions
+        if dimensions.len() != rows.len() {
+            return Err(LmcsError::WrongBatchSize);
+        }
+
+        let final_height = dimensions.last().unwrap().height;
+        // Verify that the leaf index is within the tree bounds
+        if index >= final_height {
+            return Err(LmcsError::IndexOutOfBounds {
+                max_height: final_height,
+                index,
+            });
+        }
+
+        let expected_proof_len = log2_strict_usize(final_height);
+        // Verify that the authentication path has the correct length for the tree height
+        if proof.len() != expected_proof_len {
+            return Err(LmcsError::WrongProofLen {
+                expected: expected_proof_len,
+                actual: proof.len(),
+            });
+        }
+
+        let mut state = [PD::Value::default(); WIDTH];
+        let pad = <H as StatefulHasher<PF::Value, _, _>>::PADDING_WIDTH;
+        for (idx, (row, dimension)) in zip(rows, dimensions).enumerate() {
+            let expected_width = dimension.width.next_multiple_of(pad);
+            // Verify that each row is padded to a multiple of the hasher's padding width
+            if row.len() != expected_width {
+                return Err(LmcsError::WrongWidth {
+                    matrix: idx,
+                    expected: expected_width,
+                    actual: row.len(),
+                });
+            }
+            self.sponge.absorb_into(&mut state, row.iter().copied());
+        }
+
+        if let Some(salt) = salt {
+            self.sponge.absorb_into(&mut state, salt.iter().copied());
+        }
+
+        let mut digest = self.sponge.squeeze(&state);
+
+        let mut current_index = index;
+        for sibling in proof {
+            let (left, right) = if current_index & 1 == 0 {
+                (digest, *sibling)
+            } else {
+                (*sibling, digest)
+            };
+            digest = self.compress.compress([left, right]);
+            current_index >>= 1;
+        }
+
+        Ok(digest.into())
+    }
 }
 
 impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize> Mmcs<PF::Value>
@@ -146,13 +238,14 @@ where
         &self,
         inputs: Vec<M>,
     ) -> (Self::Commitment, Self::ProverData<M>) {
-        let tree = LiftedMerkleTree::new::<PF, PD, H, C, WIDTH>(
+        let tree = LiftedMerkleTree::new_with_optional_salt::<PF, PD, H, C, WIDTH>(
             &self.sponge,
             &self.compress,
             self.lifting,
             inputs,
+            None,
         )
-        .unwrap();
+        .expect("tree construction failed");
         let root = tree.root();
 
         (root, tree)
@@ -163,35 +256,17 @@ where
         index: usize,
         tree: &Self::ProverData<M>,
     ) -> BatchOpening<PF::Value, Self> {
-        let final_height = tree.leaves.last().unwrap().height();
+        let final_height = tree.height();
         assert!(
             index < final_height,
             "index {index} out of range {final_height}"
         );
 
-        // Map to per-matrix indices.
-        let mut opened_rows = tree.rows(index);
         // Pad each row to a multiple of the hasher's padding width with zeros.
         let pad = <H as StatefulHasher<PF::Value, _, _>>::PADDING_WIDTH;
-        if pad > 1 {
-            for row in &mut opened_rows {
-                let target = row.len().next_multiple_of(pad);
-                if target > row.len() {
-                    row.resize(target, PF::Value::default());
-                }
-            }
-        }
+        let opened_rows = tree.rows_padded(index, pad);
 
-        let mut proof = Vec::with_capacity(tree.digest_layers.len().saturating_sub(1));
-        let mut layer_index = index;
-        for layer in &tree.digest_layers {
-            if layer.len() == 1 {
-                break;
-            }
-            let sibling = layer[layer_index ^ 1];
-            proof.push(sibling);
-            layer_index >>= 1;
-        }
+        let proof = tree.authentication_path(index);
 
         BatchOpening::new(opened_rows, proof)
     }
@@ -210,66 +285,9 @@ where
     ) -> Result<(), Self::Error> {
         let (opened_values, opening_proof) = batch_opening.unpack();
 
-        validate_heights(dimensions.iter().map(|d| d.height))?;
+        let expected_root =
+            self.compute_root(opened_values, index, dimensions, opening_proof, None)?;
 
-        if dimensions.len() != opened_values.len() {
-            return Err(LmcsError::WrongBatchSize);
-        }
-
-        let final_height = dimensions.last().unwrap().height;
-        if index >= final_height {
-            return Err(LmcsError::IndexOutOfBounds {
-                max_height: final_height,
-                index,
-            });
-        }
-
-        let expected_proof_len = log2_strict_usize(final_height);
-        if opening_proof.len() != expected_proof_len {
-            return Err(LmcsError::WrongHeight {
-                expected: expected_proof_len,
-                actual: opening_proof.len(),
-            });
-        }
-
-        let pad = <H as StatefulHasher<PF::Value, _, _>>::PADDING_WIDTH;
-        for (idx, (opened_row, dimension)) in zip(opened_values, dimensions).enumerate() {
-            let expected_width = if pad > 1 {
-                dimension.width.next_multiple_of(pad)
-            } else {
-                dimension.width
-            };
-            if opened_row.len() != expected_width {
-                return Err(LmcsError::WrongWidth {
-                    matrix: idx,
-                    expected: expected_width,
-                    actual: opened_row.len(),
-                });
-            }
-        }
-
-        let sponge_state =
-            opened_values
-                .iter()
-                .fold([PD::Value::default(); WIDTH], |mut state, opened_row| {
-                    self.sponge
-                        .absorb_into(&mut state, opened_row.iter().copied());
-                    state
-                });
-
-        let mut digest = self.sponge.squeeze(&sponge_state);
-        let mut current_index = index;
-        for sibling in opening_proof {
-            let (left, right) = if current_index & 1 == 0 {
-                (digest, *sibling)
-            } else {
-                (*sibling, digest)
-            };
-            digest = self.compress.compress([left, right]);
-            current_index >>= 1;
-        }
-
-        let expected_root: Hash<_, _, DIGEST_ELEMS> = digest.into();
         if &expected_root == commit {
             Ok(())
         } else {
@@ -287,7 +305,15 @@ pub enum LmcsError {
         expected: usize,
         actual: usize,
     },
+    WrongSalt {
+        expected: usize,
+        actual: usize,
+    },
     WrongHeight {
+        expected: usize,
+        actual: usize,
+    },
+    WrongProofLen {
         expected: usize,
         actual: usize,
     },
@@ -310,6 +336,10 @@ pub enum LmcsError {
         matrix: usize,
     },
     UnsortedByHeight,
+    SaltHeightMismatch {
+        expected: usize,
+        actual: usize,
+    },
 }
 
 #[cfg(test)]

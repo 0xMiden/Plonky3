@@ -8,7 +8,9 @@ use p3_field::Field;
 use p3_matrix::Matrix;
 use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_merkle_tree::{Lifting, MerkleTreeLmcs, build_leaves_cyclic, build_leaves_upsampled};
+use p3_merkle_tree::{
+    Lifting, MerkleTreeLmcs, build_leaf_states_cyclic, build_leaf_states_upsampled,
+};
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_util::reverse_slice_index_bits;
 use rand::SeedableRng;
@@ -91,7 +93,7 @@ fn bench_lifted(c: &mut Criterion) {
             &matrices,
             |b, mats| {
                 b.iter(|| {
-                    let out = build_leaves_cyclic::<Packed, Packed, _, _, WIDTH, DIGEST>(
+                    let out = build_leaf_states_cyclic::<Packed, Packed, _, _, WIDTH, DIGEST>(
                         black_box(&mats[..]),
                         black_box(&sponge),
                     )
@@ -107,7 +109,7 @@ fn bench_lifted(c: &mut Criterion) {
             &matrices,
             |b, mats| {
                 b.iter(|| {
-                    let out = build_leaves_upsampled::<Packed, Packed, _, _, WIDTH, DIGEST>(
+                    let out = build_leaf_states_upsampled::<Packed, Packed, _, _, WIDTH, DIGEST>(
                         black_box(&mats[..]),
                         black_box(&sponge),
                     )
@@ -127,11 +129,12 @@ fn bench_lifted(c: &mut Criterion) {
             &matrices,
             |b, _mats| {
                 b.iter(|| {
-                    let mut out = build_leaves_upsampled::<Packed, Packed, _, _, WIDTH, DIGEST>(
-                        black_box(&mats_bitrev[..]),
-                        black_box(&sponge),
-                    )
-                    .unwrap();
+                    let mut out =
+                        build_leaf_states_upsampled::<Packed, Packed, _, _, WIDTH, DIGEST>(
+                            black_box(&mats_bitrev[..]),
+                            black_box(&sponge),
+                        )
+                        .unwrap();
                     reverse_slice_index_bits(&mut out);
                     black_box(out);
                 });

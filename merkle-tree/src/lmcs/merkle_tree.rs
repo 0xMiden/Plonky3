@@ -1,10 +1,10 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use core::array;
-use core::marker::PhantomData;
 
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
+use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulHasher};
 use serde::{Deserialize, Serialize};
@@ -73,8 +73,7 @@ pub struct LiftedMerkleTree<F, D, M, const DIGEST_ELEMS: usize> {
 
     pub(crate) lifting: Lifting,
 
-    /// Zero-sized marker for type safety.
-    _phantom: PhantomData<F>,
+    pub(crate) salt: Option<RowMajorMatrix<F>>,
 }
 
 impl<F, D, M, const DIGEST_ELEMS: usize> LiftedMerkleTree<F, D, M, DIGEST_ELEMS>
@@ -82,29 +81,36 @@ where
     F: Clone + Send + Sync,
     M: Matrix<F>,
 {
-    /// Build a uniform tree from **one or more matrices** with power-of-two heights.
+    /// Build a uniform tree from matrices with power-of-two heights, with optional salt for hiding.
     ///
-    /// * `h` – stateful sponge used for incremental hashing of matrix rows.
-    /// * `c` – 2-to-1 compression function used on digests.
-    /// * `leaves` – matrices to commit to. Must be non-empty, sorted by height (shortest
-    ///   to tallest), and all heights must be powers of two.
+    /// - `h`: stateful sponge used for incremental hashing of matrix rows.
+    /// - `c`: 2-to-1 compression function used on digests.
+    /// - `lifting`: method used to align matrices of different heights to a common height.
+    /// - `leaves`: matrices to commit. Must be non-empty, sorted by height (shortest to tallest),
+    ///   and all heights must be powers of two.
+    /// - `salt`: optional salt matrix absorbed into each leaf state prior to squeezing. When provided,
+    ///   must have height equal to the final number of leaves. The width determines the number of
+    ///   salt elements per leaf row.
     ///
-    /// Matrices are processed from shortest to tallest. For each matrix, sponge states
-    /// are maintained per final leaf row, upsampling (duplicating) as matrices grow.
-    /// This ensures uniform state evolution across all leaves.
+    /// Matrices are processed from shortest to tallest. For each matrix, per-leaf sponge states are
+    /// maintained and lifted to the final height across matrices. Once all matrices have been
+    /// absorbed (including optional salt), this constructor squeezes the final leaf digests and
+    /// builds the upper Merkle layers.
     ///
-    /// After leaf digests are built, they are repeatedly compressed pair-wise with `c`
-    /// until a single root remains.
+    /// For a public hiding variant that automatically generates random salt, see
+    /// [`MerkleTreeHidingLmcs`](super::MerkleTreeHidingLmcs).
     ///
     /// # Panics
-    /// * If `leaves` is empty.
-    /// * If matrices are not sorted by height.
-    /// * If any matrix height is not a power of two.
-    pub fn new<PF, PD, H, C, const WIDTH: usize>(
+    /// - If `leaves` is empty.
+    /// - If matrices are not sorted by non-decreasing height.
+    /// - If any matrix height is not a power of two.
+    /// - If `salt` is provided but its height doesn't equal the final leaf count.
+    pub(crate) fn new_with_optional_salt<PF, PD, H, C, const WIDTH: usize>(
         h: &H,
         c: &C,
         lifting: Lifting,
         leaves: Vec<M>,
+        salt: Option<RowMajorMatrix<PF::Value>>,
     ) -> Result<Self, LmcsError>
     where
         PF: PackedValue<Value = F>,
@@ -116,15 +122,36 @@ where
             + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
             + Sync,
     {
-        assert!(!leaves.is_empty(), "No matrices given");
+        if leaves.is_empty() {
+            return Err(LmcsError::EmptyBatch);
+        }
 
-        // Build leaf digests from matrices using the sponge
-        let leaf_digests = match lifting {
+        // Build leaf states from matrices using the sponge
+        let mut leaf_states: Vec<[PD::Value; WIDTH]> = match lifting {
             Lifting::Upsample => {
-                build_leaves_upsampled::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h)
+                build_leaf_states_upsampled::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h)?
             }
-            Lifting::Cyclic => build_leaves_cyclic::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h),
-        }?;
+            Lifting::Cyclic => {
+                build_leaf_states_cyclic::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h)?
+            }
+        };
+
+        // Optionally absorb salt rows into the states prior to squeezing.
+        if let Some(salt_matrix) = salt.as_ref() {
+            let tree_height = leaf_states.len();
+            if salt_matrix.height() != tree_height {
+                return Err(LmcsError::SaltHeightMismatch {
+                    expected: tree_height,
+                    actual: salt_matrix.height(),
+                });
+            }
+            // Fold the salt matrix rows into the states.
+            absorb_matrix::<PF, PD, _, H, WIDTH, DIGEST_ELEMS>(&mut leaf_states, salt_matrix, h);
+        }
+
+        // Squeeze the final digests from the states
+        let leaf_digests: Vec<[PD::Value; DIGEST_ELEMS]> =
+            leaf_states.iter().map(|state| h.squeeze(state)).collect();
 
         // Build digest layers by repeatedly compressing until we reach the root
         let mut digest_layers = vec![leaf_digests];
@@ -143,7 +170,7 @@ where
             leaves,
             digest_layers,
             lifting,
-            _phantom: PhantomData,
+            salt,
         })
     }
 
@@ -156,20 +183,89 @@ where
         self.digest_layers.last().unwrap()[0].into()
     }
 
+    /// Return the height of the tree (number of leaves).
+    #[must_use]
+    pub fn height(&self) -> usize {
+        self.leaves.last().unwrap().height()
+    }
+
     pub fn rows(&self, index: usize) -> Vec<Vec<F>> {
-        let max_height = self.leaves.last().unwrap().height();
+        let max_height = self.height();
 
         self.leaves
             .iter()
             .map(|m| {
                 let row_index = self.lifting.map_index(index, m.height(), max_height);
-                m.row_slice(row_index).unwrap().to_vec()
+                m.row_slice(row_index)
+                    .expect("row_index must be valid after lifting.map_index")
+                    .to_vec()
             })
             .collect()
     }
+
+    /// Extract the rows for the given leaf index with padding applied.
+    ///
+    /// Like [`Self::rows`], but pads each row to a multiple of `padding_multiple` with
+    /// default field elements (zeros). This is useful for preparing rows for absorption
+    /// into a sponge that requires a specific padding width.
+    ///
+    /// - `index`: the leaf row index to extract across all committed matrices.
+    /// - `padding_multiple`: each row will be padded to the next multiple of this value.
+    pub fn rows_padded(&self, index: usize, padding_multiple: usize) -> Vec<Vec<F>>
+    where
+        F: Default,
+    {
+        let mut rows = self.rows(index);
+        for row in rows.iter_mut() {
+            let padded_width = row.len().next_multiple_of(padding_multiple);
+            row.resize(padded_width, F::default());
+        }
+        rows
+    }
+
+    /// Extract the Merkle authentication path (sibling digests) for the given leaf index.
+    ///
+    /// Returns a vector of sibling digests, one per tree layer, ordered from leaf layer upward.
+    /// Does not include the root digest (since the path terminates there).
+    ///
+    /// - `index`: the leaf index for which to extract the authentication path.
+    pub fn authentication_path(&self, index: usize) -> Vec<[D; DIGEST_ELEMS]>
+    where
+        D: Copy,
+    {
+        let mut layers = Vec::with_capacity(self.digest_layers.len().saturating_sub(1));
+        let mut layer_index = index;
+        for layer in &self.digest_layers {
+            if layer.len() == 1 {
+                break;
+            }
+            let sibling = layer[layer_index ^ 1];
+            layers.push(sibling);
+            layer_index >>= 1;
+        }
+        layers
+    }
+
+    /// Extract the salt row for the given leaf index, if salt was used during commitment.
+    ///
+    /// Returns `None` if this tree was constructed without salt (non-hiding variant).
+    /// Returns `Some(salt_row)` containing the random field elements absorbed at the specified leaf.
+    ///
+    /// - `index`: the leaf index for which to extract the salt row.
+    pub fn salt(&self, index: usize) -> Option<Vec<F>> {
+        self.salt.as_ref().map(|salt| {
+            salt.row_slice(index)
+                .expect("index must be valid for salt matrix")
+                .to_vec()
+        })
+    }
 }
 
-/// Build leaf digests using the upsampled view; see [`Lifting::Upsample`] for semantics.
+/// Build leaf states using the upsampled view; see [`Lifting::Upsample`] for semantics.
+///
+/// Returns the sponge states after absorbing all matrix rows but **before squeezing**.
+/// Callers must squeeze the states to obtain final leaf digests.
+///
 /// Conceptually, each matrix is virtually extended to height `H` by repeating each row
 /// `L = H / h` times (width unchanged), and the leaf `r` absorbs the `r`-th row from each
 /// extended matrix in order. Each absorbed row is virtually padded with zeros to a multiple of the
@@ -181,10 +277,10 @@ where
 /// - `P::WIDTH` is a power of two.
 ///
 /// Panics in debug builds if preconditions are violated.
-pub fn build_leaves_upsampled<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
+pub fn build_leaf_states_upsampled<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
     matrices: &[M],
     sponge: &H,
-) -> Result<Vec<[PD::Value; DIGEST_ELEMS]>, LmcsError>
+) -> Result<Vec<[PD::Value; WIDTH]>, LmcsError>
 where
     PF: PackedValue,
     PD: PackedValue,
@@ -195,17 +291,14 @@ where
 {
     const { assert!(PF::WIDTH.is_power_of_two()) };
     const { assert!(PD::WIDTH.is_power_of_two()) };
-    validate_heights(matrices.iter().map(|d| d.dimensions().height))?;
-
-    let final_height = matrices.last().unwrap().height();
-
-    let scalar_default = [PD::Value::default(); WIDTH];
+    let final_height = validate_heights(matrices.iter().map(|d| d.dimensions().height))?;
 
     // Memory buffers:
     // - states: Per-leaf scalar states (one per final row), maintained across matrices.
     // - scratch_states: Temporary buffer used when duplicating states during upsampling.
-    let mut states = vec![scalar_default; final_height];
-    let mut scratch_states = vec![scalar_default; final_height];
+    let default_state = [PD::Value::default(); WIDTH];
+    let mut states = vec![default_state; final_height];
+    let mut scratch_states = vec![default_state; final_height];
 
     let mut active_height = matrices.first().unwrap().height();
 
@@ -235,13 +328,14 @@ where
         active_height = height;
     }
 
-    Ok(states
-        .par_iter_mut()
-        .map(|state| sponge.squeeze(state))
-        .collect())
+    Ok(states)
 }
 
-/// Build leaf digests using the cyclic view; see [`Lifting::Cyclic`] for semantics.
+/// Build leaf states using the cyclic view; see [`Lifting::Cyclic`] for semantics.
+///
+/// Returns the sponge states after absorbing all matrix rows but **before squeezing**.
+/// Callers must squeeze the states to obtain final leaf digests.
+///
 /// Conceptually, each matrix is virtually extended to height `H` by repeating its `h` rows
 /// `L = H / h` times in a cycle (width unchanged), and the leaf `r` absorbs the `r`-th row from
 /// each extended matrix in order. Each absorbed row is virtually padded with zeros to a multiple
@@ -254,10 +348,10 @@ where
 ///
 /// Panics in debug builds if preconditions are violated.
 #[allow(dead_code)]
-pub fn build_leaves_cyclic<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
+pub fn build_leaf_states_cyclic<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
     matrices: &[M],
     sponge: &H,
-) -> Result<Vec<[PD::Value; DIGEST_ELEMS]>, LmcsError>
+) -> Result<Vec<[PD::Value; WIDTH]>, LmcsError>
 where
     PF: PackedValue,
     PD: PackedValue,
@@ -268,9 +362,7 @@ where
 {
     const { assert!(PF::WIDTH.is_power_of_two()) };
     const { assert!(PD::WIDTH.is_power_of_two()) };
-    validate_heights(matrices.iter().map(|d| d.dimensions().height))?;
-
-    let final_height = matrices.last().unwrap().height();
+    let final_height = validate_heights(matrices.iter().map(|d| d.dimensions().height))?;
 
     let default_state = [PD::Value::default(); WIDTH];
     let mut states = vec![default_state; final_height];
@@ -294,10 +386,7 @@ where
         active_height = height;
     }
 
-    Ok(states
-        .into_iter()
-        .map(|state| sponge.squeeze(&state))
-        .collect())
+    Ok(states)
 }
 
 /// Incorporate one matrix’s row-wise contribution into the running per-leaf states.
@@ -407,6 +496,7 @@ mod tests {
     use p3_matrix::Matrix;
     use p3_matrix::bitrev::BitReversibleMatrix;
     use p3_matrix::dense::RowMajorMatrix;
+    use p3_symmetric::StatefulHasher;
     use p3_util::reverse_slice_index_bits;
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
@@ -418,11 +508,15 @@ mod tests {
     };
 
     fn build_leaves_cyclic(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
-        super::build_leaves_cyclic::<P, P, _, _, _, _>(matrices, sponge).unwrap()
+        let mut states =
+            super::build_leaf_states_cyclic::<P, P, _, _, _, _>(matrices, sponge).unwrap();
+        states.iter_mut().map(|s| sponge.squeeze(s)).collect()
     }
 
     fn build_leaves_upsampled(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
-        super::build_leaves_upsampled::<P, P, _, _, _, _>(matrices, sponge).unwrap()
+        let mut states =
+            super::build_leaf_states_upsampled::<P, P, _, _, _, _>(matrices, sponge).unwrap();
+        states.iter_mut().map(|s| sponge.squeeze(s)).collect()
     }
 
     #[test]
