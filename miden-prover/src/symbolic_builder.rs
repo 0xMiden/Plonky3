@@ -230,7 +230,6 @@ impl<F: Field> MidenAirBuilder for SymbolicAirBuilder<F> {
 mod tests {
     use miden_air::MidenAir;
     use p3_baby_bear::BabyBear;
-    use p3_field::extension::BinomialExtensionField;
     use p3_matrix::Matrix;
 
     use super::*;
