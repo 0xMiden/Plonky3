@@ -6,6 +6,7 @@ use p3_field::{Field, PrimeField, PrimeField32, reduce_32};
 
 use crate::hasher::CryptographicHasher;
 use crate::permutation::CryptographicPermutation;
+use crate::stateful::StatefulHasher;
 
 /// A padding-free, overwrite-mode sponge function.
 ///
@@ -54,6 +55,44 @@ where
         }
 
         state[..OUT].try_into().unwrap()
+    }
+}
+
+// Implement the stateful interface for the padding-free sponge construction.
+impl<P, T, const WIDTH: usize, const RATE: usize, const OUT: usize>
+    StatefulHasher<T, [T; WIDTH], [T; OUT]> for PaddingFreeSponge<P, WIDTH, RATE, OUT>
+where
+    T: Default + Clone,
+    P: CryptographicPermutation<[T; WIDTH]>,
+{
+    const PADDING_WIDTH: usize = RATE;
+
+    fn absorb_into<I>(&self, state: &mut [T; WIDTH], input: I)
+    where
+        I: IntoIterator<Item = T>,
+    {
+        const { assert!(OUT < WIDTH) }
+        let mut input = input.into_iter();
+
+        'outer: loop {
+            for i in 0..RATE {
+                if let Some(x) = input.next() {
+                    state[i] = x;
+                } else {
+                    if i != 0 {
+                        state[i..RATE].fill(T::default());
+                        self.permutation.permute_mut(state);
+                    }
+                    break 'outer;
+                }
+            }
+            self.permutation.permute_mut(state);
+        }
+    }
+
+    fn squeeze(&self, state: &[T; WIDTH]) -> [T; OUT] {
+        const { assert!(OUT < WIDTH) }
+        core::array::from_fn(|i| state[i].clone())
     }
 }
 
