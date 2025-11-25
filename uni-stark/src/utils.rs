@@ -56,7 +56,7 @@ where
     // Running sum constraints
     builder
         .when_first_row()
-        .assert_eq_ext(s_i.clone(), t_i.clone() - w_i.clone());
+        .assert_eq_ext(s_i.clone(), t_i - w_i);
     builder
         .when_transition()
         .assert_eq_ext(s_next, s_i.clone() + t_next - w_next);

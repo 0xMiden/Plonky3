@@ -1,5 +1,3 @@
-use core::marker::PhantomData;
-
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use p3_baby_bear::BabyBear;
 use p3_field::extension::{BinomialExtensionField, Complex};
