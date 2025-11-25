@@ -26,7 +26,7 @@ where
 {
     assert!(is_zk <= 1, "is_zk must be either 0 or 1");
     // We pad to at least degree 2, since a quotient argument doesn't make sense with smaller degrees.
-    let constraint_degree = (get_max_constraint_degree(
+    let constraint_degree = (get_max_constraint_degree::<F, EF, A>(
         air,
         preprocessed_width,
         num_public_values,
@@ -54,7 +54,7 @@ where
     EF: ExtensionField<F>,
     A: MidenAir<F, EF>,
 {
-    get_symbolic_constraints(
+    get_symbolic_constraints::<F, EF, A>(
         air,
         preprocessed_width,
         num_public_values,
@@ -80,7 +80,7 @@ where
     EF: ExtensionField<F>,
     A: MidenAir<F, EF>,
 {
-    let mut builder = SymbolicAirBuilder::<F, EF>::new(
+    let mut builder = SymbolicAirBuilder::<F>::new(
         preprocessed_width,
         air.width(),
         aux_width,
@@ -93,17 +93,17 @@ where
 
 /// An `AirBuilder` for evaluating constraints symbolically, and recording them for later use.
 #[derive(Debug)]
-pub struct SymbolicAirBuilder<F: Field, EF: ExtensionField<F>> {
+pub struct SymbolicAirBuilder<F: Field> {
+    // pub struct SymbolicAirBuilder<F: Field, EF: ExtensionField<F>> {
     preprocessed: RowMajorMatrix<SymbolicVariable<F>>,
     main: RowMajorMatrix<SymbolicVariable<F>>,
     aux: Option<RowMajorMatrix<SymbolicVariable<F>>>,
     aux_randomness: Vec<SymbolicVariable<F>>,
     public_values: Vec<SymbolicVariable<F>>,
     constraints: Vec<SymbolicExpression<F>>,
-    _phantom: std::marker::PhantomData<EF>,
 }
 
-impl<F: Field, EF: ExtensionField<F>> SymbolicAirBuilder<F, EF> {
+impl<F: Field> SymbolicAirBuilder<F> {
     pub fn new(
         preprocessed_width: usize,
         width: usize,
@@ -147,7 +147,7 @@ impl<F: Field, EF: ExtensionField<F>> SymbolicAirBuilder<F, EF> {
             aux_randomness: randomness,
             public_values,
             constraints: vec![],
-            _phantom: std::marker::PhantomData,
+            // _phantom: std::marker::PhantomData,
         }
     }
 
@@ -162,7 +162,7 @@ impl<F: Field, EF: ExtensionField<F>> SymbolicAirBuilder<F, EF> {
     }
 }
 
-impl<F: Field, EF: ExtensionField<F>> MidenAirBuilder for SymbolicAirBuilder<F, EF> {
+impl<F: Field> MidenAirBuilder for SymbolicAirBuilder<F> {
     type F = F;
     type Expr = SymbolicExpression<F>;
     type Var = SymbolicVariable<F>;
@@ -201,6 +201,7 @@ impl<F: Field, EF: ExtensionField<F>> MidenAirBuilder for SymbolicAirBuilder<F, 
     fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
         self.constraints.push(x.into());
     }
+
     fn permutation(&self) -> Self::MP {
         self.aux.clone().expect("permutation called but aux trace is None - AIR should check num_randomness > 0 before using permutation columns")
     }
@@ -208,6 +209,7 @@ impl<F: Field, EF: ExtensionField<F>> MidenAirBuilder for SymbolicAirBuilder<F, 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         &self.aux_randomness
     }
+
     fn public_values(&self) -> &[Self::PublicVar] {
         &self.public_values
     }
@@ -227,28 +229,34 @@ impl<F: Field, EF: ExtensionField<F>> MidenAirBuilder for SymbolicAirBuilder<F, 
 #[cfg(test)]
 mod tests {
     use miden_air::MidenAir;
-    use p3_air::BaseAir;
     use p3_baby_bear::BabyBear;
     use p3_field::extension::BinomialExtensionField;
+    use p3_matrix::Matrix;
 
     use super::*;
 
-    type EF = BinomialExtensionField<BabyBear, 4>;
-
     #[derive(Debug)]
     struct MockAir {
-        constraints: Vec<SymbolicVariable<BabyBear>>,
+        // Store (entry_type, index) pairs instead of SymbolicVariables
+        constraint_specs: Vec<(Entry, usize)>,
         width: usize,
     }
 
-    impl<F, EF_> MidenAir<F, EF_> for MockAir {
+    impl MidenAir<BabyBear, BabyBear> for MockAir {
         fn width(&self) -> usize {
             self.width
         }
 
-        fn eval<AB: MidenAirBuilder<F = F>>(&self, builder: &mut AB) {
-            for constraint in &self.constraints {
-                builder.assert_zero(*constraint);
+        fn eval<AB: MidenAirBuilder<F = BabyBear>>(&self, builder: &mut AB) {
+            let main = builder.main();
+
+            for (entry, index) in &self.constraint_specs {
+                match entry {
+                    Entry::Main { offset } => {
+                        builder.assert_zero(main.row_slice(*offset).unwrap()[*index].clone());
+                    }
+                    _ => panic!("Test only supports Main entry"),
+                }
             }
         }
     }
@@ -256,44 +264,44 @@ mod tests {
     #[test]
     fn test_get_log_quotient_degree_no_constraints() {
         let air = MockAir {
-            constraints: vec![],
+            constraint_specs: vec![],
             width: 4,
         };
-        let log_degree = get_log_quotient_degree::<BabyBear, EF, _>(&air, 3, 2, 0, 0, 0);
+        let log_degree = get_log_quotient_degree::<BabyBear, BabyBear, _>(&air, 3, 2, 0, 0, 0);
         assert_eq!(log_degree, 0);
     }
 
     #[test]
     fn test_get_log_quotient_degree_single_constraint() {
         let air = MockAir {
-            constraints: vec![SymbolicVariable::new(Entry::Main { offset: 0 }, 0)],
+            constraint_specs: vec![(Entry::Main { offset: 0 }, 0)],
             width: 4,
         };
-        let log_degree = get_log_quotient_degree::<BabyBear, EF, _>(&air, 3, 2, 0, 0, 0);
+        let log_degree = get_log_quotient_degree::<BabyBear, BabyBear, _>(&air, 3, 2, 0, 0, 0);
         assert_eq!(log_degree, log2_ceil_usize(1));
     }
 
     #[test]
     fn test_get_log_quotient_degree_multiple_constraints() {
         let air = MockAir {
-            constraints: vec![
-                SymbolicVariable::new(Entry::Main { offset: 0 }, 0),
-                SymbolicVariable::new(Entry::Main { offset: 1 }, 1),
-                SymbolicVariable::new(Entry::Main { offset: 2 }, 2),
+            constraint_specs: vec![
+                (Entry::Main { offset: 0 }, 0),
+                (Entry::Main { offset: 1 }, 1),
+                (Entry::Main { offset: 0 }, 2),
             ],
             width: 4,
         };
-        let log_degree = get_log_quotient_degree::<BabyBear, EF, _>(&air, 3, 2, 0, 0, 0);
+        let log_degree = get_log_quotient_degree::<BabyBear, BabyBear, _>(&air, 3, 2, 0, 0, 0);
         assert_eq!(log_degree, log2_ceil_usize(1));
     }
 
     #[test]
     fn test_get_max_constraint_degree_no_constraints() {
         let air = MockAir {
-            constraints: vec![],
+            constraint_specs: vec![],
             width: 4,
         };
-        let max_degree = get_max_constraint_degree::<BabyBear, EF, _>(&air, 3, 2, 0, 0);
+        let max_degree = get_max_constraint_degree::<BabyBear, BabyBear, _>(&air, 3, 2, 0, 0);
         assert_eq!(
             max_degree, 0,
             "No constraints should result in a degree of 0"
@@ -303,28 +311,31 @@ mod tests {
     #[test]
     fn test_get_max_constraint_degree_multiple_constraints() {
         let air = MockAir {
-            constraints: vec![
-                SymbolicVariable::new(Entry::Main { offset: 0 }, 0),
-                SymbolicVariable::new(Entry::Main { offset: 1 }, 1),
-                SymbolicVariable::new(Entry::Main { offset: 2 }, 2),
+            constraint_specs: vec![
+                (Entry::Main { offset: 0 }, 0),
+                (Entry::Main { offset: 1 }, 1),
+                (Entry::Main { offset: 0 }, 2),
             ],
             width: 4,
         };
-        let max_degree = get_max_constraint_degree::<BabyBear, EF, _>(&air, 3, 2, 0, 0);
+        let max_degree = get_max_constraint_degree::<BabyBear, BabyBear, _>(&air, 3, 2, 0, 0);
         assert_eq!(max_degree, 1, "Max constraint degree should be 1");
     }
 
     #[test]
     fn test_get_symbolic_constraints() {
-        let c1 = SymbolicVariable::new(Entry::Main { offset: 0 }, 0);
-        let c2 = SymbolicVariable::new(Entry::Main { offset: 1 }, 1);
+        let c1: SymbolicVariable<BabyBear> = SymbolicVariable::new(Entry::Main { offset: 0 }, 0);
+        let c2: SymbolicVariable<BabyBear> = SymbolicVariable::new(Entry::Main { offset: 1 }, 1);
 
         let air = MockAir {
-            constraints: vec![c1, c2],
+            constraint_specs: vec![
+                (Entry::Main { offset: 0 }, 0),
+                (Entry::Main { offset: 1 }, 1),
+            ],
             width: 4,
         };
 
-        let constraints = get_symbolic_constraints::<BabyBear, EF, _>(&air, 3, 2, 0, 0);
+        let constraints = get_symbolic_constraints::<BabyBear, BabyBear, _>(&air, 3, 2, 0, 0);
 
         assert_eq!(constraints.len(), 2, "Should return exactly 2 constraints");
 
@@ -341,7 +352,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_air_builder_initialization() {
-        let builder = SymbolicAirBuilder::<BabyBear, EF>::new(2, 4, 0, 0, 3);
+        let builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 0, 0, 3);
 
         let expected_main = [
             SymbolicVariable::<BabyBear>::new(Entry::Main { offset: 0 }, 0),
@@ -370,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_air_builder_is_first_last_row() {
-        let builder = SymbolicAirBuilder::<BabyBear, EF>::new(2, 4, 0, 0, 3);
+        let builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 0, 0, 3);
 
         assert!(
             matches!(builder.is_first_row(), SymbolicExpression::IsFirstRow),
@@ -385,7 +396,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_air_builder_assert_zero() {
-        let mut builder = SymbolicAirBuilder::<BabyBear, EF>::new(2, 4, 0, 0, 3);
+        let mut builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 0, 0, 3);
         let expr = SymbolicExpression::Constant(BabyBear::new(5));
         builder.assert_zero(expr);
 
