@@ -10,13 +10,13 @@ use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
 
 mod hiding_lmcs;
-mod merkle_tree;
+mod lifted_tree;
 #[cfg(test)]
 mod test_helpers;
 mod utils;
 
 pub use hiding_lmcs::MerkleTreeHidingLmcs;
-pub use merkle_tree::{LiftedMerkleTree, build_leaf_states_cyclic, build_leaf_states_upsampled};
+pub use lifted_tree::{LiftedMerkleTree, build_leaf_states_cyclic, build_leaf_states_upsampled};
 
 /// Lifting method used to align matrices of different heights to a common height.
 ///
