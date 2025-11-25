@@ -82,7 +82,7 @@ pub trait MidenAir<F, EF>: Sync {
     ///
     /// # Arguments
     /// - `builder`: Mutable reference to a `MidenAirBuilder` for defining constraints.
-    fn eval<AB: MidenAirBuilder<F = F, EF = EF>>(&self, builder: &mut AB);
+    fn eval<AB: MidenAirBuilder<F = F>>(&self, builder: &mut AB);
 }
 
 /// Helper macro to implement p3-air traits by delegating to MidenAir.
