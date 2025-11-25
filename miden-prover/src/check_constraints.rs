@@ -253,7 +253,7 @@ mod tests {
             2
         }
 
-        fn eval<AB: MidenAirBuilder<F = F, EF = EF>>(&self, builder: &mut AB) {
+        fn eval<AB: MidenAirBuilder<F = F>>(&self, builder: &mut AB) {
             let main = builder.main();
 
             for col in 0..2 {
