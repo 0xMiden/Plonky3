@@ -9,7 +9,7 @@ use p3_symmetric::{PaddingFreeSponge, StatefulHasher, TruncatedPermutation};
 use rand::rngs::SmallRng;
 use rand::{RngCore, SeedableRng};
 
-use crate::lifted::Lifting;
+use crate::merkle_tree::Lifting;
 
 pub(crate) type F = BabyBear;
 pub(crate) type P = <F as Field>::Packing;
