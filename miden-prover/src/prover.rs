@@ -11,7 +11,7 @@ use tracing::{debug_span, info_span, instrument};
 
 use crate::{
     Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
-    StarkGenericConfig, Val, check_constraints, get_log_quotient_degree, get_symbolic_constraints,
+    StarkGenericConfig, Val, get_log_quotient_degree, get_symbolic_constraints,
 };
 
 /// Commits the preprocessed trace if present.
@@ -196,7 +196,7 @@ where
         };
 
     #[cfg(debug_assertions)]
-    check_constraints::<Val<SC>, SC::Challenge, _>(
+    crate::check_constraints::<Val<SC>, SC::Challenge, _>(
         air,
         trace,
         &_aux_trace_opt,

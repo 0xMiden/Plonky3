@@ -10,6 +10,7 @@
 //! - Transition constraints: a' = b, b' = a + b
 
 use miden_air::{ExtensionField, Matrix, MidenAir, MidenAirBuilder, PrimeCharacteristicRing};
+use miden_prover::{StarkConfig, prove, verify};
 use p3_baby_bear::BabyBear;
 use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_commit::ExtensionMmcs;
@@ -21,8 +22,6 @@ use p3_keccak::Keccak256Hash;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{CompressionFunctionFromHasher, SerializingHasher};
-
-use miden_prover::{StarkConfig, prove, verify};
 
 /// Fibonacci AIR with 2 columns (a, b)
 /// Constraints:

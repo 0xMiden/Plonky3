@@ -1,10 +1,5 @@
 //! Re-export commonly used types from p3-uni-stark for easier access.
 
-pub use p3_uni_stark::AuxBuilder;
-pub use p3_uni_stark::Domain;
-pub use p3_uni_stark::PackedChallenge;
-pub use p3_uni_stark::PackedVal;
-pub use p3_uni_stark::PcsError;
-pub use p3_uni_stark::StarkConfig;
-pub use p3_uni_stark::StarkGenericConfig;
-pub use p3_uni_stark::Val;
+pub use p3_uni_stark::{
+    AuxBuilder, Domain, PackedChallenge, PackedVal, PcsError, StarkConfig, StarkGenericConfig, Val,
+};

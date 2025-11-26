@@ -1,14 +1,9 @@
-use miden_air::MidenAir;
-use miden_air::MidenAirBuilder;
-use miden_air::RowMajorMatrix;
-use p3_field::ExtensionField;
-use p3_field::Field;
+use miden_air::{MidenAir, MidenAirBuilder, RowMajorMatrix};
+use p3_field::{ExtensionField, Field};
 use p3_util::log2_ceil_usize;
 use tracing::instrument;
 
-use crate::Entry;
-use crate::SymbolicExpression;
-use crate::SymbolicVariable;
+use crate::{Entry, SymbolicExpression, SymbolicVariable};
 
 #[instrument(name = "infer log of constraint degree", skip_all)]
 pub fn get_log_quotient_degree<F, EF, A>(

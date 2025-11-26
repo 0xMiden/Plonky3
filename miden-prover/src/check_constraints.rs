@@ -242,7 +242,9 @@ mod tests {
     /// This is useful for validating constraint evaluation, transition logic,
     /// and row condition flags (first/last/transition).
     #[derive(Debug)]
-    struct RowLogicAir;
+    struct RowLogicAir {
+        with_aux: bool,
+    }
 
     impl<F, EF> MidenAir<F, EF> for RowLogicAir
     where
@@ -253,17 +255,83 @@ mod tests {
             2
         }
 
+        fn aux_width(&self) -> usize {
+            if self.with_aux { 3 } else { 0 }
+        }
+
+        fn num_randomness(&self) -> usize {
+            if self.with_aux { 1 } else { 0 }
+        }
+
         fn eval<AB: MidenAirBuilder<F = F>>(&self, builder: &mut AB) {
             let main = builder.main();
+            let aux = builder.permutation();
 
-            for col in 0..2 {
-                let a = main.get(0, col).unwrap();
-                let b = main.get(1, col).unwrap();
+            // ======================
+            // main trace
+            // ======================
+            // | main1             | main2            |
+            // | row[i]            | perm(main1)[i]   |
+            // | row[i+1]=row[i]+1 | perm(main1)[i+1] |
 
-                // New logic: enforce row[i+1] = row[i] + 1, only on transitions
-                builder.when_transition().assert_eq(b, a + F::ONE);
+            let a = main.get(0, 0).unwrap();
+            let b = main.get(1, 0).unwrap();
+
+            // New logic: enforce row[i+1] = row[i] + 1, only on transitions
+            builder.when_transition().assert_eq(b, a + F::ONE);
+
+            // ======================
+            // aux trace
+            // ======================
+            if <Self as MidenAir<F, EF>>::num_randomness(&self) != 0 {
+                // Note: For now this is hard coded with LogUp
+                // To show that {x_i} and {y_i} are permutations of each other
+                // We compute
+                // |    aux1           |    aux2           |   aux3                          |
+                // | t_i = 1/(r - x_i) | w_i = 1/(r - y_i) | aux3[i] = aux3[i-1] + t_i - w_i |
+                //
+                // - r is the input randomness
+                // - in practice x_i and y_i should be copied from corresponding main trace (with selectors)
+                //
+                // ZZ note:
+                // This is practically LogUp with univariate. This requires 3 extension columns = 12 base columns.
+                // It is better than checking \prod(r-xi) == \prod(r-yi) which requires 4 extension columns (the last two store the running product)
+
+                // aux row computation is correct
+                let xi = main.get(0, 0).unwrap();
+                let yi = main.get(0, 1).unwrap();
+
+                let r = builder.permutation_randomness()[0];
+
+                // current row EF elements
+                let t_i = aux.get(0, 0).unwrap();
+                let w_i = aux.get(0, 1).unwrap();
+                let s_i = aux.get(0, 2).unwrap();
+                // next row EF elements
+                let t_next = aux.get(1, 0).unwrap();
+                let w_next = aux.get(1, 1).unwrap();
+                let s_next = aux.get(1, 2).unwrap();
+
+                // t * (r - x_i) == 1  and  w * (r - y_i) == 1
+                // Convert xi and yi to ExprEF by going through the Into trait
+                let r_expr = r.into();
+                let xi_ef: AB::ExprEF = AB::ExprEF::from(xi.into());
+                let yi_ef: AB::ExprEF = AB::ExprEF::from(yi.into());
+                builder.assert_eq_ext(t_i.into() * (r_expr.clone() - xi_ef), AB::ExprEF::ONE);
+                builder.assert_eq_ext(w_i.into() * (r_expr - yi_ef), AB::ExprEF::ONE);
+
+                // transition is correct: s' = s + t' - w'
+                builder
+                    .when_transition()
+                    .assert_eq_ext(s_next.into(), s_i.into() + t_next.into() - w_next.into());
+
+                // a3[last] = Σ(t - w) == 0 if multisets match
+                builder.when_last_row().assert_zero_ext(s_i);
             }
 
+            // ======================
+            // public input
+            // ======================
             // Add public value equality on last row for extra coverage
             let public_values = builder.public_values();
             let pv0 = public_values[0];
@@ -275,28 +343,103 @@ mod tests {
         }
     }
 
+    // A very simple permutation
+    fn permute<F: Field>(x: &Vec<F>) -> Vec<F> {
+        x.iter().rev().cloned().collect::<Vec<F>>()
+    }
+
+    // Generate a main trace.
+    // The first column is incremental
+    // The second column is the rev of the first column
+    fn gen_main(main_col: &Vec<BabyBear>) -> RowMajorMatrix<BabyBear> {
+        let main_rev = permute(main_col);
+        let main_values = main_col
+            .iter()
+            .zip(main_rev.iter())
+            .flat_map(|(a, b)| vec![a, b])
+            .cloned()
+            .collect();
+        RowMajorMatrix::new(main_values, 2)
+    }
+
+    // Generate the aux trace for logup arguments (flattened for storage).
+    fn gen_aux(
+        main_col: &Vec<BabyBear>,
+        aux_randomness: &BinomialExtensionField<BabyBear, 4>,
+    ) -> RowMajorMatrix<BabyBear> {
+        use p3_matrix::dense::DenseMatrix;
+        // Build a DenseMatrix main trace with width 2
+        let main_rev = permute(main_col);
+        let main_values = main_col
+            .iter()
+            .zip(main_rev.iter())
+            .flat_map(|(a, b)| vec![*a, *b])
+            .collect();
+        let main = DenseMatrix::new(main_values, 2);
+        // Use the library generator and return the flattened aux
+        super::super::generate_logup_trace::<BinomialExtensionField<BabyBear, 4>, _>(
+            &main,
+            aux_randomness,
+        )
+    }
+
     #[test]
     fn test_incremental_rows_with_last_row_check() {
         // Each row = previous + 1, with 4 rows total, 2 columns.
         // Last row must match public values [4, 4]
-        let air = RowLogicAir;
+        let air = RowLogicAir { with_aux: false };
         let values = vec![
-            BabyBear::ONE,
-            BabyBear::ONE, // Row 0
-            BabyBear::new(2),
+            BabyBear::ONE,    // Row 0
             BabyBear::new(2), // Row 1
-            BabyBear::new(3),
             BabyBear::new(3), // Row 2
-            BabyBear::new(4),
             BabyBear::new(4), // Row 3 (last)
         ];
-        let main = RowMajorMatrix::new(values, 2);
+        let main = gen_main(&values);
+        println!("main: {:?}", main);
         check_constraints::<_, BinomialExtensionField<BabyBear, 4>, _>(
             &air,
             &main,
             &None,
             &[],
-            &vec![BabyBear::new(4); 2],
+            &vec![BabyBear::new(4), BabyBear::new(1)],
+        );
+    }
+
+    #[test]
+    fn test_permuted_incremental_rows_with_last_row_check() {
+        let len = 100;
+
+        // Each row = previous + 1, with 4 rows total, 2 columns.
+        // Last row must match public values [4, 1]
+        // randomness = 5 + 10x + 15x^2 + 20x^3
+        // | m1 | m2 | a1      | a2      | a3 |
+        // | 1  | 4  | 1/(r-1) | 1/(r-4) | .. |
+        // | 2  | 3  | 1/(r-2) | 1/(r-3) | .. |
+        // | 3  | 2  | 1/(r-3) | 1/(r-2) | .. |
+        // | 4  | 1  | 1/(r-4) | 1/(r-1) | .. |
+        let air = RowLogicAir { with_aux: true };
+        let main_col = (1..=len).map(|i| BabyBear::new(i)).collect();
+        let main = gen_main(&main_col);
+
+        let aux_randomness = BinomialExtensionField::<BabyBear, 4>::from_basis_coefficients_slice(
+            [
+                BabyBear::new(1005),
+                BabyBear::new(10010),
+                BabyBear::new(10015),
+                BabyBear::new(10020),
+            ]
+            .as_ref(),
+        )
+        .unwrap();
+
+        let aux = gen_aux(&main_col, &aux_randomness);
+
+        check_constraints::<BabyBear, BinomialExtensionField<BabyBear, 4>, _>(
+            &air,
+            &main,
+            &Some(aux),
+            &aux_randomness.as_basis_coefficients_slice(),
+            &vec![BabyBear::new(len), BabyBear::new(1)],
         );
     }
 
@@ -304,7 +447,7 @@ mod tests {
     #[should_panic]
     fn test_incorrect_increment_logic() {
         // Row 2 does not equal row 1 + 1 → should fail on transition from row 1 to 2.
-        let air = RowLogicAir;
+        let air = RowLogicAir { with_aux: false };
         let values = vec![
             BabyBear::ONE,
             BabyBear::ONE, // Row 0
@@ -329,7 +472,7 @@ mod tests {
     #[should_panic]
     fn test_wrong_last_row_public_value() {
         // The transition logic is fine, but public value check fails at the last row.
-        let air = RowLogicAir;
+        let air = RowLogicAir { with_aux: false };
         let values = vec![
             BabyBear::ONE,
             BabyBear::ONE, // Row 0
@@ -356,7 +499,7 @@ mod tests {
         // A single-row matrix still performs a wraparound check with itself.
         // row[0] == row[0] + 1 ⇒ fails unless handled properly by transition logic.
         // Here: is_transition == false ⇒ so no assertions are enforced.
-        let air = RowLogicAir;
+        let air = RowLogicAir { with_aux: false };
         let values = vec![
             BabyBear::new(99),
             BabyBear::new(77), // Row 0
