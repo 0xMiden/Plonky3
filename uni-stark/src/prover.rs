@@ -13,7 +13,9 @@ use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{
-    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder, StarkGenericConfig, SymbolicAirBuilder, Val, generate_logup_trace, get_log_quotient_degree, get_symbolic_constraints
+    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
+    StarkGenericConfig, SymbolicAirBuilder, Val, generate_logup_trace, get_log_quotient_degree,
+    get_symbolic_constraints,
 };
 #[cfg(debug_assertions)]
 use crate::{DebugConstraintBuilder, check_constraints};

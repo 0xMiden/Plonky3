@@ -284,16 +284,13 @@ mod tests {
             let main = builder.main();
             let aux_pair = builder.aux;
 
-            for col in 0..W {
+            for col in 0..main.top.width() {
                 let a = main.top.get(0, col).unwrap();
                 let b = main.bottom.get(0, col).unwrap();
 
                 // New logic: enforce row[i+1] = row[i] + 1, only on transitions
                 builder.when_transition().assert_eq(b, a + F::ONE);
             }
-
-            // New logic: enforce row[i+1] = row[i] + 1, only on transitions
-            builder.when_transition().assert_eq(b, a + F::ONE);
 
             // ======================
             // aux trace
@@ -345,7 +342,7 @@ mod tests {
             // Add public value equality on last row for extra coverage
             let public_values = builder.public_values;
             let mut when_last = builder.when(builder.is_last_row);
-            for (i, &pv) in public_values.iter().enumerate().take(W) {
+            for (i, &pv) in public_values.iter().enumerate().take(main.top.width()) {
                 when_last.assert_eq(main.top.get(0, i).unwrap(), pv);
             }
         }
