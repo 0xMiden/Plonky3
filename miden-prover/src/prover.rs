@@ -480,21 +480,21 @@ where
                 |aux_trace| {
                     // Aux trace is stored in flattened base field format (each EF element = D base elements)
                     // We need to convert it to packed extension field format
-                    let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
+
+                    println!("start {}  next {}", i_start, next_step);
                     let base_packed: Vec<PackedVal<SC>> =
                         aux_trace.vertically_packed_row_pair(i_start, next_step);
-                    let ef_width = aux_trace.width() / d;
+                    let ef_width = aux_trace.width() / SC::Challenge::DIMENSION;
 
                     // Convert from packed base field to packed extension field
                     // Each EF element is formed from D consecutive base field elements
-                    let ef_packed: Vec<PackedChallenge<SC>> = (0..ef_width * 2)
-                        .map(|i| {
-                            PackedChallenge::<SC>::from_basis_coefficients_fn(|j| {
-                                base_packed[i * d + j]
-                            })
-                        })
-                        .collect();
+                    // Reconstitute base-packed coefficients into packed extension-field elements.
+                    // Using the provided helper keeps the ordering and chunking logic centralized.
+                    let ef_packed: Vec<PackedChallenge<SC>> =
+                        PackedChallenge::<SC>::reconstitute_from_base(base_packed);
 
+                    println!("ef packed: {:?}", ef_packed);
+                    println!("ef_width {}", ef_width);
                     RowMajorMatrix::new(ef_packed, ef_width)
                 },
             );
@@ -510,6 +510,8 @@ where
             // Pack challenges for constraint evaluation
             let packed_randomness: Vec<PackedChallenge<SC>> =
                 randomness.iter().copied().map(Into::into).collect();
+
+            println!("packed randomness: {:?}", packed_randomness);
 
             let accumulator = PackedChallenge::<SC>::ZERO;
             let mut folder: ProverConstraintFolder<'_, SC> = ProverConstraintFolder {
