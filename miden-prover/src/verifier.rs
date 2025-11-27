@@ -98,44 +98,17 @@ where
         _ => None,
     };
 
-    // Convert aux trace opened values from base field coefficient representation to extension field elements
-    //
-    // The opened values are extension field values (from evaluating base field polynomials at zeta).
-    // We have aux_width * DIMENSION values, which need to be regrouped into aux_width extension field elements.
-    // Each group of DIMENSION consecutive values represents the basis coefficients of one extension field element.
-    let aux_local_converted;
-    let aux_next_converted;
+    // Aux trace is committed as flattened base limbs. Recompose into EF values.
+    let aux_local_ext;
+    let aux_next_ext;
     let aux = match (aux_local, aux_next) {
         (Some(local), Some(next)) => {
-            // First, flatten all extension field values to their base field coefficients
-            let local_base: Vec<Val<SC>> = local
-                .iter()
-                .flat_map(|ef| ef.as_basis_coefficients_slice().to_vec())
-                .collect();
-            let next_base: Vec<Val<SC>> = next
-                .iter()
-                .flat_map(|ef| ef.as_basis_coefficients_slice().to_vec())
-                .collect();
-
-            // Then, regroup into aux_width extension field elements
-            aux_local_converted = local_base
-                .chunks(SC::Challenge::DIMENSION)
-                .map(|chunk| {
-                    SC::Challenge::from_basis_coefficients_slice(chunk)
-                        .expect("Invalid basis coefficients")
-                })
-                .collect::<Vec<_>>();
-            aux_next_converted = next_base
-                .chunks(SC::Challenge::DIMENSION)
-                .map(|chunk| {
-                    SC::Challenge::from_basis_coefficients_slice(chunk)
-                        .expect("Invalid basis coefficients")
-                })
-                .collect::<Vec<_>>();
+            aux_local_ext = row_to_ext::<SC>(local).ok_or(VerificationError::InvalidProofShape)?;
+            aux_next_ext = row_to_ext::<SC>(next).ok_or(VerificationError::InvalidProofShape)?;
 
             VerticalPair::new(
-                RowMajorMatrixView::new_row(&aux_local_converted),
-                RowMajorMatrixView::new_row(&aux_next_converted),
+                RowMajorMatrixView::new_row(&aux_local_ext),
+                RowMajorMatrixView::new_row(&aux_next_ext),
             )
         }
         _ => {
@@ -168,6 +141,25 @@ where
     }
 
     Ok(())
+}
+
+// Helper: convert a flattened base-field row into EF elements.
+fn row_to_ext<SC: StarkGenericConfig>(row: &[SC::Challenge]) -> Option<Vec<SC::Challenge>> {
+    let dim = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
+    if row.len() % dim != 0 {
+        return None;
+    }
+
+    let mut out = Vec::with_capacity(row.len() / dim);
+    for chunk in row.chunks(dim) {
+        let mut acc = SC::Challenge::ZERO;
+        for (i, limb) in chunk.iter().enumerate() {
+            let basis = SC::Challenge::ith_basis_element(i).unwrap();
+            acc += basis * *limb;
+        }
+        out.push(acc);
+    }
+    Some(out)
 }
 
 /// Validates and commits the preprocessed trace if present.

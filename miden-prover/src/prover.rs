@@ -480,21 +480,21 @@ where
                 |aux_trace| {
                     // Aux trace is stored in flattened base field format (each EF element = D base elements)
                     // We need to convert it to packed extension field format
-
-                    println!("start {}  next {}", i_start, next_step);
+                    let d = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
                     let base_packed: Vec<PackedVal<SC>> =
                         aux_trace.vertically_packed_row_pair(i_start, next_step);
-                    let ef_width = aux_trace.width() / SC::Challenge::DIMENSION;
+                    let ef_width = aux_trace.width() / d;
 
                     // Convert from packed base field to packed extension field
                     // Each EF element is formed from D consecutive base field elements
-                    // Reconstitute base-packed coefficients into packed extension-field elements.
-                    // Using the provided helper keeps the ordering and chunking logic centralized.
-                    let ef_packed: Vec<PackedChallenge<SC>> =
-                        PackedChallenge::<SC>::reconstitute_from_base(base_packed);
+                    let ef_packed: Vec<PackedChallenge<SC>> = (0..ef_width * 2)
+                        .map(|i| {
+                            PackedChallenge::<SC>::from_basis_coefficients_fn(|j| {
+                                base_packed[i * d + j]
+                            })
+                        })
+                        .collect();
 
-                    println!("ef packed: {:?}", ef_packed);
-                    println!("ef_width {}", ef_width);
                     RowMajorMatrix::new(ef_packed, ef_width)
                 },
             );

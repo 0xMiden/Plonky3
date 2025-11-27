@@ -280,7 +280,7 @@ mod tests {
         fn eval(&self, builder: &mut DebugConstraintBuilder<'_, F, EF>) {
             let main = builder.main();
 
-            for col in 0..2 {
+            for col in 0..main.top.width() {
                 let a = main.top.get(0, col).unwrap();
                 let b = main.bottom.get(0, col).unwrap();
 
