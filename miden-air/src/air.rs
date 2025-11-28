@@ -40,6 +40,13 @@ pub trait MidenAir<F, EF>: Sync {
         0
     }
 
+    // ==================== BaseAirWithPeriodicTables Methods ====================
+
+    /// Return the periodic table data.
+    fn periodic_table(&self) -> Vec<Vec<F>> {
+        vec![]
+    }
+
     // ==================== BaseAirWithAuxTrace Methods ====================
 
     /// Number of challenges (extension fields) that is required to compute the aux trace
@@ -58,7 +65,8 @@ pub trait MidenAir<F, EF>: Sync {
         &self,
         _main: &RowMajorMatrix<F>,
         _challenges: &[EF],
-    ) -> Option<RowMajorMatrix<F>> {
+    ) -> Option<RowMajorMatrix<EF>>
+    {
         None
     }
 
@@ -67,7 +75,7 @@ pub trait MidenAir<F, EF>: Sync {
     /// An aux builder takes in a main matrix and a randomness, and generate a aux matrix.
     fn with_aux_builder<Builder>(&mut self, _builder: Builder)
     where
-        Builder: Fn(&RowMajorMatrix<F>, &[EF]) -> RowMajorMatrix<F> + Send + Sync + 'static,
+        Builder: Fn(&RowMajorMatrix<F>, &[EF]) -> RowMajorMatrix<EF> + Send + Sync + 'static,
     {
         // default: do nothing
     }
