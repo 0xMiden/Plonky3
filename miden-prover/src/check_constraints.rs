@@ -1,13 +1,14 @@
-use alloc::vec::Vec;
-
-use p3_air::{
-    AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder, PermutationAirBuilder,
-};
-use p3_field::{ExtensionField, Field};
+use miden_air::{MidenAir, MidenAirBuilder};
+// use p3_air::{
+//     AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder, PermutationAirBuilder,
+// };
+use p3_field::{BasedVectorSpace, ExtensionField, Field};
 use p3_matrix::Matrix;
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_matrix::stack::ViewPair;
 use tracing::instrument;
+
+use crate::util::prover_row_to_ext;
 
 /// Runs constraint checks using a given AIR definition and trace matrix.
 ///
@@ -28,11 +29,11 @@ pub(crate) fn check_constraints<F, EF, A>(
     main: &RowMajorMatrix<F>,
     aux_trace: &Option<RowMajorMatrix<F>>,
     aux_randomness: &[EF],
-    public_values: &alloc::vec::Vec<F>,
+    public_values: &Vec<F>,
 ) where
     F: Field,
-    EF: ExtensionField<F> + p3_field::BasedVectorSpace<F>,
-    A: for<'a> p3_air::Air<DebugConstraintBuilder<'a, F, EF>>,
+    EF: ExtensionField<F> + BasedVectorSpace<F>,
+    A: MidenAir<F, EF>,
 {
     let height = main.height();
     let preprocessed = air.preprocessed_trace();
@@ -57,10 +58,10 @@ pub(crate) fn check_constraints<F, EF, A>(
         #[allow(clippy::option_if_let_else)]
         let aux = if let Some(aux_matrix) = aux_trace.as_ref() {
             let aux_local = unsafe { aux_matrix.row_slice_unchecked(row_index) };
-            aux_local_ext = row_to_ext::<F, EF>(&aux_local);
+            aux_local_ext = prover_row_to_ext::<F, EF>(&aux_local);
 
             let aux_next = unsafe { aux_matrix.row_slice_unchecked(row_index_next) };
-            aux_next_ext = row_to_ext::<F, EF>(&aux_next);
+            aux_next_ext = prover_row_to_ext::<F, EF>(&aux_next);
 
             p3_matrix::stack::VerticalPair::new(
                 RowMajorMatrixView::new_row(&aux_local_ext),
@@ -108,18 +109,6 @@ pub(crate) fn check_constraints<F, EF, A>(
     });
 }
 
-/// Helper: convert a flattened base-field row (slice of `F`) into a Vec<EF>
-#[allow(dead_code)]
-fn row_to_ext<F, EF>(row: &[F]) -> Vec<EF>
-where
-    F: Field,
-    EF: ExtensionField<F> + p3_field::BasedVectorSpace<F>,
-{
-    row.chunks(EF::DIMENSION)
-        .map(|chunk| EF::from_basis_coefficients_slice(chunk).unwrap())
-        .collect()
-}
-
 /// A builder that runs constraint assertions during testing.
 ///
 /// Used in conjunction with [`check_constraints`] to simulate
@@ -146,7 +135,7 @@ pub struct DebugConstraintBuilder<'a, F: Field, EF: ExtensionField<F>> {
     is_transition: F,
 }
 
-impl<'a, F, EF> AirBuilder for DebugConstraintBuilder<'a, F, EF>
+impl<'a, F, EF> MidenAirBuilder for DebugConstraintBuilder<'a, F, EF>
 where
     F: Field,
     EF: ExtensionField<F>,
@@ -155,6 +144,13 @@ where
     type Expr = F;
     type Var = F;
     type M = ViewPair<'a, F>;
+    type PublicVar = F;
+    type EF = EF;
+    type ExprEF = EF;
+    type VarEF = EF;
+    type MP = ViewPair<'a, EF>;
+    type RandomVar = EF;
+    type PeriodicVal = EF;
 
     fn main(&self) -> Self::M {
         self.main
@@ -168,67 +164,51 @@ where
         self.is_last_row
     }
 
-    /// # Panics
-    /// This function panics if `size` is not `2`.
     fn is_transition_window(&self, size: usize) -> Self::Expr {
         if size == 2 {
             self.is_transition
         } else {
-            panic!("only supports a window size of 2")
+            panic!("DebugConstraintBuilder only supports transition window of size 2");
         }
     }
 
     fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
-        assert_eq!(
-            x.into(),
-            F::ZERO,
-            "constraints had nonzero value on row {}",
-            self.row_index
+        let value = x.into();
+        assert!(
+            value == F::ZERO,
+            "Constraint failed at row {}: expected zero, got {:?}",
+            self.row_index,
+            value
         );
     }
 
-    fn assert_eq<I1: Into<Self::Expr>, I2: Into<Self::Expr>>(&mut self, x: I1, y: I2) {
-        let x = x.into();
-        let y = y.into();
-        assert_eq!(
-            x, y,
-            "values didn't match on row {}: {} != {}",
-            self.row_index, x, y
-        );
-    }
-}
-
-impl<F: Field, EF: ExtensionField<F>> AirBuilderWithPublicValues
-    for DebugConstraintBuilder<'_, F, EF>
-{
-    type PublicVar = Self::F;
-
-    fn public_values(&self) -> &[Self::F] {
+    fn public_values(&self) -> &[Self::PublicVar] {
         self.public_values
     }
-}
 
-impl<F: Field, EF: ExtensionField<F>> ExtensionBuilder for DebugConstraintBuilder<'_, F, EF> {
-    type EF = EF;
-    type ExprEF = EF;
-    type VarEF = EF;
+    fn preprocessed(&self) -> Self::M {
+        self.preprocessed.unwrap_or_else(|| {
+            // Return an empty ViewPair if there are no preprocessed columns
+            let empty: &[F] = &[];
+            ViewPair::new(
+                RowMajorMatrixView::new_row(empty),
+                RowMajorMatrixView::new_row(empty),
+            )
+        })
+    }
 
     fn assert_zero_ext<I>(&mut self, x: I)
     where
         I: Into<Self::ExprEF>,
     {
-        let val: EF = x.into();
-        for limb in val.as_basis_coefficients_slice() {
-            self.assert_zero(*limb);
-        }
+        let value = x.into();
+        assert!(
+            value == EF::ZERO,
+            "Extension field constraint failed at row {}: expected zero, got {:?}",
+            self.row_index,
+            value
+        );
     }
-}
-
-impl<'a, F: Field, EF: ExtensionField<F>> PermutationAirBuilder
-    for DebugConstraintBuilder<'a, F, EF>
-{
-    type MP = ViewPair<'a, EF>;
-    type RandomVar = EF;
 
     fn permutation(&self) -> Self::MP {
         self.aux
@@ -237,20 +217,19 @@ impl<'a, F: Field, EF: ExtensionField<F>> PermutationAirBuilder
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         self.aux_randomness
     }
-}
 
-impl<'a, F: Field, EF: ExtensionField<F>> PairBuilder for DebugConstraintBuilder<'a, F, EF> {
-    fn preprocessed(&self) -> Self::M {
-        self.preprocessed
-            .expect("DebugConstraintBuilder requires preprocessed columns when used as PairBuilder")
+    fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {
+        unimplemented!()
+    }
+
+    fn periodic_evals(&self) -> &[Self::PeriodicVal] {
+        unimplemented!()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
 
-    use p3_air::{BaseAir, BaseAirWithPublicValues};
     use p3_baby_bear::BabyBear;
     use p3_field::PrimeCharacteristicRing;
     use p3_field::extension::BinomialExtensionField;
@@ -264,63 +243,204 @@ mod tests {
     /// This is useful for validating constraint evaluation, transition logic,
     /// and row condition flags (first/last/transition).
     #[derive(Debug)]
-    struct RowLogicAir;
-
-    impl<F: Field> BaseAir<F> for RowLogicAir {
-        fn width(&self) -> usize {
-            2
-        }
+    struct RowLogicAir {
+        with_aux: bool,
     }
 
-    impl<F: Field> BaseAirWithPublicValues<F> for RowLogicAir {}
-
-    impl<F, EF> p3_air::Air<DebugConstraintBuilder<'_, F, EF>> for RowLogicAir
+    impl<F, EF> MidenAir<F, EF> for RowLogicAir
     where
         F: Field,
         EF: ExtensionField<F>,
     {
-        fn eval(&self, builder: &mut DebugConstraintBuilder<'_, F, EF>) {
-            let main = builder.main();
-
-            for col in 0..main.top.width() {
-                let a = main.top.get(0, col).unwrap();
-                let b = main.bottom.get(0, col).unwrap();
-
-                // New logic: enforce row[i+1] = row[i] + 1, only on transitions
-                builder.when_transition().assert_eq(b, a + F::ONE);
-            }
-
-            // Add public value equality on last row for extra coverage
-            let public_values = builder.public_values;
-            let mut when_last = builder.when(builder.is_last_row);
-            for (i, &pv) in public_values.iter().enumerate().take(2) {
-                when_last.assert_eq(main.top.get(0, i).unwrap(), pv);
-            }
+        fn width(&self) -> usize {
+            2
         }
+
+        fn aux_width(&self) -> usize {
+            if self.with_aux { 3 } else { 0 }
+        }
+
+        fn num_randomness(&self) -> usize {
+            if self.with_aux { 1 } else { 0 }
+        }
+
+        fn eval<AB: MidenAirBuilder<F = F>>(&self, builder: &mut AB) {
+            let main = builder.main();
+            let aux = builder.permutation();
+
+            // ======================
+            // main trace
+            // ======================
+            // | main1             | main2            |
+            // | row[i]            | perm(main1)[i]   |
+            // | row[i+1]=row[i]+1 | perm(main1)[i+1] |
+
+            let a = main.get(0, 0).unwrap();
+            let b = main.get(1, 0).unwrap();
+
+            // New logic: enforce row[i+1] = row[i] + 1, only on transitions
+            builder.when_transition().assert_eq(b, a + F::ONE);
+
+            // ======================
+            // aux trace
+            // ======================
+            if <Self as MidenAir<F, EF>>::num_randomness(&self) != 0 {
+                // Note: For now this is hard coded with LogUp
+                // To show that {x_i} and {y_i} are permutations of each other
+                // We compute
+                // |    aux1           |    aux2           |   aux3                          |
+                // | t_i = 1/(r - x_i) | w_i = 1/(r - y_i) | aux3[i] = aux3[i-1] + t_i - w_i |
+                //
+                // - r is the input randomness
+                // - in practice x_i and y_i should be copied from corresponding main trace (with selectors)
+                //
+                // ZZ note:
+                // This is practically LogUp with univariate. This requires 3 extension columns = 12 base columns.
+                // It is better than checking \prod(r-xi) == \prod(r-yi) which requires 4 extension columns (the last two store the running product)
+
+                // aux row computation is correct
+                let xi = main.get(0, 0).unwrap();
+                let yi = main.get(0, 1).unwrap();
+
+                let r = builder.permutation_randomness()[0];
+
+                // current row EF elements
+                let t_i = aux.get(0, 0).unwrap();
+                let w_i = aux.get(0, 1).unwrap();
+                let s_i = aux.get(0, 2).unwrap();
+                // next row EF elements
+                let t_next = aux.get(1, 0).unwrap();
+                let w_next = aux.get(1, 1).unwrap();
+                let s_next = aux.get(1, 2).unwrap();
+
+                // t * (r - x_i) == 1  and  w * (r - y_i) == 1
+                // Convert xi and yi to ExprEF by going through the Into trait
+                let r_expr = r.into();
+                let xi_ef: AB::ExprEF = AB::ExprEF::from(xi.into());
+                let yi_ef: AB::ExprEF = AB::ExprEF::from(yi.into());
+                builder.assert_eq_ext(t_i.into() * (r_expr.clone() - xi_ef), AB::ExprEF::ONE);
+                builder.assert_eq_ext(w_i.into() * (r_expr - yi_ef), AB::ExprEF::ONE);
+
+                // transition is correct: s' = s + t' - w'
+                builder
+                    .when_transition()
+                    .assert_eq_ext(s_next.into(), s_i.into() + t_next.into() - w_next.into());
+
+                // a3[last] = Σ(t - w) == 0 if multisets match
+                builder.when_last_row().assert_zero_ext(s_i);
+            }
+
+            // ======================
+            // public input
+            // ======================
+            // Add public value equality on last row for extra coverage
+            let public_values = builder.public_values();
+            let pv0 = public_values[0];
+            let pv1 = public_values[1];
+
+            let mut when_last = builder.when_last_row();
+            when_last.assert_eq(main.get(0, 0).unwrap(), pv0);
+            when_last.assert_eq(main.get(0, 1).unwrap(), pv1);
+        }
+    }
+
+    // A very simple permutation
+    fn permute<F: Field>(x: &Vec<F>) -> Vec<F> {
+        x.iter().rev().cloned().collect::<Vec<F>>()
+    }
+
+    // Generate a main trace.
+    // The first column is incremental
+    // The second column is the rev of the first column
+    fn gen_main(main_col: &Vec<BabyBear>) -> RowMajorMatrix<BabyBear> {
+        let main_rev = permute(main_col);
+        let main_values = main_col
+            .iter()
+            .zip(main_rev.iter())
+            .flat_map(|(a, b)| vec![a, b])
+            .cloned()
+            .collect();
+        RowMajorMatrix::new(main_values, 2)
+    }
+
+    // Generate the aux trace for logup arguments (flattened for storage).
+    fn gen_aux(
+        main_col: &Vec<BabyBear>,
+        aux_randomness: &BinomialExtensionField<BabyBear, 4>,
+    ) -> RowMajorMatrix<BabyBear> {
+        use p3_matrix::dense::DenseMatrix;
+        // Build a DenseMatrix main trace with width 2
+        let main_rev = permute(main_col);
+        let main_values = main_col
+            .iter()
+            .zip(main_rev.iter())
+            .flat_map(|(a, b)| vec![*a, *b])
+            .collect();
+        let main = DenseMatrix::new(main_values, 2);
+        // Use the library generator and return the flattened aux
+        super::super::generate_logup_trace::<BinomialExtensionField<BabyBear, 4>, _>(
+            &main,
+            aux_randomness,
+        )
     }
 
     #[test]
     fn test_incremental_rows_with_last_row_check() {
         // Each row = previous + 1, with 4 rows total, 2 columns.
         // Last row must match public values [4, 4]
-        let air = RowLogicAir;
+        let air = RowLogicAir { with_aux: false };
         let values = vec![
-            BabyBear::ONE,
-            BabyBear::ONE, // Row 0
-            BabyBear::new(2),
+            BabyBear::ONE,    // Row 0
             BabyBear::new(2), // Row 1
-            BabyBear::new(3),
             BabyBear::new(3), // Row 2
-            BabyBear::new(4),
             BabyBear::new(4), // Row 3 (last)
         ];
-        let main = RowMajorMatrix::new(values, 2);
+        let main = gen_main(&values);
+        println!("main: {:?}", main);
         check_constraints::<_, BinomialExtensionField<BabyBear, 4>, _>(
             &air,
             &main,
             &None,
             &[],
-            &vec![BabyBear::new(4); 2],
+            &vec![BabyBear::new(4), BabyBear::new(1)],
+        );
+    }
+
+    #[test]
+    fn test_permuted_incremental_rows_with_last_row_check() {
+        let len = 100;
+
+        // Each row = previous + 1, with 4 rows total, 2 columns.
+        // Last row must match public values [4, 1]
+        // randomness = 5 + 10x + 15x^2 + 20x^3
+        // | m1 | m2 | a1      | a2      | a3 |
+        // | 1  | 4  | 1/(r-1) | 1/(r-4) | .. |
+        // | 2  | 3  | 1/(r-2) | 1/(r-3) | .. |
+        // | 3  | 2  | 1/(r-3) | 1/(r-2) | .. |
+        // | 4  | 1  | 1/(r-4) | 1/(r-1) | .. |
+        let air = RowLogicAir { with_aux: true };
+        let main_col = (1..=len).map(|i| BabyBear::new(i)).collect();
+        let main = gen_main(&main_col);
+
+        let aux_randomness = BinomialExtensionField::<BabyBear, 4>::from_basis_coefficients_slice(
+            [
+                BabyBear::new(1005),
+                BabyBear::new(10010),
+                BabyBear::new(10015),
+                BabyBear::new(10020),
+            ]
+            .as_ref(),
+        )
+        .unwrap();
+
+        let aux = gen_aux(&main_col, &aux_randomness);
+
+        check_constraints::<BabyBear, BinomialExtensionField<BabyBear, 4>, _>(
+            &air,
+            &main,
+            &Some(aux),
+            &aux_randomness.as_basis_coefficients_slice(),
+            &vec![BabyBear::new(len), BabyBear::new(1)],
         );
     }
 
@@ -328,7 +448,7 @@ mod tests {
     #[should_panic]
     fn test_incorrect_increment_logic() {
         // Row 2 does not equal row 1 + 1 → should fail on transition from row 1 to 2.
-        let air = RowLogicAir;
+        let air = RowLogicAir { with_aux: false };
         let values = vec![
             BabyBear::ONE,
             BabyBear::ONE, // Row 0
@@ -353,7 +473,7 @@ mod tests {
     #[should_panic]
     fn test_wrong_last_row_public_value() {
         // The transition logic is fine, but public value check fails at the last row.
-        let air = RowLogicAir;
+        let air = RowLogicAir { with_aux: false };
         let values = vec![
             BabyBear::ONE,
             BabyBear::ONE, // Row 0
@@ -380,7 +500,7 @@ mod tests {
         // A single-row matrix still performs a wraparound check with itself.
         // row[0] == row[0] + 1 ⇒ fails unless handled properly by transition logic.
         // Here: is_transition == false ⇒ so no assertions are enforced.
-        let air = RowLogicAir;
+        let air = RowLogicAir { with_aux: false };
         let values = vec![
             BabyBear::new(99),
             BabyBear::new(77), // Row 0

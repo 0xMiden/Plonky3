@@ -150,12 +150,10 @@ impl<SC: StarkGenericConfig> ExtensionBuilder for ProverConstraintFolder<'_, SC>
 }
 
 impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for ProverConstraintFolder<'a, SC> {
-    // type MP = EfAuxView<'a, SC>;
     type MP = RowMajorMatrixView<'a, PackedChallenge<SC>>;
     type RandomVar = PackedChallenge<SC>;
 
     fn permutation(&self) -> Self::MP {
-        // EfAuxView::new(self.aux)
         self.aux
     }
 
