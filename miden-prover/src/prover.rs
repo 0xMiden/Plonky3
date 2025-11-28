@@ -511,8 +511,6 @@ where
             let packed_randomness: Vec<PackedChallenge<SC>> =
                 randomness.iter().copied().map(Into::into).collect();
 
-            println!("packed randomness: {:?}", packed_randomness);
-
             let accumulator = PackedChallenge::<SC>::ZERO;
             let mut folder: ProverConstraintFolder<'_, SC> = ProverConstraintFolder {
                 main: main.as_view(),

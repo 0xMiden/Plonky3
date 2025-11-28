@@ -11,6 +11,7 @@ use p3_util::zip_eq::zip_eq;
 use tracing::{debug_span, instrument};
 
 use crate::symbolic_builder::get_log_quotient_degree;
+use crate::util::verifer_row_to_ext;
 use crate::{Domain, PcsError, Proof, StarkGenericConfig, Val, VerifierConstraintFolder};
 
 /// Recomposes the quotient polynomial from its chunks evaluated at a point.
@@ -103,8 +104,10 @@ where
     let aux_next_ext;
     let aux = match (aux_local, aux_next) {
         (Some(local), Some(next)) => {
-            aux_local_ext = row_to_ext::<SC>(local).ok_or(VerificationError::InvalidProofShape)?;
-            aux_next_ext = row_to_ext::<SC>(next).ok_or(VerificationError::InvalidProofShape)?;
+            aux_local_ext =
+                verifer_row_to_ext::<SC>(local).ok_or(VerificationError::InvalidProofShape)?;
+            aux_next_ext =
+                verifer_row_to_ext::<SC>(next).ok_or(VerificationError::InvalidProofShape)?;
 
             VerticalPair::new(
                 RowMajorMatrixView::new_row(&aux_local_ext),
@@ -141,25 +144,6 @@ where
     }
 
     Ok(())
-}
-
-// Helper: convert a flattened base-field row into EF elements.
-fn row_to_ext<SC: StarkGenericConfig>(row: &[SC::Challenge]) -> Option<Vec<SC::Challenge>> {
-    let dim = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
-    if row.len() % dim != 0 {
-        return None;
-    }
-
-    let mut out = Vec::with_capacity(row.len() / dim);
-    for chunk in row.chunks(dim) {
-        let mut acc = SC::Challenge::ZERO;
-        for (i, limb) in chunk.iter().enumerate() {
-            let basis = SC::Challenge::ith_basis_element(i).unwrap();
-            acc += basis * *limb;
-        }
-        out.push(acc);
-    }
-    Some(out)
 }
 
 /// Validates and commits the preprocessed trace if present.

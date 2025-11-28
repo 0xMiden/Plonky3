@@ -1,7 +1,7 @@
 use core::borrow::Borrow;
 
 use miden_air::{MidenAir, MidenAirBuilder};
-use miden_prover::{StarkConfig, StarkGenericConfig, prove, verify};
+use miden_prover::{StarkConfig, prove, verify};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
@@ -112,8 +112,6 @@ impl<F: Field, EF: ExtensionField<F>> MidenAir<F, EF> for FibPermAir<F, EF> {
             let t_next: AB::ExprEF = aux_next[0].clone().into();
             let w_next: AB::ExprEF = aux_next[1].clone().into();
             let s_next: AB::ExprEF = aux_next[2].clone().into();
-
-            println!("t_i {:?}", t_i);
 
             let r_expr = builder.permutation_randomness()[0].into();
 
@@ -242,121 +240,115 @@ fn test_public_value() {
     test_public_value_impl(1 << 3, 21, 2);
 }
 
-// #[test]
-// fn test_public_value_deg5() {
-//     test_public_value_impl_deg5(1 << 3, 21, 2);
-// }
+#[test]
+fn test_public_value_deg5() {
+    test_public_value_impl_deg5(1 << 3, 21, 2);
+}
 
-// #[test]
-// fn test_public_value_deg8() {
-//     test_public_value_impl_deg8(1 << 3, 21, 2);
-// }
+#[test]
+fn test_public_value_deg8() {
+    test_public_value_impl_deg8(1 << 3, 21, 2);
+}
 
-// // Degree-5 extension variant
-// fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
-//     use p3_commit::ExtensionMmcs;
-//     use p3_field::extension::BinomialExtensionField;
-//     use p3_fri::TwoAdicFriPcs;
-//     use p3_uni_stark::StarkConfig;
+// Degree-5 extension variant
+fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
+    use p3_commit::ExtensionMmcs;
+    use p3_field::extension::BinomialExtensionField;
+    use p3_fri::TwoAdicFriPcs;
+    use p3_uni_stark::StarkConfig;
 
-//     type Challenge5 = BinomialExtensionField<Val, 5>;
-//     type ChallengeMmcs5 = ExtensionMmcs<Val, Challenge5, ValMmcs>;
-//     type Pcs5 = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs5>;
-//     type MyConfig5 = StarkConfig<Pcs5, Challenge5, Challenger>;
+    type Challenge5 = BinomialExtensionField<Val, 5>;
+    type ChallengeMmcs5 = ExtensionMmcs<Val, Challenge5, ValMmcs>;
+    type Pcs5 = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs5>;
+    type MyConfig5 = StarkConfig<Pcs5, Challenge5, Challenger>;
 
-//     let mut rng = SmallRng::seed_from_u64(1);
-//     let perm = Perm::new_from_rng_128(&mut rng);
-//     let hash = MyHash::new(perm.clone());
-//     let compress = MyCompress::new(perm.clone());
-//     let val_mmcs = ValMmcs::new(hash, compress);
-//     let challenge_mmcs = ChallengeMmcs5::new(val_mmcs.clone());
-//     let dft = Dft::default();
-//     let trace = generate_trace_rows::<Val>(0, 1, n);
-//     let fri_params = create_test_fri_params(challenge_mmcs, log_final_poly_len);
-//     let pcs = Pcs5::new(dft, val_mmcs, fri_params);
-//     let challenger = Challenger::new(perm);
+    let mut rng = SmallRng::seed_from_u64(1);
+    let perm = Perm::new_from_rng_128(&mut rng);
+    let hash = MyHash::new(perm.clone());
+    let compress = MyCompress::new(perm.clone());
+    let val_mmcs = ValMmcs::new(hash, compress);
+    let challenge_mmcs = ChallengeMmcs5::new(val_mmcs.clone());
+    let dft = Dft::default();
+    let trace = generate_trace_rows::<Val>(0, 1, n);
+    let fri_params = create_test_fri_params(challenge_mmcs, log_final_poly_len);
+    let pcs = Pcs5::new(dft, val_mmcs, fri_params);
+    let challenger = Challenger::new(perm);
 
-//     let aux_width = 3 * 5; // three EF columns flattened
-//     let config =  MyConfig5::new(pcs, challenger);
-//     // let config = MyConfig5::new(pcs, challenger).with_aux_builder(
-//     //     1,
-//     //     aux_width,
-//     //     |main: &RowMajorMatrix<Val>, challenges: &[Challenge5]| {
-//     //         p3_uni_stark::generate_logup_trace::<Challenge5, _>(main, &challenges[0])
-//     //     },
-//     // );
-//     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
+    let config = MyConfig5::new(pcs, challenger);
+    let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
-//     let proof = prove(&config, &FibPermAir {}, &trace, &pis);
-//     verify(&config, &FibPermAir {}, &proof, &pis).expect("verification failed");
-// }
+    let mut air = FibPermAir::<BabyBear, BinomialExtensionField<BabyBear, 5>>::new();
+    air.with_aux_builder(|main: &RowMajorMatrix<Val>, challenges: &[Challenge5]| {
+        miden_prover::generate_logup_trace::<Challenge5, _>(main, &challenges[0])
+    });
 
-// // Degree-8 extension variant
-// fn test_public_value_impl_deg8(n: usize, x: u64, log_final_poly_len: usize) {
-//     use p3_commit::ExtensionMmcs;
-//     use p3_field::extension::BinomialExtensionField;
-//     use p3_fri::TwoAdicFriPcs;
-//     use p3_uni_stark::StarkConfig;
+    let proof = prove(&config, &air, &trace, &pis);
+    verify(&config, &air, &proof, &pis).expect("verification failed");
+}
 
-//     type Challenge8 = BinomialExtensionField<Val, 8>;
-//     type ChallengeMmcs8 = ExtensionMmcs<Val, Challenge8, ValMmcs>;
-//     type Pcs8 = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs8>;
-//     type MyConfig8 = StarkConfig<Pcs8, Challenge8, Challenger>;
+// Degree-8 extension variant
+fn test_public_value_impl_deg8(n: usize, x: u64, log_final_poly_len: usize) {
+    use p3_commit::ExtensionMmcs;
+    use p3_field::extension::BinomialExtensionField;
+    use p3_fri::TwoAdicFriPcs;
+    use p3_uni_stark::StarkConfig;
 
-//     let mut rng = SmallRng::seed_from_u64(1);
-//     let perm = Perm::new_from_rng_128(&mut rng);
-//     let hash = MyHash::new(perm.clone());
-//     let compress = MyCompress::new(perm.clone());
-//     let val_mmcs = ValMmcs::new(hash, compress);
-//     let challenge_mmcs = ChallengeMmcs8::new(val_mmcs.clone());
-//     let dft = Dft::default();
-//     let trace = generate_trace_rows::<Val>(0, 1, n);
-//     let fri_params = create_test_fri_params(challenge_mmcs, log_final_poly_len);
-//     let pcs = Pcs8::new(dft, val_mmcs, fri_params);
-//     let challenger = Challenger::new(perm);
+    type Challenge8 = BinomialExtensionField<Val, 8>;
+    type ChallengeMmcs8 = ExtensionMmcs<Val, Challenge8, ValMmcs>;
+    type Pcs8 = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs8>;
+    type MyConfig8 = StarkConfig<Pcs8, Challenge8, Challenger>;
 
-//     let aux_width = 3 * 8; // three EF columns flattened
-//     let config = MyConfig8::new(pcs, challenger).with_aux_builder(
-//         1,
-//         aux_width,
-//         |main: &RowMajorMatrix<Val>, challenges: &[Challenge8]| {
-//             p3_uni_stark::generate_logup_trace::<Challenge8, _>(main, &challenges[0])
-//         },
-//     );
-//     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
+    let mut rng = SmallRng::seed_from_u64(1);
+    let perm = Perm::new_from_rng_128(&mut rng);
+    let hash = MyHash::new(perm.clone());
+    let compress = MyCompress::new(perm.clone());
+    let val_mmcs = ValMmcs::new(hash, compress);
+    let challenge_mmcs = ChallengeMmcs8::new(val_mmcs.clone());
+    let dft = Dft::default();
+    let trace = generate_trace_rows::<Val>(0, 1, n);
+    let fri_params = create_test_fri_params(challenge_mmcs, log_final_poly_len);
+    let pcs = Pcs8::new(dft, val_mmcs, fri_params);
+    let challenger = Challenger::new(perm);
 
-//     let proof = prove(&config, &FibPermAir {}, trace.clone(), &pis);
-//     verify(&config, &FibPermAir {}, &proof, &pis).expect("verification failed");
-// }
+    let config = MyConfig8::new(pcs, challenger);
+    let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
 
-// #[cfg(debug_assertions)]
-// #[test]
-// #[should_panic(expected = "assertion `left == right` failed: constraints had nonzero value")]
-// fn test_incorrect_public_value() {
-//     use p3_uni_stark::StarkGenericConfig;
+    let mut air = FibPermAir::<BabyBear, BinomialExtensionField<BabyBear, 8>>::new();
+    air.with_aux_builder(|main: &RowMajorMatrix<Val>, challenges: &[Challenge8]| {
+        miden_prover::generate_logup_trace::<Challenge8, _>(main, &challenges[0])
+    });
 
-//     let mut rng = SmallRng::seed_from_u64(1);
-//     let perm = Perm::new_from_rng_128(&mut rng);
-//     let hash = MyHash::new(perm.clone());
-//     let compress = MyCompress::new(perm.clone());
-//     let val_mmcs = ValMmcs::new(hash, compress);
-//     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
-//     let dft = Dft::default();
-//     let fri_params = create_test_fri_params(challenge_mmcs, 1);
-//     let trace = generate_trace_rows::<Val>(0, 1, 1 << 3);
-//     let pcs = Pcs::new(dft, val_mmcs, fri_params);
-//     let challenger = Challenger::new(perm);
-//     let config = MyConfig::new(pcs, challenger).with_aux_builder(
-//         1,
-//         12,
-//         |main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
-//             p3_uni_stark::generate_logup_trace::<Challenge, _>(main, &challenges[0])
-//         },
-//     );
-//     let pis = vec![
-//         BabyBear::ZERO,
-//         BabyBear::ONE,
-//         BabyBear::from_u32(123_123), // incorrect result
-//     ];
-//     prove(&config, &FibPermAir {}, trace, &pis);
-// }
+    let proof = prove(&config, &air, &trace, &pis);
+    verify(&config, &air, &proof, &pis).expect("verification failed");
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "Constraint failed")]
+fn test_incorrect_public_value() {
+    let mut rng = SmallRng::seed_from_u64(1);
+    let perm = Perm::new_from_rng_128(&mut rng);
+    let hash = MyHash::new(perm.clone());
+    let compress = MyCompress::new(perm.clone());
+    let val_mmcs = ValMmcs::new(hash, compress);
+    let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
+    let dft = Dft::default();
+    let fri_params = create_test_fri_params(challenge_mmcs, 1);
+    let trace = generate_trace_rows::<Val>(0, 1, 1 << 3);
+    let pcs = Pcs::new(dft, val_mmcs, fri_params);
+    let challenger = Challenger::new(perm);
+
+    let config = MyConfig::new(pcs, challenger);
+    let pis = vec![
+        BabyBear::ZERO,
+        BabyBear::ONE,
+        BabyBear::from_u32(123_123), // incorrect result
+    ];
+
+    let mut air = FibPermAir::new();
+    air.with_aux_builder(|main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
+        miden_prover::generate_logup_trace::<Challenge, _>(main, &challenges[0])
+    });
+    let proof = prove(&config, &air, &trace, &pis);
+    verify(&config, &air, &proof, &pis).expect("verification failed");
+}

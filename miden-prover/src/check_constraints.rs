@@ -8,6 +8,8 @@ use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_matrix::stack::ViewPair;
 use tracing::instrument;
 
+use crate::util::prover_row_to_ext;
+
 /// Runs constraint checks using a given AIR definition and trace matrix.
 ///
 /// Iterates over every row in `main`, providing both the current and next row
@@ -21,6 +23,7 @@ use tracing::instrument;
 /// - `aux_randomness`: The randomness values that are used to generate `aux` trace
 /// - `public_values`: Public values provided to the builder
 #[instrument(name = "check constraints", skip_all)]
+#[allow(dead_code)]
 pub(crate) fn check_constraints<F, EF, A>(
     air: &A,
     main: &RowMajorMatrix<F>,
@@ -55,10 +58,10 @@ pub(crate) fn check_constraints<F, EF, A>(
         #[allow(clippy::option_if_let_else)]
         let aux = if let Some(aux_matrix) = aux_trace.as_ref() {
             let aux_local = unsafe { aux_matrix.row_slice_unchecked(row_index) };
-            aux_local_ext = row_to_ext::<F, EF>(&aux_local);
+            aux_local_ext = prover_row_to_ext::<F, EF>(&aux_local);
 
             let aux_next = unsafe { aux_matrix.row_slice_unchecked(row_index_next) };
-            aux_next_ext = row_to_ext::<F, EF>(&aux_next);
+            aux_next_ext = prover_row_to_ext::<F, EF>(&aux_next);
 
             p3_matrix::stack::VerticalPair::new(
                 RowMajorMatrixView::new_row(&aux_local_ext),
@@ -104,17 +107,6 @@ pub(crate) fn check_constraints<F, EF, A>(
 
         air.eval(&mut builder);
     });
-}
-
-/// Helper: convert a flattened base-field row (slice of `F`) into a Vec<EF>
-fn row_to_ext<F, EF>(row: &[F]) -> Vec<EF>
-where
-    F: Field,
-    EF: ExtensionField<F> + p3_field::BasedVectorSpace<F>,
-{
-    row.chunks(EF::DIMENSION)
-        .map(|chunk| EF::from_basis_coefficients_slice(chunk).unwrap())
-        .collect()
 }
 
 /// A builder that runs constraint assertions during testing.

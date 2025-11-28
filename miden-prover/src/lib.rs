@@ -7,6 +7,7 @@ mod prover;
 mod symbolic_builder;
 mod symbolic_expression;
 mod symbolic_variable;
+mod util;
 mod verifier;
 
 pub use check_constraints::*;

@@ -22,6 +22,7 @@ use tracing::instrument;
 /// - `aux_randomness`: The randomness values that are used to generate `aux` trace
 /// - `public_values`: Public values provided to the builder
 #[instrument(name = "check constraints", skip_all)]
+#[allow(dead_code)]
 pub(crate) fn check_constraints<F, EF, A>(
     air: &A,
     main: &RowMajorMatrix<F>,
@@ -108,6 +109,7 @@ pub(crate) fn check_constraints<F, EF, A>(
 }
 
 /// Helper: convert a flattened base-field row (slice of `F`) into a Vec<EF>
+#[allow(dead_code)]
 fn row_to_ext<F, EF>(row: &[F]) -> Vec<EF>
 where
     F: Field,

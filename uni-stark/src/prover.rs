@@ -13,10 +13,11 @@ use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{
-    Commitments, DebugConstraintBuilder, Domain, OpenedValues, PackedChallenge, PackedVal, Proof,
-    ProverConstraintFolder, StarkGenericConfig, SymbolicAirBuilder, Val, check_constraints,
-    get_log_quotient_degree, get_symbolic_constraints,
+    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
+    StarkGenericConfig, SymbolicAirBuilder, Val, get_log_quotient_degree, get_symbolic_constraints,
 };
+#[cfg(debug_assertions)]
+use crate::{DebugConstraintBuilder, check_constraints};
 
 /// Commits the preprocessed trace if present.
 /// Returns the commitment hash and prover data (available iff preprocessed is Some).
