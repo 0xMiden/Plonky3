@@ -50,6 +50,7 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
     type VarEF = PackedChallenge<SC>;
     type MP = RowMajorMatrixView<'a, PackedChallenge<SC>>;
     type RandomVar = PackedChallenge<SC>;
+    type PeriodicVal = SC::Challenge;
 
     #[inline]
     fn main(&self) -> Self::M {
@@ -112,6 +113,14 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         self.packed_randomness.as_slice()
     }
+
+    fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {
+        unimplemented!()
+    }
+
+    fn periodic_evals(&self) -> &[Self::PeriodicVal] {
+        unimplemented!()
+    }
 }
 
 /// Handles constraint verification for the verifier in a STARK system.
@@ -153,6 +162,7 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for VerifierConstraintFolder<'a
     type VarEF = SC::Challenge;
     type MP = ViewPair<'a, SC::Challenge>;
     type RandomVar = SC::Challenge;
+    type PeriodicVal = SC::Challenge;
 
     #[inline]
     fn main(&self) -> Self::M {
@@ -210,5 +220,13 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for VerifierConstraintFolder<'a
     #[inline]
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         self.randomness
+    }
+
+    fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {
+        unimplemented!()
+    }
+
+    fn periodic_evals(&self) -> &[Self::PeriodicVal] {
+        unimplemented!()
     }
 }

@@ -65,8 +65,7 @@ pub trait MidenAir<F, EF>: Sync {
         &self,
         _main: &RowMajorMatrix<F>,
         _challenges: &[EF],
-    ) -> Option<RowMajorMatrix<EF>>
-    {
+    ) -> Option<RowMajorMatrix<F>> {
         None
     }
 
@@ -75,7 +74,7 @@ pub trait MidenAir<F, EF>: Sync {
     /// An aux builder takes in a main matrix and a randomness, and generate a aux matrix.
     fn with_aux_builder<Builder>(&mut self, _builder: Builder)
     where
-        Builder: Fn(&RowMajorMatrix<F>, &[EF]) -> RowMajorMatrix<EF> + Send + Sync + 'static,
+        Builder: Fn(&RowMajorMatrix<F>, &[EF]) -> RowMajorMatrix<F> + Send + Sync + 'static,
     {
         // default: do nothing
     }

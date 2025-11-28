@@ -150,6 +150,7 @@ where
     type VarEF = EF;
     type MP = ViewPair<'a, EF>;
     type RandomVar = EF;
+    type PeriodicVal = EF;
 
     fn main(&self) -> Self::M {
         self.main
@@ -215,6 +216,14 @@ where
 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         self.aux_randomness
+    }
+
+    fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {
+        unimplemented!()
+    }
+
+    fn periodic_evals(&self) -> &[Self::PeriodicVal] {
+        unimplemented!()
     }
 }
 

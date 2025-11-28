@@ -165,6 +165,7 @@ impl<F: Field> MidenAirBuilder for SymbolicAirBuilder<F> {
     type EF = F;
     type ExprEF = SymbolicExpression<F>;
     type VarEF = SymbolicVariable<F>;
+    type PeriodicVal = SymbolicVariable<F>;
 
     type PublicVar = SymbolicVariable<F>;
 
@@ -205,6 +206,10 @@ impl<F: Field> MidenAirBuilder for SymbolicAirBuilder<F> {
         &self.aux_randomness
     }
 
+    fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {
+        unimplemented!()
+    }
+
     fn public_values(&self) -> &[Self::PublicVar] {
         &self.public_values
     }
@@ -218,6 +223,10 @@ impl<F: Field> MidenAirBuilder for SymbolicAirBuilder<F> {
 
     fn preprocessed(&self) -> Self::M {
         self.preprocessed.clone()
+    }
+
+    fn periodic_evals(&self) -> &[<Self as MidenAirBuilder>::PeriodicVal] {
+        unimplemented!()
     }
 }
 
