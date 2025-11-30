@@ -229,6 +229,11 @@ where
         + Sync,
     [PD::Value; DIGEST_ELEMS]: Serialize + for<'de> Deserialize<'de>,
 {
+    const ROW_PADDING: usize = <H as StatefulHasher<
+        PF::Value,
+        [PD::Value; WIDTH],
+        [PD::Value; DIGEST_ELEMS],
+    >>::PADDING_WIDTH;
     type ProverData<M> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST_ELEMS>;
     type Commitment = Hash<PF::Value, PD::Value, DIGEST_ELEMS>;
     type Proof = Vec<[PD::Value; DIGEST_ELEMS]>;
