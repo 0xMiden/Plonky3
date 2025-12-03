@@ -90,6 +90,9 @@ where
 {
     let sels = trace_domain.selectors_at_point(zeta);
 
+    // =====================================
+    // Periodic entires
+    // =====================================
     // Compute periodic values at zeta by interpolating the full trace-domain sequence.
     let periodic_table = air.periodic_table();
     let trace_height = trace_domain.size();
@@ -133,11 +136,17 @@ where
         )
     };
 
+    // =====================================
+    // Main trace
+    // =====================================
     let main = VerticalPair::new(
         RowMajorMatrixView::new_row(trace_local),
         RowMajorMatrixView::new_row(trace_next),
     );
 
+    // =====================================
+    // Preprocessed trace
+    // =====================================
     let preprocessed = match (preprocessed_local, preprocessed_next) {
         (Some(local), Some(next)) => Some(VerticalPair::new(
             RowMajorMatrixView::new_row(local),
@@ -146,6 +155,9 @@ where
         _ => None,
     };
 
+    // =====================================
+    // Aux trace
+    // =====================================
     // Aux trace is committed as flattened base limbs. Recompose into EF values.
     let aux_local_ext;
     let aux_next_ext;

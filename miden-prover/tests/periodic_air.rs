@@ -86,9 +86,6 @@ impl<F: Field, EF: ExtensionField<F>> MidenAir<F, EF> for FibonacciPeriodicAir {
         let next_selector_expr: AB::Expr = next.selector.clone().into();
         let next_selector_ef: AB::ExprEF = next_selector_expr.into();
         let current_selector_ef = selector_ef.clone();
-
-        // Constraint: next_selector = 1 - current_selector
-        // This enforces the alternating 0→1→0→1 pattern
         builder
             .when_transition()
             .assert_eq_ext(next_selector_ef, AB::ExprEF::ONE - current_selector_ef);
