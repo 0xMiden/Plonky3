@@ -2,9 +2,13 @@ use itertools::Itertools;
 use miden_air::MidenAir;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
-use p3_field::{BasedVectorSpace, PackedValue, PrimeCharacteristicRing};
+use p3_field::{
+    BasedVectorSpace, PackedFieldExtension, PackedValue, PrimeCharacteristicRing, TwoAdicField,
+    batch_multiplicative_inverse,
+};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
+use p3_interpolation::interpolate_coset_with_precomputation;
 use p3_maybe_rayon::prelude::*;
 use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
@@ -43,6 +47,7 @@ pub fn prove<SC, A>(
 where
     SC: StarkGenericConfig,
     A: MidenAir<Val<SC>, SC::Challenge>,
+    Val<SC>: TwoAdicField,
 {
     // Compute the height `N = 2^n` and `log_2(height)`, `n`, of the trace.
     let degree = trace.height();
@@ -429,6 +434,7 @@ where
     SC: StarkGenericConfig,
     A: MidenAir<Val<SC>, SC::Challenge>,
     Mat: Matrix<Val<SC>> + Sync,
+    Val<SC>: TwoAdicField,
 {
     let quotient_size = quotient_domain.size();
     let width = trace_on_quotient_domain.width();
@@ -437,6 +443,80 @@ where
 
     let qdb = log2_strict_usize(quotient_domain.size()) - log2_strict_usize(trace_domain.size());
     let next_step = 1 << qdb;
+
+    // Get periodic table from AIR
+    let periodic_table = air.periodic_table();
+    let trace_height = trace_domain.size();
+
+    // Collect trace-domain points.
+    let trace_points: Vec<Val<SC>> = {
+        let mut pts = Vec::with_capacity(trace_height);
+        let mut point = trace_domain.first_point();
+        pts.push(point);
+        for _ in 1..trace_height {
+            point = trace_domain
+                .next_point(point)
+                .expect("trace_domain should yield enough points");
+            pts.push(point);
+        }
+        pts
+    };
+
+    // Build full periodic evaluations over the trace domain.
+    let periodic_trace = if periodic_table.is_empty() {
+        None
+    } else {
+        let num_cols = periodic_table.len();
+        let mut values = Vec::with_capacity(trace_height * num_cols);
+        for row in 0..trace_height {
+            for col in periodic_table.iter() {
+                values.push(col[row % col.len()]);
+            }
+        }
+        Some(RowMajorMatrix::new(values, num_cols))
+    };
+
+    // Precompute the quotient-domain points for easy lookups.
+    let quotient_points: Vec<SC::Challenge> = {
+        let mut pts = Vec::with_capacity(quotient_size);
+        let mut point = SC::Challenge::from(quotient_domain.first_point());
+        pts.push(point);
+        for _ in 1..quotient_size {
+            point = quotient_domain
+                .next_point(point)
+                .expect("quotient_domain should yield enough points");
+            pts.push(point);
+        }
+        pts
+    };
+
+    // Precompute periodic evaluations on the quotient domain by interpolating the trace-domain values.
+    let periodic_on_quotient: Option<Vec<Vec<SC::Challenge>>> = periodic_trace.as_ref().map(|matrix| {
+        let shift = trace_domain.first_point();
+        let mut evals = vec![Vec::with_capacity(quotient_size); matrix.width()];
+
+        for &z in &quotient_points {
+            let diffs: Vec<_> = trace_points
+                .iter()
+                .map(|&x| z - SC::Challenge::from(x))
+                .collect();
+            let diff_invs = batch_multiplicative_inverse(&diffs);
+
+            let values_at_z = interpolate_coset_with_precomputation(
+                matrix,
+                shift,
+                z,
+                &trace_points,
+                &diff_invs,
+            );
+
+            for (col_idx, value) in values_at_z.into_iter().enumerate() {
+                evals[col_idx].push(value);
+            }
+        }
+
+        evals
+    });
 
     // We take PackedVal::<SC>::WIDTH worth of values at a time from a quotient_size slice, so we need to
     // pad with default values in the case where quotient_size is smaller than PackedVal::<SC>::WIDTH.
@@ -468,7 +548,7 @@ where
             let is_first_row = *PackedVal::<SC>::from_slice(&sels.is_first_row[i_range.clone()]);
             let is_last_row = *PackedVal::<SC>::from_slice(&sels.is_last_row[i_range.clone()]);
             let is_transition = *PackedVal::<SC>::from_slice(&sels.is_transition[i_range.clone()]);
-            let inv_vanishing = *PackedVal::<SC>::from_slice(&sels.inv_vanishing[i_range]);
+            let inv_vanishing = *PackedVal::<SC>::from_slice(&sels.inv_vanishing[i_range.clone()]);
 
             let main = RowMajorMatrix::new(
                 trace_on_quotient_domain
@@ -511,12 +591,26 @@ where
             let packed_randomness: Vec<PackedChallenge<SC>> =
                 randomness.iter().copied().map(Into::into).collect();
 
+            // Grab precomputed periodic evaluations for this packed chunk.
+            let periodic_values: Vec<PackedChallenge<SC>> = periodic_on_quotient
+                .as_ref()
+                .map(|cols| {
+                    cols.iter()
+                        .map(|values| {
+                            let slice = &values[i_range.clone()];
+                            PackedChallenge::<SC>::from_ext_slice(slice)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
             let accumulator = PackedChallenge::<SC>::ZERO;
             let mut folder: ProverConstraintFolder<'_, SC> = ProverConstraintFolder {
                 main: main.as_view(),
                 aux: aux.as_view(),
                 preprocessed: preprocessed.as_ref().map(|m| m.as_view()),
                 public_values,
+                periodic_values: &periodic_values,
                 is_first_row,
                 is_last_row,
                 is_transition,

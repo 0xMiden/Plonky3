@@ -4,8 +4,11 @@ use itertools::Itertools;
 use miden_air::MidenAir;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
-use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing};
-use p3_matrix::dense::RowMajorMatrixView;
+use p3_field::{
+    BasedVectorSpace, Field, PrimeCharacteristicRing, TwoAdicField, batch_multiplicative_inverse,
+};
+use p3_interpolation::interpolate_coset_with_precomputation;
+use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_matrix::stack::VerticalPair;
 use p3_util::zip_eq::zip_eq;
 use tracing::{debug_span, instrument};
@@ -83,8 +86,52 @@ pub fn verify_constraints<SC, A, PcsErr>(
 where
     SC: StarkGenericConfig,
     A: MidenAir<Val<SC>, SC::Challenge>,
+    Val<SC>: TwoAdicField,
 {
     let sels = trace_domain.selectors_at_point(zeta);
+
+    // Compute periodic values at zeta by interpolating the full trace-domain sequence.
+    let periodic_table = air.periodic_table();
+    let trace_height = trace_domain.size();
+    let periodic_values: Vec<SC::Challenge> = if periodic_table.is_empty() {
+        Vec::new()
+    } else {
+        let num_cols = periodic_table.len();
+
+        // Collect trace-domain points.
+        let mut trace_points = Vec::with_capacity(trace_height);
+        let mut point = trace_domain.first_point();
+        trace_points.push(point);
+        for _ in 1..trace_height {
+            point = trace_domain
+                .next_point(point)
+                .expect("trace_domain should yield enough points");
+            trace_points.push(point);
+        }
+
+        // Build the periodic evaluations over the trace domain.
+        let mut values = Vec::with_capacity(trace_height * num_cols);
+        for row in 0..trace_height {
+            for col in periodic_table.iter() {
+                values.push(col[row % col.len()]);
+            }
+        }
+        let periodic_trace = RowMajorMatrix::new(values, num_cols);
+
+        let diffs: Vec<_> = trace_points
+            .iter()
+            .map(|&x| zeta - SC::Challenge::from(x))
+            .collect();
+        let diff_invs = batch_multiplicative_inverse(&diffs);
+
+        interpolate_coset_with_precomputation(
+            &periodic_trace,
+            trace_domain.first_point(),
+            zeta,
+            &trace_points,
+            &diff_invs,
+        )
+    };
 
     let main = VerticalPair::new(
         RowMajorMatrixView::new_row(trace_local),
@@ -129,6 +176,7 @@ where
         randomness,
         preprocessed,
         public_values,
+        periodic_values: &periodic_values,
         is_first_row: sels.is_first_row,
         is_last_row: sels.is_last_row,
         is_transition: sels.is_transition,
@@ -165,6 +213,7 @@ fn process_preprocessed_trace<SC, A>(
 where
     SC: StarkGenericConfig,
     A: MidenAir<Val<SC>, SC::Challenge>,
+    Val<SC>: TwoAdicField,
 {
     // If verifier asked for preprocessed trace, then proof should have it
     let preprocessed = air.preprocessed_trace();
@@ -208,6 +257,7 @@ pub fn verify<SC, A>(
 where
     SC: StarkGenericConfig,
     A: MidenAir<Val<SC>, SC::Challenge>,
+    Val<SC>: TwoAdicField,
 {
     let Proof {
         commitments,

@@ -75,12 +75,14 @@ where
     EF: ExtensionField<F>,
     A: MidenAir<F, EF>,
 {
-    let mut builder = SymbolicAirBuilder::<F>::new(
+    let num_periodic_values = air.periodic_table().len();
+    let mut builder = SymbolicAirBuilder::<F>::new_with_periodic(
         preprocessed_width,
         air.width(),
         aux_width,
         num_randomness,
         num_public_values,
+        num_periodic_values,
     );
     air.eval(&mut builder);
     builder.constraints()
@@ -95,6 +97,7 @@ pub struct SymbolicAirBuilder<F: Field> {
     aux: Option<RowMajorMatrix<SymbolicVariable<F>>>,
     aux_randomness: Vec<SymbolicVariable<F>>,
     public_values: Vec<SymbolicVariable<F>>,
+    periodic_values: Vec<SymbolicVariable<F>>,
     constraints: Vec<SymbolicExpression<F>>,
 }
 
@@ -105,6 +108,24 @@ impl<F: Field> SymbolicAirBuilder<F> {
         aux_width: usize,
         num_randomness: usize,
         num_public_values: usize,
+    ) -> Self {
+        Self::new_with_periodic(
+            preprocessed_width,
+            width,
+            aux_width,
+            num_randomness,
+            num_public_values,
+            0,
+        )
+    }
+
+    pub fn new_with_periodic(
+        preprocessed_width: usize,
+        width: usize,
+        aux_width: usize,
+        num_randomness: usize,
+        num_public_values: usize,
+        num_periodic_values: usize,
     ) -> Self {
         let prep_values = [0, 1]
             .into_iter()
@@ -135,12 +156,16 @@ impl<F: Field> SymbolicAirBuilder<F> {
         let public_values = (0..num_public_values)
             .map(move |index| SymbolicVariable::new(Entry::Public, index))
             .collect();
+        let periodic_values = (0..num_periodic_values)
+            .map(move |index| SymbolicVariable::new(Entry::Periodic, index))
+            .collect();
         Self {
             preprocessed: RowMajorMatrix::new(prep_values, preprocessed_width),
             main: RowMajorMatrix::new(main_values, width),
             aux,
             aux_randomness: randomness,
             public_values,
+            periodic_values,
             constraints: vec![],
             // _phantom: std::marker::PhantomData,
         }
@@ -226,7 +251,7 @@ impl<F: Field> MidenAirBuilder for SymbolicAirBuilder<F> {
     }
 
     fn periodic_evals(&self) -> &[<Self as MidenAirBuilder>::PeriodicVal] {
-        unimplemented!()
+        &self.periodic_values
     }
 }
 
