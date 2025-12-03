@@ -16,7 +16,7 @@ where
 }
 
 // Helper: convert a flattened base-field row into EF elements.
-pub(crate) fn verifer_row_to_ext<SC: StarkGenericConfig>(
+pub(crate) fn verifier_row_to_ext<SC: StarkGenericConfig>(
     row: &[SC::Challenge],
 ) -> Option<Vec<SC::Challenge>> {
     let dim = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;

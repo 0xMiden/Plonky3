@@ -61,6 +61,7 @@ pub trait MidenAir<F, EF>: Sync {
 
     /// Build an aux trace (EF-based) given the main trace and EF challenges.
     /// Return None to indicate no aux or to fall back to legacy behavior.
+    /// The output is a matrix of EF elements, flattened to a matrix of F elements.
     fn build_aux_trace(
         &self,
         _main: &RowMajorMatrix<F>,
