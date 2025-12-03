@@ -120,7 +120,9 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
         unimplemented!()
     }
 
-    fn periodic_evals(&self) -> &[Self::PeriodicVal] { self.periodic_values }
+    fn periodic_evals(&self) -> &[Self::PeriodicVal] {
+        self.periodic_values
+    }
 }
 
 /// Handles constraint verification for the verifier in a STARK system.

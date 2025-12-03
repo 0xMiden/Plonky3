@@ -6,9 +6,9 @@ use p3_field::{
     BasedVectorSpace, PackedFieldExtension, PackedValue, PrimeCharacteristicRing, TwoAdicField,
     batch_multiplicative_inverse,
 };
+use p3_interpolation::interpolate_coset_with_precomputation;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_interpolation::interpolate_coset_with_precomputation;
 use p3_maybe_rayon::prelude::*;
 use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
@@ -444,7 +444,12 @@ where
     let qdb = log2_strict_usize(quotient_domain.size()) - log2_strict_usize(trace_domain.size());
     let next_step = 1 << qdb;
 
-    // Get periodic table from AIR
+    // =====================================
+    // Periodic entries section
+    // =====================================
+    // Get periodic table from AIR. Periodic columns are derived solely from
+    // `periodic_table()` (never committed) and behave like degree-0 constants
+    // shared by prover and verifier.
     let periodic_table = air.periodic_table();
     let trace_height = trace_domain.size();
 
@@ -491,33 +496,37 @@ where
     };
 
     // Precompute periodic evaluations on the quotient domain by interpolating the trace-domain values.
-    let periodic_on_quotient: Option<Vec<Vec<SC::Challenge>>> = periodic_trace.as_ref().map(|matrix| {
-        let shift = trace_domain.first_point();
-        let mut evals = vec![Vec::with_capacity(quotient_size); matrix.width()];
+    let periodic_on_quotient: Option<Vec<Vec<SC::Challenge>>> =
+        periodic_trace.as_ref().map(|matrix| {
+            let shift = trace_domain.first_point();
+            let mut evals = vec![Vec::with_capacity(quotient_size); matrix.width()];
 
-        for &z in &quotient_points {
-            let diffs: Vec<_> = trace_points
-                .iter()
-                .map(|&x| z - SC::Challenge::from(x))
-                .collect();
-            let diff_invs = batch_multiplicative_inverse(&diffs);
+            for &z in &quotient_points {
+                let diffs: Vec<_> = trace_points
+                    .iter()
+                    .map(|&x| z - SC::Challenge::from(x))
+                    .collect();
+                let diff_invs = batch_multiplicative_inverse(&diffs);
 
-            let values_at_z = interpolate_coset_with_precomputation(
-                matrix,
-                shift,
-                z,
-                &trace_points,
-                &diff_invs,
-            );
+                let values_at_z = interpolate_coset_with_precomputation(
+                    matrix,
+                    shift,
+                    z,
+                    &trace_points,
+                    &diff_invs,
+                );
 
-            for (col_idx, value) in values_at_z.into_iter().enumerate() {
-                evals[col_idx].push(value);
+                for (col_idx, value) in values_at_z.into_iter().enumerate() {
+                    evals[col_idx].push(value);
+                }
             }
-        }
 
-        evals
-    });
+            evals
+        });
 
+    // =====================================
+    // normal eval section
+    // =====================================
     // We take PackedVal::<SC>::WIDTH worth of values at a time from a quotient_size slice, so we need to
     // pad with default values in the case where quotient_size is smaller than PackedVal::<SC>::WIDTH.
     for _ in quotient_size..PackedVal::<SC>::WIDTH {

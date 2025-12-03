@@ -91,7 +91,6 @@ where
 /// An `AirBuilder` for evaluating constraints symbolically, and recording them for later use.
 #[derive(Debug)]
 pub struct SymbolicAirBuilder<F: Field> {
-    // pub struct SymbolicAirBuilder<F: Field, EF: ExtensionField<F>> {
     preprocessed: RowMajorMatrix<SymbolicVariable<F>>,
     main: RowMajorMatrix<SymbolicVariable<F>>,
     aux: Option<RowMajorMatrix<SymbolicVariable<F>>>,
@@ -167,7 +166,6 @@ impl<F: Field> SymbolicAirBuilder<F> {
             public_values,
             periodic_values,
             constraints: vec![],
-            // _phantom: std::marker::PhantomData,
         }
     }
 
