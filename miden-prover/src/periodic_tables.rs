@@ -42,7 +42,7 @@
 //!
 //! # Functions
 //!
-//! - [`compute_periodic_on_quotient`]: Evaluates periodic columns over all quotient domain points.
+//! - [`compute_periodic_on_quotient_eval_domain`]: Evaluates periodic columns over all quotient domain points.
 //!   Called by the prover during quotient polynomial computation.
 //! - [`evaluate_periodic_at_point`]: Evaluates periodic columns at a single challenge point.
 //!   Called by the verifier to check constraint satisfaction.
@@ -80,7 +80,7 @@ use p3_util::log2_strict_usize;
 /// `Some(Vec<Vec<EF>>)` where the outer vector corresponds to periodic columns
 /// and the inner vector contains evaluations over all quotient points. Returns `None`
 /// if the periodic table is empty.
-pub(crate) fn compute_periodic_on_quotient<F, EF>(
+pub(crate) fn compute_periodic_on_quotient_eval_domain<F, EF>(
     periodic_table: Vec<Vec<F>>,
     trace_domain: impl PolynomialSpace<Val = F>,
     quotient_points: &[EF],
@@ -94,7 +94,7 @@ where
     }
 
     let trace_height = trace_domain.size();
-    let log_trace_height = log2_strict_usize(trace_height); // panics if trace_height is not a power of 2
+    let log_trace_height = log2_strict_usize(trace_height);
     let quotient_size = quotient_points.len();
 
     // Undo the trace-domain shift to map points to the unshifted subgroup via multiplying shift_inv.
@@ -106,14 +106,11 @@ where
     // Allocate output slots per periodic column; filled group by group below.
     let mut evals = vec![Vec::new(); periodic_table.len()];
 
-    // first, let's group the columns of same length together.
-    // they share a same subgroup.
+    // first, let's group the columns of same length together as they share a same subgroup.
     for (idx, col) in periodic_table.into_iter().enumerate() {
-        if col.is_empty() {
-            // Question: prob we should panic here? Is there a case where any column is empty?
-            evals[idx] = vec![EF::ZERO; quotient_size];
-            continue;
-        }
+        // we prohibit defining empty periodic columns
+        // The check for this should happen much earlier e.g., when defining the AIR
+        assert!(!col.is_empty());
 
         debug_assert!(
             trace_height.is_multiple_of(col.len()),
@@ -147,9 +144,9 @@ where
         let subgroup_matrix = RowMajorMatrix::new(subgroup_values, num_cols);
 
         let mut group_evals = vec![Vec::with_capacity(quotient_size); num_cols];
-        for &z in quotient_points {
-            let unshifted = z * EF::from(shift_inv);
-            let y = unshifted.exp_power_of_2(rate_bits); // y = (z / shift)^{trace_height / period}
+        for &x in quotient_points {
+            let unshifted = x * EF::from(shift_inv);
+            let y = unshifted.exp_power_of_2(rate_bits); // y = (x / shift)^{trace_height / period}
             let diffs: Vec<_> = subgroup.iter().map(|&g| y - EF::from(g)).collect();
             let diff_invs = batch_multiplicative_inverse(&diffs);
 
@@ -217,7 +214,7 @@ where
     }
 
     let trace_height = trace_domain.size();
-    let log_trace_height = log2_strict_usize(trace_height); // panics if trace_height is not a power of 2
+    let log_trace_height = log2_strict_usize(trace_height);
     // Multiplier to move into the unshifted subgroup.
     let shift_inv = trace_domain.first_point().inverse();
     let unshifted_zeta = zeta * EF::from(shift_inv);
@@ -277,10 +274,10 @@ mod tests {
     type Val = Goldilocks;
     type Challenge = BinomialExtensionField<Val, 2>;
 
-    /// Test that compute_periodic_on_quotient produces the same results as the naive method
+    /// Test that compute_periodic_on_quotient_eval_domain produces the same results as the naive method
     /// where we unpack the periodic table into a full column and do interpolation for the whole column
     #[test]
-    fn test_compute_periodic_on_quotient_correctness() {
+    fn test_compute_periodic_on_quotient_eval_domain_correctness() {
         // Test parameters
         let trace_height = 16; // Must be a power of 2
         let log_quotient_degree = 2;
@@ -330,8 +327,8 @@ mod tests {
             pts
         };
 
-        // Method 1: Optimized method (compute_periodic_on_quotient)
-        let optimized_result = compute_periodic_on_quotient::<Val, Challenge>(
+        // Method 1: Optimized method (compute_periodic_on_quotient_eval_domain)
+        let optimized_result = compute_periodic_on_quotient_eval_domain::<Val, Challenge>(
             periodic_table.clone(),
             trace_domain,
             &quotient_points,
@@ -372,7 +369,7 @@ mod tests {
 
     /// Test with edge case: single period equals trace height
     #[test]
-    fn test_compute_periodic_on_quotient_full_period() {
+    fn test_compute_periodic_on_quotient_eval_domain_full_period() {
         let trace_height = 8;
         let log_quotient_degree = 1;
         let quotient_size = trace_height << log_quotient_degree;
@@ -407,7 +404,7 @@ mod tests {
             pts
         };
 
-        let optimized_result = compute_periodic_on_quotient::<Val, Challenge>(
+        let optimized_result = compute_periodic_on_quotient_eval_domain::<Val, Challenge>(
             periodic_table.clone(),
             trace_domain,
             &quotient_points,
