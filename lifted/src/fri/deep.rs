@@ -83,8 +83,8 @@ use core::marker::PhantomData;
 
 use p3_field::coset::TwoAdicMultiplicativeCoset;
 use p3_field::{
-    BasedVectorSpace, ExtensionField, Field, PackedFieldExtension, PackedValue, TwoAdicField,
-    batch_multiplicative_inverse, dot_product, scale_slice_in_place_single_core,
+    ExtensionField, Field, PackedFieldExtension, PackedValue, TwoAdicField,
+    batch_multiplicative_inverse, scale_slice_in_place_single_core,
 };
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
@@ -121,7 +121,6 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
         let log_d = log2_strict_usize(d);
         let n = d << log_blowup;
         let log_n = log2_strict_usize(n);
-        let w = F::Packing::WIDTH;
 
         // Coset gK in bit-reversed order. This ensures that
         // - gK[2i+1] = -gK[2i]
@@ -142,45 +141,29 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
 
         // q(X) = 1 / (z - X) evaluated over gK
         let point_quotient = {
-            let mut diffs = EF::zero_vec(n);
-
-            if d < w {
-                diffs
-                    .iter_mut()
-                    .zip(&coset_points)
-                    .for_each(|(diff_pt, x)| {
-                        *diff_pt = point - *x;
-                    });
-            } else {
-                let point_packed = EF::ExtensionPacking::from(point);
-                diffs
-                    .par_chunks_exact_mut(w)
-                    .zip(coset_points.par_chunks_exact(w))
-                    .for_each(|(diff_chunk, coset_chunk)| {
-                        let coset_point_packed = F::Packing::from_slice(coset_chunk);
-                        let diff_packed = point_packed - *coset_point_packed;
-                        diff_packed.to_ext_slice(diff_chunk);
-                    });
-            }
+            let diffs: Vec<EF> = coset_points.par_iter().map(|&x| point - x).collect();
             batch_multiplicative_inverse(&diffs)
         };
 
         // w_{gH, i}(z) = w_{H,i}(z/g) = h^i / ( (z/g) - h^i ) = gh^i / (z - gh^i)
         // Reuse the point quotient evaluations since gH = gK[..d] in bit-reversed order.
-        let top_weights: Vec<EF> = coset_points
-            .into_par_iter()
+        let top_weights: Vec<EF> = coset_points[..d]
+            .par_iter()
             .zip(point_quotient[..d].par_iter())
-            .map(|(k, &inv)| EF::from(k) * inv)
+            .map(|(&k, &inv)| inv * k)
             .collect();
 
         // For each degree bound d' < d (powers of 2), let r = d/d' be the shrinking factor
         // get the weights for evaluating f(z^r) over (gH)^r
         let barycentric_weights: LinearMap<usize, Vec<EF>> =
             iter::successors(Some((log_d, top_weights)), |(prev_log_d, prev_weights)| {
-                if *prev_log_d == 0 {
+                if prev_weights.len() == 1 {
                     None
                 } else {
-                    let new_weights = shrink_weights::<F, EF>(prev_weights);
+                    let new_weights = prev_weights
+                        .par_chunks_exact(2)
+                        .map(|pair| pair[0] + pair[1])
+                        .collect();
                     Some((*prev_log_d - 1, new_weights))
                 }
             })
@@ -213,7 +196,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
     /// where `neg_reduced_matrix = -f_reduced` (pre-computed with negated coefficients) and
     /// `eval_reduced = reduce_evals(evals_groups, coeffs_groups)` is a single scalar.
     ///
-    /// Uses a SIMD branch over chunks of `F::Packing::WIDTH` and a scalar tail for any remainder.
+    /// Requires `n >= WIDTH` and `n % WIDTH == 0`.
     pub fn accumulate_deep_quotient(
         &self,
         acc: &mut [EF],
@@ -225,33 +208,26 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
         debug_assert_eq!(neg_reduced_matrix.len(), n);
         debug_assert_eq!(self.point_quotient.len(), n);
 
-        let eval_reduced: EF = reduce_evals(evals_groups, coeffs_groups);
+        let w = F::Packing::WIDTH;
+        debug_assert!(
+            n >= w && n.is_multiple_of(w),
+            "accumulate_deep_quotient requires n >= WIDTH and aligned"
+        );
 
-        let packing_width = F::Packing::WIDTH;
-        if n < packing_width {
-            // Small scalar path; no need to parallelize tiny slices.
-            for ((a, &neg_f), &q) in acc
-                .iter_mut()
-                .zip(neg_reduced_matrix.iter())
-                .zip(self.point_quotient[..n].iter())
-            {
-                *a += (eval_reduced + neg_f) * q;
-            }
-        } else {
-            // SIMD branch only; chunk sizes are guaranteed by par_chunks_exact
-            assert_eq!(n % packing_width, 0,);
-            acc.par_chunks_exact_mut(packing_width)
-                .zip(neg_reduced_matrix.par_chunks_exact(packing_width))
-                .zip(self.point_quotient[..n].par_chunks_exact(packing_width))
-                .for_each(|((acc_chunk, neg_chunk), q_chunk)| {
-                    let acc_p = EF::ExtensionPacking::from_ext_slice(acc_chunk);
-                    let neg_p = EF::ExtensionPacking::from_ext_slice(neg_chunk);
-                    let q_p = EF::ExtensionPacking::from_ext_slice(q_chunk);
-                    let eval_p = EF::ExtensionPacking::from(eval_reduced);
-                    let res_p: EF::ExtensionPacking = acc_p + q_p * (neg_p + eval_p);
-                    res_p.to_ext_slice(acc_chunk);
-                });
-        }
+        let eval_reduced: EF = reduce_evals(evals_groups, coeffs_groups);
+        let eval_reduced_p = EF::ExtensionPacking::from(eval_reduced);
+
+        acc.par_chunks_exact_mut(w)
+            .zip(neg_reduced_matrix.par_chunks_exact(w))
+            .zip(self.point_quotient[..n].par_chunks_exact(w))
+            .for_each(|((acc_chunk, neg_chunk), q_chunk)| {
+                let acc_p = EF::ExtensionPacking::from_ext_slice(acc_chunk);
+                let neg_p = EF::ExtensionPacking::from_ext_slice(neg_chunk);
+                let q_p = EF::ExtensionPacking::from_ext_slice(q_chunk);
+
+                let res_p = acc_p + q_p * (neg_p + eval_reduced_p);
+                res_p.to_ext_slice(acc_chunk);
+            });
     }
 }
 
@@ -260,12 +236,13 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
 /// Matrices must be sorted by height (ascending, powers of two). For each matrix,
 /// computes the dot product of each row with its coefficients and adds to an accumulator.
 /// When height increases, the accumulator is upsampled by repeating each entry.
+///
+/// Requires all matrix heights to be `>= WIDTH` and divisible by `WIDTH`.
 pub fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
     matrices: &[M],
     coeffs: &[Vec<EF>],
 ) -> Vec<EF> {
     let n = matrices.last().unwrap().height();
-    let packing_width = F::Packing::WIDTH;
 
     let mut acc = EF::zero_vec(n);
     let mut scratch = EF::zero_vec(n);
@@ -274,6 +251,10 @@ pub fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
 
     for (matrix, coeffs) in zip(matrices, coeffs) {
         let height = matrix.height();
+        debug_assert!(
+            height.is_power_of_two(),
+            "matrix height must be a power of two"
+        );
 
         // Upsample if height increased (repeat each entry scaling_factor times)
         // E.g., [a, b] with scaling=2 → [a, a, b, b]
@@ -286,39 +267,29 @@ pub fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
             acc[..height].swap_with_slice(&mut scratch[..height]);
         }
 
-        // Compute dot products
-        if height < packing_width {
-            // Scalar path for small matrices
-            acc[..height]
-                .iter_mut()
-                .zip(matrix.rows())
-                .for_each(|(acc_val, row)| {
-                    *acc_val += dot_product::<EF, _, _>(coeffs.iter().copied(), row);
-                });
-        } else {
-            // SIMD path using horizontal packing
-            // Pack coefficients: group WIDTH coefficients into each ExtensionPacking
-            let packed_coeffs: Vec<EF::ExtensionPacking> = coeffs
-                .chunks(packing_width)
-                .map(|chunk| {
-                    if chunk.len() == packing_width {
-                        EF::ExtensionPacking::from_ext_slice(chunk)
-                    } else {
-                        // Pad with zeros for the last chunk
-                        let mut padded = EF::zero_vec(packing_width);
-                        padded[..chunk.len()].copy_from_slice(chunk);
-                        EF::ExtensionPacking::from_ext_slice(&padded)
-                    }
-                })
-                .collect();
+        // SIMD path using horizontal packing
+        // Pack coefficients: group WIDTH coefficients into each ExtensionPacking
+        let w = F::Packing::WIDTH;
+        let packed_coeffs: Vec<EF::ExtensionPacking> = coeffs
+            .chunks(w)
+            .map(|chunk| {
+                if chunk.len() == w {
+                    EF::ExtensionPacking::from_ext_slice(chunk)
+                } else {
+                    // Pad with zeros for the last chunk
+                    let mut padded = EF::zero_vec(w);
+                    padded[..chunk.len()].copy_from_slice(chunk);
+                    EF::ExtensionPacking::from_ext_slice(&padded)
+                }
+            })
+            .collect();
 
-            matrix
-                .rowwise_packed_dot_product::<EF>(&packed_coeffs)
-                .zip(acc[..height].par_iter_mut())
-                .for_each(|(dot_result, acc_val)| {
-                    *acc_val += dot_result;
-                });
-        }
+        matrix
+            .rowwise_packed_dot_product::<EF>(&packed_coeffs)
+            .zip(acc[..height].par_iter_mut())
+            .for_each(|(dot_result, acc_val)| {
+                *acc_val += dot_result;
+            });
 
         active_height = height;
     }
@@ -328,6 +299,8 @@ pub fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
 
 /// Compute the reduced matrix by accumulating all matrices with negated coefficients.
 /// Returns `-f_reduced` where f_reduced = Σ coeff_i * matrix_i(row).
+///
+/// Requires `n >= WIDTH` and `n % WIDTH == 0`.
 pub fn reduce_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
     matrices_groups: &[Vec<M>],
     coeffs_groups: &[Vec<Vec<EF>>],
@@ -344,22 +317,16 @@ pub fn reduce_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
         })
         .collect();
 
-    let width = F::Packing::WIDTH;
-
+    let w = F::Packing::WIDTH;
     zip(matrices_groups, &neg_coeffs_groups)
         .map(|(matrices_group, coeffs_group)| accumulate_matrices(matrices_group, coeffs_group))
         .reduce(|mut acc, next| {
-            assert_eq!(acc.len(), next.len());
-            if acc.len() < width {
-                EF::add_slices(&mut acc, &next);
-            } else {
-                assert!(acc.len().is_multiple_of(width));
-                acc.par_chunks_exact_mut(width)
-                    .zip(next.par_chunks_exact(width))
-                    .for_each(|(acc_chunk, next_chunk)| {
-                        EF::add_slices(acc_chunk, next_chunk);
-                    });
-            }
+            debug_assert_eq!(acc.len(), next.len());
+            acc.par_chunks_mut(w)
+                .zip(next.par_chunks(w))
+                .for_each(|(acc_chunk, next_chunk)| {
+                    EF::add_slices(acc_chunk, next_chunk);
+                });
             acc
         })
         .unwrap_or_else(|| EF::zero_vec(n))
@@ -376,37 +343,6 @@ pub fn reduce_evals<EF: Field>(
                 .flat_map(|(evals, coeffs)| zip(evals, coeffs).map(|(&e, &c)| e * c))
         })
         .sum()
-}
-
-/// Halve the weight vector by summing adjacent pairs.
-///
-/// Used to descend from degree `d` to `d/2` in the barycentric weight tower.
-fn shrink_weights<F: Field, EF: ExtensionField<F>>(weights: &[EF]) -> Vec<EF> {
-    let w = F::Packing::WIDTH;
-    let n = weights.len();
-    if n < 2 * w {
-        let (pairs, _) = weights.as_chunks::<2>();
-        return pairs.iter().map(|&[a, b]| a + b).collect();
-    }
-    let mut new_weights = EF::zero_vec(n / 2);
-    new_weights
-        .par_chunks_exact_mut(w)
-        .zip(weights.par_chunks_exact(2 * w))
-        .for_each(|(new_chunk, old_chunk)| {
-            let left = EF::ExtensionPacking::from_basis_coefficients_fn(|coeff_idx| {
-                F::Packing::from_fn(|lane| {
-                    old_chunk[2 * lane].as_basis_coefficients_slice()[coeff_idx]
-                })
-            });
-            let right = EF::ExtensionPacking::from_basis_coefficients_fn(|coeff_idx| {
-                F::Packing::from_fn(|lane| {
-                    old_chunk[2 * lane + 1].as_basis_coefficients_slice()[coeff_idx]
-                })
-            });
-            let sum: EF::ExtensionPacking = left + right;
-            sum.to_ext_slice(new_chunk);
-        });
-    new_weights
 }
 
 #[cfg(test)]
@@ -440,22 +376,6 @@ mod tests {
             .copied()
             .rev()
             .fold(F::ZERO, |acc, c| acc * x + c)
-    }
-
-    #[test]
-    fn check_shrink() {
-        let rng = &mut SmallRng::seed_from_u64(1);
-        for log_size in 1..10_usize {
-            let size = 1 << log_size;
-            let weights: Vec<EF> = rng.sample_iter(StandardUniform).take(size).collect();
-
-            let expected: Vec<EF> = (0..size / 2)
-                .map(|i| weights[2 * i] + weights[2 * i + 1])
-                .collect();
-
-            let real = shrink_weights::<F, EF>(&weights);
-            assert_eq!(expected, real);
-        }
     }
 
     #[test]
