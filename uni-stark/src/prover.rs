@@ -16,7 +16,6 @@ use crate::{
     Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
     StarkGenericConfig, SymbolicAirBuilder, Val, get_log_quotient_degree, get_symbolic_constraints,
 };
-
 #[cfg(debug_assertions)]
 use crate::{DebugConstraintBuilder, check_constraints};
 

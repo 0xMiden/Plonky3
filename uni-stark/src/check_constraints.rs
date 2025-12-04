@@ -1,15 +1,15 @@
+#[cfg(debug_assertions)]
+use alloc::vec::Vec;
+
 use p3_air::{
     AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder, PermutationAirBuilder,
 };
 use p3_field::{ExtensionField, Field};
-use p3_matrix::stack::ViewPair;
-
-#[cfg(debug_assertions)]
-use alloc::vec::Vec;
 #[cfg(debug_assertions)]
 use p3_matrix::Matrix;
 #[cfg(debug_assertions)]
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
+use p3_matrix::stack::ViewPair;
 #[cfg(debug_assertions)]
 use tracing::instrument;
 
