@@ -29,8 +29,14 @@ use rand::rngs::SmallRng;
 pub struct FibonacciPeriodicAir;
 
 impl FibonacciPeriodicAir {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
+    }
+}
+
+impl Default for FibonacciPeriodicAir {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -85,7 +91,7 @@ impl<F: Field, EF: ExtensionField<F>> MidenAir<F, EF> for FibonacciPeriodicAir {
         // If current selector is 0, next must be 1, and vice versa
         let next_selector_expr: AB::Expr = next.selector.clone().into();
         let next_selector_ef: AB::ExprEF = next_selector_expr.into();
-        let current_selector_ef = selector_ef.clone();
+        let current_selector_ef = selector_ef;
         builder
             .when_transition()
             .assert_eq_ext(next_selector_ef, AB::ExprEF::ONE - current_selector_ef);

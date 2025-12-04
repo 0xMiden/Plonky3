@@ -115,7 +115,7 @@ where
         }
 
         debug_assert!(
-            trace_height % col.len() == 0,
+            trace_height.is_multiple_of(col.len()),
             "Periodic column length must divide trace length"
         );
 
@@ -229,7 +229,7 @@ where
             }
 
             debug_assert!(
-                trace_height % col.len() == 0,
+                trace_height.is_multiple_of(col.len()),
                 "Periodic column length must divide trace length"
             );
 
