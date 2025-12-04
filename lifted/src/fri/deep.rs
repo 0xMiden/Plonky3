@@ -76,8 +76,8 @@
 //!   = s_H(X)/2
 //! ```
 
+use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
-use core::iter;
 use core::iter::zip;
 use core::marker::PhantomData;
 
@@ -97,29 +97,30 @@ use p3_util::{log2_strict_usize, reverse_slice_index_bits};
 /// with `r = d/d'`, this enables evaluating `f(z^r)` from evaluations `f((gK)^r)`.
 /// Also supports computing the DEEP quotient `(f(z^r) - f(X^r)) / (z - X)` over `gK`.
 pub struct Precomputation<F: TwoAdicField, EF: ExtensionField<F>> {
+    /// log2 of the blowup factor.
     log_blowup: usize,
-    // evaluations of 1/(z-X) over gK
+    /// Evaluations of 1/(z-X) over gK.
     point_quotient: Vec<EF>,
-
-    // s_{D}(z)
-    // note that this scaling is valid for all domains since s_{D^2}(z^2) = s(z)
-    barycentric_scaling: EF,
-
-    // for each key log_d, gives the weight for evaluating a polynomial of degree < 2^log_d,
-    // let r = d_max/d
-    // at f(z^r) provided f((gH)^r)
-    // w_{D,i}(z)
-    barycentric_weights: LinearMap<usize, Vec<EF>>,
+    /// Evaluated matrices: evals_groups[g][m][col] = f_{g,m,col}(z^r).
+    evals_groups: Vec<Vec<Vec<EF>>>,
     _marker: PhantomData<F>,
 }
 
 impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
-    /// Create precomputation for point `z` with max degree `d` and blowup `log_blowup`.
+    /// Create precomputation for point `z`, evaluating all matrices.
     ///
-    /// The evaluation domain has order `n = d << log_blowup`.
-    pub fn new(point: EF, d: usize, log_blowup: usize) -> Self {
+    /// Computes the point quotient 1/(z-X) over gK, and evaluates all matrices at z
+    /// using barycentric interpolation. The barycentric weights are computed only
+    /// for heights that appear in the matrices.
+    pub fn new<M: Matrix<F>>(point: EF, matrices_groups: &[Vec<M>], log_blowup: usize) -> Self {
+        // Determine n from largest matrix height
+        let n = matrices_groups
+            .iter()
+            .flat_map(|g| g.iter().map(|m| m.height()))
+            .max()
+            .expect("matrices_groups must not be empty");
+        let d = n >> log_blowup;
         let log_d = log2_strict_usize(d);
-        let n = d << log_blowup;
         let log_n = log2_strict_usize(n);
 
         // Coset gK in bit-reversed order. This ensures that
@@ -145,90 +146,175 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
             batch_multiplicative_inverse(&diffs)
         };
 
-        // w_{gH, i}(z) = w_{H,i}(z/g) = h^i / ( (z/g) - h^i ) = gh^i / (z - gh^i)
-        // Reuse the point quotient evaluations since gH = gK[..d] in bit-reversed order.
-        let top_weights: Vec<EF> = coset_points[..d]
-            .par_iter()
-            .zip(point_quotient[..d].par_iter())
-            .map(|(&k, &inv)| inv * k)
+        // Collect unique heights that need weights (keyed by matrix height for easy lookup)
+        let used_heights: BTreeSet<usize> = matrices_groups
+            .iter()
+            .flat_map(|g| g.iter().map(|m| m.height()))
             .collect();
 
-        // For each degree bound d' < d (powers of 2), let r = d/d' be the shrinking factor
-        // get the weights for evaluating f(z^r) over (gH)^r
-        let barycentric_weights: LinearMap<usize, Vec<EF>> =
-            iter::successors(Some((log_d, top_weights)), |(prev_log_d, prev_weights)| {
-                if prev_weights.len() == 1 {
-                    None
-                } else {
-                    let new_weights = prev_weights
-                        .par_chunks_exact(2)
-                        .map(|pair| pair[0] + pair[1])
-                        .collect();
-                    Some((*prev_log_d - 1, new_weights))
-                }
+        // Compute barycentric weights for each used height.
+        // w_{gH, i}(z) = w_{H,i}(z/g) = h^i / ( (z/g) - h^i ) = gh^i / (z - gh^i)
+        // Reuse the point quotient evaluations since gH = gK[..d] in bit-reversed order.
+        //
+        // Note: Matrix height = d_m * blowup, but we only need d_m weights for degree d_m polynomials.
+        let barycentric_weights: LinearMap<usize, Vec<EF>> = {
+            let top_weights: Vec<EF> = coset_points[..d]
+                .par_iter()
+                .zip(point_quotient[..d].par_iter())
+                .map(|(&k, &inv)| inv * k)
+                .collect();
+
+            let mut result = LinearMap::new();
+            let mut current_weights = top_weights;
+
+            // Iterate in descending order (BTreeSet iterates ascending, so reverse)
+            for &target_height in used_heights.iter().rev() {
+                let target_d = target_height >> log_blowup;
+                // Shrink weights by summing chunks: w_{H^r,i}(z) = Σ_{j} w_{H,r*i+j}(z)
+                let chunk_size = current_weights.len() / target_d;
+                current_weights = current_weights
+                    .par_chunks_exact(chunk_size)
+                    .map(|chunk| chunk.iter().copied().sum())
+                    .collect();
+                result.insert(target_height, current_weights.clone());
+            }
+            result
+        };
+
+        // Evaluate all matrices at point using precomputed barycentric weights.
+        let evals_groups: Vec<Vec<Vec<EF>>> = matrices_groups
+            .iter()
+            .map(|group| {
+                group
+                    .iter()
+                    .map(|m| {
+                        let weights = &barycentric_weights[&m.height()];
+                        let mut evals = m.columnwise_dot_product(weights);
+                        scale_slice_in_place_single_core(&mut evals, barycentric_scaling);
+                        evals
+                    })
+                    .collect()
             })
             .collect();
 
         Self {
             log_blowup,
             point_quotient,
-            barycentric_scaling,
-            barycentric_weights,
+            evals_groups,
             _marker: Default::default(),
         }
     }
 
-    /// Evaluate polynomials at `z` from their coset evaluations.
-    ///
-    /// Given a matrix with columns `[f_1(gH), ..., f_m(gH)]`, returns `[f_1(z), ..., f_m(z)]`.
-    pub fn eval_matrix<M: Matrix<F>>(&self, m: &M) -> Vec<EF> {
-        let log_d = log2_strict_usize(m.height()) - self.log_blowup;
-        let d = 1 << log_d;
-        let weights = &self.barycentric_weights[&log_d];
-        let mut evals = m.columnwise_dot_product(&weights[..d]);
-        scale_slice_in_place_single_core(&mut evals, self.barycentric_scaling);
-        evals
+    /// Get the evaluated matrices: `evals()[g][m][col] = f_{g,m,col}(z^r)`.
+    pub fn evals(&self) -> &[Vec<Vec<EF>>] {
+        &self.evals_groups
     }
 
-    /// Accumulate the DEEP quotient into `acc` in-place.
+    /// Compute DEEP quotient for multiple evaluation points.
     ///
-    /// For each row `i`, adds `(eval_reduced + neg_reduced_matrix[i]) * point_quotient[i]` to `acc[i]`,
-    /// where `neg_reduced_matrix = -f_reduced` (pre-computed with negated coefficients) and
-    /// `eval_reduced = reduce_evals(evals_groups, coeffs_groups)` is a single scalar.
+    /// Given polynomials `f_i` (columns of matrices) and evaluation points `z_j`, computes:
+    /// ```text
+    /// Q(X) = Σ_i c_i · Σ_j (f_i(z_j) - f_i(X)) / (z_j - X)
+    /// ```
+    /// where `c_i = challenge^i` are the batching coefficients.
     ///
-    /// Requires `n >= WIDTH` and `n % WIDTH == 0`.
-    pub fn accumulate_deep_quotient(
-        &self,
-        acc: &mut [EF],
-        neg_reduced_matrix: &[EF],
-        evals_groups: &[Vec<Vec<EF>>],
-        coeffs_groups: &[Vec<Vec<EF>>],
-    ) {
-        let n = acc.len();
-        debug_assert_eq!(neg_reduced_matrix.len(), n);
-        debug_assert_eq!(self.point_quotient.len(), n);
-
-        let w = F::Packing::WIDTH;
-        debug_assert!(
-            n >= w && n.is_multiple_of(w),
-            "accumulate_deep_quotient requires n >= WIDTH and aligned"
+    /// The formula is rearranged for efficiency:
+    /// ```text
+    /// Q(X) = Σ_j (Σ_i c_i · f_i(z_j) - Σ_i c_i · f_i(X)) / (z_j - X)
+    ///      = Σ_j (f_reduced(z_j) - f_reduced(X)) · q_j(X)
+    /// ```
+    /// where:
+    /// - `f_reduced(X) = Σ_i c_i · f_i(X)` is the batched polynomial (computed once)
+    /// - `q_j(X) = 1/(z_j - X)` is precomputed in each `Precomputation`
+    pub fn compute_deep_quotient<M: Matrix<F>>(
+        precomputations: &[Self],
+        matrices_groups: &[Vec<M>],
+        challenge: EF,
+    ) -> Vec<EF> {
+        assert!(
+            !precomputations.is_empty(),
+            "precomputations must not be empty"
         );
 
-        let eval_reduced: EF = reduce_evals(evals_groups, coeffs_groups);
-        let eval_reduced_p = EF::ExtensionPacking::from(eval_reduced);
+        let w = F::Packing::WIDTH;
+        let n = precomputations[0].point_quotient.len();
+        let log_blowup = precomputations[0].log_blowup;
 
-        acc.par_chunks_exact_mut(w)
-            .zip(neg_reduced_matrix.par_chunks_exact(w))
-            .zip(self.point_quotient[..n].par_chunks_exact(w))
-            .for_each(|((acc_chunk, neg_chunk), q_chunk)| {
-                let acc_p = EF::ExtensionPacking::from_ext_slice(acc_chunk);
-                let neg_p = EF::ExtensionPacking::from_ext_slice(neg_chunk);
-                let q_p = EF::ExtensionPacking::from_ext_slice(q_chunk);
+        // Step 1: Derive batching coefficients c_i = challenge^i
+        let coeffs_groups = derive_coeffs_from_challenge(matrices_groups, challenge);
 
-                let res_p = acc_p + q_p * (neg_p + eval_reduced_p);
-                res_p.to_ext_slice(acc_chunk);
-            });
+        // Step 2: Compute -f_reduced(X) = -Σ_i c_i · f_i(X) over the domain
+        // We negate here so that the inner loop computes: f_reduced(z_j) + (-f_reduced(X))
+        let neg_coeffs_groups: Vec<Vec<Vec<EF>>> = coeffs_groups
+            .iter()
+            .map(|group| {
+                group
+                    .iter()
+                    .map(|coeffs| coeffs.iter().copied().map(EF::neg).collect())
+                    .collect()
+            })
+            .collect();
+
+        let neg_f_reduced = zip(matrices_groups, &neg_coeffs_groups)
+            .map(|(matrices_group, coeffs_group)| accumulate_matrices(matrices_group, coeffs_group))
+            .reduce(|mut acc, next| {
+                debug_assert_eq!(acc.len(), next.len());
+                acc.par_chunks_mut(w).zip(next.par_chunks(w)).for_each(
+                    |(acc_chunk, next_chunk)| {
+                        EF::add_slices(acc_chunk, next_chunk);
+                    },
+                );
+                acc
+            })
+            .unwrap_or_else(|| EF::zero_vec(n));
+
+        // Step 3: For each evaluation point z_j, accumulate:
+        //   Q(X) += (f_reduced(z_j) - f_reduced(X)) · q_j(X)
+        //         = (f_reduced(z_j) + neg_f_reduced(X)) · q_j(X)
+        let mut acc = EF::zero_vec(n);
+        for pre in precomputations {
+            debug_assert_eq!(pre.point_quotient.len(), n);
+            debug_assert_eq!(pre.log_blowup, log_blowup);
+
+            // f_reduced(z_j) = Σ_i c_i · f_i(z_j), a single scalar
+            let f_reduced_at_z: EF = reduce_evals(&pre.evals_groups, &coeffs_groups);
+            let f_reduced_at_z_packed = EF::ExtensionPacking::from(f_reduced_at_z);
+
+            // acc[k] += (f_reduced(z_j) + neg_f_reduced[k]) · q_j[k]
+            acc.par_chunks_exact_mut(w)
+                .zip(neg_f_reduced.par_chunks_exact(w))
+                .zip(pre.point_quotient[..n].par_chunks_exact(w))
+                .for_each(|((acc_chunk, neg_chunk), q_chunk)| {
+                    let acc_p = EF::ExtensionPacking::from_ext_slice(acc_chunk);
+                    let neg_p = EF::ExtensionPacking::from_ext_slice(neg_chunk);
+                    let q_p = EF::ExtensionPacking::from_ext_slice(q_chunk);
+
+                    let res_p = acc_p + q_p * (f_reduced_at_z_packed + neg_p);
+                    res_p.to_ext_slice(acc_chunk);
+                });
+        }
+
+        acc
     }
+}
+
+/// Derive coefficient groups from a single challenge using powers.
+///
+/// Returns `[1, c, c², c³, ...]` assigned to matrix columns in order.
+pub fn derive_coeffs_from_challenge<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
+    matrices_groups: &[Vec<M>],
+    challenge: EF,
+) -> Vec<Vec<Vec<EF>>> {
+    let mut powers = challenge.powers();
+    matrices_groups
+        .iter()
+        .map(|group| {
+            group
+                .iter()
+                .map(|m| powers.by_ref().take(m.width()).collect())
+                .collect()
+        })
+        .collect()
 }
 
 /// Accumulate weighted matrix rows with upsampling for height differences.
@@ -297,41 +383,6 @@ pub fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
     acc
 }
 
-/// Compute the reduced matrix by accumulating all matrices with negated coefficients.
-/// Returns `-f_reduced` where f_reduced = Σ coeff_i * matrix_i(row).
-///
-/// Requires `n >= WIDTH` and `n % WIDTH == 0`.
-pub fn reduce_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
-    matrices_groups: &[Vec<M>],
-    coeffs_groups: &[Vec<Vec<EF>>],
-    n: usize,
-) -> Vec<EF> {
-    // Negate all coefficients
-    let neg_coeffs_groups: Vec<Vec<Vec<EF>>> = coeffs_groups
-        .iter()
-        .map(|group| {
-            group
-                .iter()
-                .map(|coeffs| coeffs.iter().copied().map(EF::neg).collect())
-                .collect()
-        })
-        .collect();
-
-    let w = F::Packing::WIDTH;
-    zip(matrices_groups, &neg_coeffs_groups)
-        .map(|(matrices_group, coeffs_group)| accumulate_matrices(matrices_group, coeffs_group))
-        .reduce(|mut acc, next| {
-            debug_assert_eq!(acc.len(), next.len());
-            acc.par_chunks_mut(w)
-                .zip(next.par_chunks(w))
-                .for_each(|(acc_chunk, next_chunk)| {
-                    EF::add_slices(acc_chunk, next_chunk);
-                });
-            acc
-        })
-        .unwrap_or_else(|| EF::zero_vec(n))
-}
-
 /// Compute the reduced evals by summing Σ coeff_i * eval_i across all groups/matrices/columns.
 pub fn reduce_evals<EF: Field>(
     evals_groups: &[Vec<Vec<EF>>],
@@ -369,7 +420,7 @@ mod tests {
             .fold(EF::ZERO, |acc, c| acc * x + c)
     }
 
-    // Evaluate polynomial with base-field coefficients at an extension-field point via Horner.
+    // Evaluate polynomial with base-field coefficients at a base-field point via Horner.
     fn horner_base<F: Field>(coeffs: &[F], x: F) -> F {
         coeffs
             .iter()
@@ -379,74 +430,94 @@ mod tests {
     }
 
     #[test]
-    fn check_quotient() {
+    fn check_point_quotient() {
         let rng = &mut SmallRng::seed_from_u64(1);
 
         let z: EF = rng.sample(StandardUniform);
-        // Domain sizes
         let d: usize = 16;
         let log_blowup: usize = 2;
         let n = d << log_blowup;
         let log_n = log2_strict_usize(n);
 
-        // Build precomputation at z.
-        let pre = Precomputation::<F, EF>::new(z, d, log_blowup);
+        // Create a dummy matrix to call new()
+        let matrix = RowMajorMatrix::<F>::rand(rng, n, 1);
+        let pre = Precomputation::<F, EF>::new(z, &[vec![matrix]], log_blowup);
 
-        // Reconstruct gK in the same bit-reversed order as Precomputation.
+        // Reconstruct gK in bit-reversed order
         let gk = TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_n).unwrap();
         let mut gk_points: Vec<F> = gk.iter().collect();
         reverse_slice_index_bits(&mut gk_points);
 
-        // Verify the point quotient q(X) = 1/(z - X) over gK.
+        // Verify point quotient q(X) = 1/(z - X) over gK
         assert_eq!(gk_points.len(), pre.point_quotient.len());
         for (x, &q) in gk_points.iter().zip(pre.point_quotient.iter()) {
             let expected = (z - *x).inverse();
-            assert_eq!(q, expected, "q(x) mismatch at x={:?}", x);
+            assert_eq!(q, expected, "q(x) mismatch at x={x:?}");
         }
     }
 
     #[test]
-    fn deep_precomputation_matches_horner() {
-        let rng = &mut SmallRng::seed_from_u64(1);
+    fn check_evals_match_horner() {
+        let rng = &mut SmallRng::seed_from_u64(2);
 
-        // Domain sizes
         let d: usize = 64;
         let log_blowup: usize = 4;
-
-        let n: usize = d << log_blowup;
+        let n = d << log_blowup;
         let log_n = log2_strict_usize(n);
 
         let z: EF = rng.sample(StandardUniform);
 
-        // Build precomputation at z.
-        let pre = Precomputation::<F, EF>::new(z, d, log_blowup);
-
-        // Reconstruct gK in the same bit-reversed order as Precomputation.
+        // Build coset gK
         let gk = TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_n).unwrap();
-        let mut gk_points: Vec<F> = gk.iter().collect();
-        reverse_slice_index_bits(&mut gk_points);
 
-        for log_scaling in [0, 1, 2] {
-            let d_lift = d >> log_scaling;
+        // Test multiple degrees (log_scaling = 0, 1, 2 means degree d, d/2, d/4)
+        let specs: Vec<(usize, usize)> = vec![(0, 3), (1, 2), (2, 1)]; // (log_scaling, width)
 
-            let gk_lift = gk.exp_power_of_2(log_scaling).unwrap();
+        // Generate polynomials and build matrices
+        let mut polys: Vec<Vec<Vec<F>>> = Vec::new(); // polys[m][col] = coefficients
+        let mut matrices: Vec<RowMajorMatrix<F>> = Vec::new();
 
-            let mut gk_lift_points = gk_lift.iter().collect();
-            reverse_slice_index_bits(&mut gk_lift_points);
-            let poly: Vec<F> = rng.sample_iter(StandardUniform).take(d_lift).collect();
+        for &(log_scaling, width) in &specs {
+            let degree = d >> log_scaling;
+            let lifted_coset = gk.exp_power_of_2(log_scaling).unwrap();
+            let mut lifted_points: Vec<F> = lifted_coset.iter().collect();
+            reverse_slice_index_bits(&mut lifted_points);
+            let height = lifted_points.len();
 
-            let z_lift = z.exp_power_of_2(log_scaling);
+            let mut matrix_polys = Vec::new();
+            let mut matrix_data = Vec::with_capacity(height * width);
 
-            let evals_gk: Vec<_> = gk_lift_points
-                .iter()
-                .map(|pt| horner_base(&poly, *pt))
-                .collect();
-            let evals_gk = RowMajorMatrix::new_col(evals_gk);
+            for _ in 0..width {
+                let poly: Vec<F> = rng.sample_iter(StandardUniform).take(degree).collect();
+                for &pt in &lifted_points {
+                    matrix_data.push(horner_base(&poly, pt));
+                }
+                matrix_polys.push(poly);
+            }
 
-            let eval_expected = horner_ext(&poly, z_lift);
+            // RowMajorMatrix is row-major, so we need to interleave columns
+            let mut interleaved = Vec::with_capacity(height * width);
+            for row in 0..height {
+                for col in 0..width {
+                    interleaved.push(matrix_data[col * height + row]);
+                }
+            }
 
-            let eval = pre.eval_matrix(&evals_gk)[0];
-            assert_eq!(eval_expected, eval);
+            matrices.push(RowMajorMatrix::new(interleaved, width));
+            polys.push(matrix_polys);
+        }
+
+        // Create precomputation
+        let pre = Precomputation::<F, EF>::new(z, &[matrices], log_blowup);
+
+        // Verify evals match Horner evaluation
+        for (m, (&(log_scaling, _), matrix_polys)) in specs.iter().zip(polys.iter()).enumerate() {
+            let z_lifted = z.exp_power_of_2(log_scaling);
+            for (col, poly) in matrix_polys.iter().enumerate() {
+                let expected = horner_ext(poly, z_lifted);
+                let actual = pre.evals_groups[0][m][col];
+                assert_eq!(actual, expected, "Mismatch at matrix {m}, col {col}");
+            }
         }
     }
 
@@ -492,12 +563,10 @@ mod tests {
         }
 
         let mut matrices_groups: Vec<Vec<RowMajorMatrix<F>>> = Vec::new();
-        let mut coeffs_groups: Vec<Vec<Vec<EF>>> = Vec::new();
         let mut polys_data: Vec<Vec<Vec<PolyData>>> = Vec::new();
 
         for specs in &group_specs {
             let mut group_matrices = Vec::new();
-            let mut group_coeffs = Vec::new();
             let mut group_polys = Vec::new();
 
             for &(log_scaling, width) in specs {
@@ -525,36 +594,49 @@ mod tests {
                 }
 
                 group_matrices.push(RowMajorMatrix::new(matrix_data, width));
-                group_coeffs.push(rng.sample_iter(StandardUniform).take(width).collect());
                 group_polys.push(matrix_polys);
             }
 
             matrices_groups.push(group_matrices);
-            coeffs_groups.push(group_coeffs);
             polys_data.push(group_polys);
         }
 
-        // Create precomputations for both points
-        let pre1 = Precomputation::<F, EF>::new(z1, d_max, log_blowup);
-        let pre2 = Precomputation::<F, EF>::new(z2, d_max, log_blowup);
+        // Create precomputations for both points (with matrix evaluations)
+        let pre1 = Precomputation::<F, EF>::new(z1, &matrices_groups, log_blowup);
+        let pre2 = Precomputation::<F, EF>::new(z2, &matrices_groups, log_blowup);
 
-        // Compute polynomial evaluations at z1 and z2 using barycentric interpolation
-        let evals_groups_1: Vec<Vec<Vec<EF>>> = matrices_groups
-            .iter()
-            .map(|group| group.iter().map(|m| pre1.eval_matrix(m)).collect())
-            .collect();
-        let evals_groups_2: Vec<Vec<Vec<EF>>> = matrices_groups
-            .iter()
-            .map(|group| group.iter().map(|m| pre2.eval_matrix(m)).collect())
-            .collect();
+        // Generate a random challenge and compute DEEP quotient using the new API
+        let challenge: EF = rng.sample(StandardUniform);
+        let acc = Precomputation::compute_deep_quotient(&[pre1, pre2], &matrices_groups, challenge);
 
-        // Compute neg_reduced_matrix = -Σ coeff * f(X) with upsampling
-        let neg_reduced = reduce_matrices(&matrices_groups, &coeffs_groups, n);
+        // Derive coefficients the same way as compute_deep_quotient
+        let coeffs_groups = derive_coeffs_from_challenge(&matrices_groups, challenge);
 
-        // Accumulate DEEP quotients for both points
-        let mut acc = EF::zero_vec(n);
-        pre1.accumulate_deep_quotient(&mut acc, &neg_reduced, &evals_groups_1, &coeffs_groups);
-        pre2.accumulate_deep_quotient(&mut acc, &neg_reduced, &evals_groups_2, &coeffs_groups);
+        // For naive verification, we need the evaluations at z1 and z2
+        // These are stored in pre1.evals_groups and pre2.evals_groups, but we can
+        // recompute them naively using Horner's method
+        let compute_evals = |z: EF| -> Vec<Vec<Vec<EF>>> {
+            group_specs
+                .iter()
+                .zip(polys_data.iter())
+                .map(|(specs, group_polys)| {
+                    specs
+                        .iter()
+                        .zip(group_polys.iter())
+                        .map(|(&(log_scaling, _), matrix_polys)| {
+                            let z_lifted = z.exp_power_of_2(log_scaling);
+                            matrix_polys
+                                .iter()
+                                .map(|poly_data| horner_ext(&poly_data.coeffs, z_lifted))
+                                .collect()
+                        })
+                        .collect()
+                })
+                .collect()
+        };
+
+        let evals_groups_1 = compute_evals(z1);
+        let evals_groups_2 = compute_evals(z2);
 
         // Naive verification at each domain point
         for i in 0..n {
@@ -572,7 +654,7 @@ mod tests {
                         for (col, poly_data) in polys_data[g][m].iter().enumerate() {
                             let coeff = coeffs_groups[g][m][col];
 
-                            // Evaluation at z from barycentric interpolation
+                            // Evaluation at z from naive Horner
                             eval_at_z += coeff * evals_groups[g][m][col];
 
                             // Evaluation at x (lifted)
