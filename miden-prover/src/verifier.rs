@@ -104,10 +104,10 @@ where
     let aux_next_ext;
     let aux = match (aux_local, aux_next) {
         (Some(local), Some(next)) => {
-            aux_local_ext =
-                verifier_row_to_ext::<SC>(local).ok_or(VerificationError::InvalidProofShape)?;
-            aux_next_ext =
-                verifier_row_to_ext::<SC>(next).ok_or(VerificationError::InvalidProofShape)?;
+            aux_local_ext = verifier_row_to_ext::<Val<SC>, SC::Challenge>(local)
+                .ok_or(VerificationError::InvalidProofShape)?;
+            aux_next_ext = verifier_row_to_ext::<Val<SC>, SC::Challenge>(next)
+                .ok_or(VerificationError::InvalidProofShape)?;
 
             VerticalPair::new(
                 RowMajorMatrixView::new_row(&aux_local_ext),

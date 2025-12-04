@@ -233,7 +233,7 @@ impl<F: Field> MidenAirBuilder for SymbolicAirBuilder<F> {
 #[cfg(test)]
 mod tests {
     use miden_air::MidenAir;
-    use p3_baby_bear::BabyBear;
+    use p3_goldilocks::Goldilocks;
     use p3_matrix::Matrix;
 
     use super::*;
@@ -245,12 +245,12 @@ mod tests {
         width: usize,
     }
 
-    impl MidenAir<BabyBear, BabyBear> for MockAir {
+    impl MidenAir<Goldilocks, Goldilocks> for MockAir {
         fn width(&self) -> usize {
             self.width
         }
 
-        fn eval<AB: MidenAirBuilder<F = BabyBear>>(&self, builder: &mut AB) {
+        fn eval<AB: MidenAirBuilder<F = Goldilocks>>(&self, builder: &mut AB) {
             let main = builder.main();
 
             for (entry, index) in &self.constraint_specs {
@@ -270,7 +270,7 @@ mod tests {
             constraint_specs: vec![],
             width: 4,
         };
-        let log_degree = get_log_quotient_degree::<BabyBear, BabyBear, _>(&air, 3, 2, 0, 0, 0);
+        let log_degree = get_log_quotient_degree::<Goldilocks, Goldilocks, _>(&air, 3, 2, 0, 0, 0);
         assert_eq!(log_degree, 0);
     }
 
@@ -280,7 +280,7 @@ mod tests {
             constraint_specs: vec![(Entry::Main { offset: 0 }, 0)],
             width: 4,
         };
-        let log_degree = get_log_quotient_degree::<BabyBear, BabyBear, _>(&air, 3, 2, 0, 0, 0);
+        let log_degree = get_log_quotient_degree::<Goldilocks, Goldilocks, _>(&air, 3, 2, 0, 0, 0);
         assert_eq!(log_degree, log2_ceil_usize(1));
     }
 
@@ -294,7 +294,7 @@ mod tests {
             ],
             width: 4,
         };
-        let log_degree = get_log_quotient_degree::<BabyBear, BabyBear, _>(&air, 3, 2, 0, 0, 0);
+        let log_degree = get_log_quotient_degree::<Goldilocks, Goldilocks, _>(&air, 3, 2, 0, 0, 0);
         assert_eq!(log_degree, log2_ceil_usize(1));
     }
 
@@ -304,7 +304,7 @@ mod tests {
             constraint_specs: vec![],
             width: 4,
         };
-        let max_degree = get_max_constraint_degree::<BabyBear, BabyBear, _>(&air, 3, 2, 0, 0);
+        let max_degree = get_max_constraint_degree::<Goldilocks, Goldilocks, _>(&air, 3, 2, 0, 0);
         assert_eq!(
             max_degree, 0,
             "No constraints should result in a degree of 0"
@@ -321,14 +321,14 @@ mod tests {
             ],
             width: 4,
         };
-        let max_degree = get_max_constraint_degree::<BabyBear, BabyBear, _>(&air, 3, 2, 0, 0);
+        let max_degree = get_max_constraint_degree::<Goldilocks, Goldilocks, _>(&air, 3, 2, 0, 0);
         assert_eq!(max_degree, 1, "Max constraint degree should be 1");
     }
 
     #[test]
     fn test_get_symbolic_constraints() {
-        let c1: SymbolicVariable<BabyBear> = SymbolicVariable::new(Entry::Main { offset: 0 }, 0);
-        let c2: SymbolicVariable<BabyBear> = SymbolicVariable::new(Entry::Main { offset: 1 }, 1);
+        let c1: SymbolicVariable<Goldilocks> = SymbolicVariable::new(Entry::Main { offset: 0 }, 0);
+        let c2: SymbolicVariable<Goldilocks> = SymbolicVariable::new(Entry::Main { offset: 1 }, 1);
 
         let air = MockAir {
             constraint_specs: vec![
@@ -338,7 +338,7 @@ mod tests {
             width: 4,
         };
 
-        let constraints = get_symbolic_constraints::<BabyBear, BabyBear, _>(&air, 3, 2, 0, 0);
+        let constraints = get_symbolic_constraints::<Goldilocks, Goldilocks, _>(&air, 3, 2, 0, 0);
 
         assert_eq!(constraints.len(), 2, "Should return exactly 2 constraints");
 
@@ -355,17 +355,17 @@ mod tests {
 
     #[test]
     fn test_symbolic_air_builder_initialization() {
-        let builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 0, 0, 3);
+        let builder = SymbolicAirBuilder::<Goldilocks>::new(2, 4, 0, 0, 3);
 
         let expected_main = [
-            SymbolicVariable::<BabyBear>::new(Entry::Main { offset: 0 }, 0),
-            SymbolicVariable::<BabyBear>::new(Entry::Main { offset: 0 }, 1),
-            SymbolicVariable::<BabyBear>::new(Entry::Main { offset: 0 }, 2),
-            SymbolicVariable::<BabyBear>::new(Entry::Main { offset: 0 }, 3),
-            SymbolicVariable::<BabyBear>::new(Entry::Main { offset: 1 }, 0),
-            SymbolicVariable::<BabyBear>::new(Entry::Main { offset: 1 }, 1),
-            SymbolicVariable::<BabyBear>::new(Entry::Main { offset: 1 }, 2),
-            SymbolicVariable::<BabyBear>::new(Entry::Main { offset: 1 }, 3),
+            SymbolicVariable::<Goldilocks>::new(Entry::Main { offset: 0 }, 0),
+            SymbolicVariable::<Goldilocks>::new(Entry::Main { offset: 0 }, 1),
+            SymbolicVariable::<Goldilocks>::new(Entry::Main { offset: 0 }, 2),
+            SymbolicVariable::<Goldilocks>::new(Entry::Main { offset: 0 }, 3),
+            SymbolicVariable::<Goldilocks>::new(Entry::Main { offset: 1 }, 0),
+            SymbolicVariable::<Goldilocks>::new(Entry::Main { offset: 1 }, 1),
+            SymbolicVariable::<Goldilocks>::new(Entry::Main { offset: 1 }, 2),
+            SymbolicVariable::<Goldilocks>::new(Entry::Main { offset: 1 }, 3),
         ];
 
         let builder_main = builder.main.values;
@@ -384,7 +384,7 @@ mod tests {
 
     #[test]
     fn test_symbolic_air_builder_is_first_last_row() {
-        let builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 0, 0, 3);
+        let builder = SymbolicAirBuilder::<Goldilocks>::new(2, 4, 0, 0, 3);
 
         assert!(
             matches!(builder.is_first_row(), SymbolicExpression::IsFirstRow),
@@ -399,8 +399,8 @@ mod tests {
 
     #[test]
     fn test_symbolic_air_builder_assert_zero() {
-        let mut builder = SymbolicAirBuilder::<BabyBear>::new(2, 4, 0, 0, 3);
-        let expr = SymbolicExpression::Constant(BabyBear::new(5));
+        let mut builder = SymbolicAirBuilder::<Goldilocks>::new(2, 4, 0, 0, 3);
+        let expr = SymbolicExpression::Constant(Goldilocks::new(5));
         builder.assert_zero(expr);
 
         let constraints = builder.constraints();
@@ -408,7 +408,7 @@ mod tests {
 
         assert!(
             constraints.iter().any(
-                |x| matches!(x, SymbolicExpression::Constant(val) if *val == BabyBear::new(5))
+                |x| matches!(x, SymbolicExpression::Constant(val) if *val == Goldilocks::new(5))
             ),
             "Constraint should match the asserted one"
         );

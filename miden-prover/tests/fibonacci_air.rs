@@ -2,13 +2,13 @@ use core::borrow::Borrow;
 
 use miden_air::{MidenAir, MidenAirBuilder};
 use miden_prover::{StarkConfig, prove, verify};
-use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField64};
 use p3_fri::{TwoAdicFriPcs, create_test_fri_params};
+use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
@@ -107,13 +107,13 @@ impl<F> Borrow<FibRow<F>> for [F] {
     }
 }
 
-type Val = BabyBear;
-type Perm = Poseidon2BabyBear<16>;
+type Val = Goldilocks;
+type Perm = Poseidon2Goldilocks<16>;
 type MyHash = PaddingFreeSponge<Perm, 16, 8, 8>;
 type MyCompress = TruncatedPermutation<Perm, 2, 8, 16>;
 type ValMmcs =
     MerkleTreeMmcs<<Val as Field>::Packing, <Val as Field>::Packing, MyHash, MyCompress, 8>;
-type Challenge = BinomialExtensionField<Val, 4>;
+type Challenge = BinomialExtensionField<Val, 2>;
 type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
 type Challenger = DuplexChallenger<Val, Perm, 16, 8>;
 type Dft = Radix2DitParallel<Val>;
@@ -136,9 +136,9 @@ fn test_fibonacci_impl(a: u64, b: u64, n: usize, x: u64, log_final_poly_len: usi
 
     let config = MyConfig::new(pcs, challenger);
     let pis = vec![
-        BabyBear::from_u64(a),
-        BabyBear::from_u64(b),
-        BabyBear::from_u64(x),
+        Goldilocks::from_u64(a),
+        Goldilocks::from_u64(b),
+        Goldilocks::from_u64(x),
     ];
 
     let air = FibonacciAir::new();
@@ -192,9 +192,9 @@ fn test_incorrect_fibonacci_value() {
 
     let config = MyConfig::new(pcs, challenger);
     let pis = vec![
-        BabyBear::ZERO,
-        BabyBear::ONE,
-        BabyBear::from_u32(999), // incorrect result
+        Goldilocks::ZERO,
+        Goldilocks::ONE,
+        Goldilocks::from_u64(999), // incorrect result
     ];
 
     let air = FibonacciAir::new();

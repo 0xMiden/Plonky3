@@ -410,8 +410,8 @@ where
     }
 }
 
-#[instrument(name = "compute quotient polynomial", skip_all)]
 // TODO: Group some arguments to remove the `allow`?
+#[instrument(name = "compute quotient polynomial", skip_all)]
 #[allow(clippy::too_many_arguments)]
 pub fn quotient_values<SC, A, Mat>(
     air: &A,
