@@ -1,5 +1,6 @@
 use p3_field::{BasedVectorSpace, ExtensionField, Field};
 
+
 /// Helper: convert a flattened base-field row (slice of `F`) into a Vec<EF>
 #[allow(dead_code)]
 pub(crate) fn prover_row_to_ext<F, EF>(row: &[F]) -> Vec<EF>
