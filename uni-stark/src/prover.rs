@@ -13,11 +13,10 @@ use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{
-    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
-    StarkGenericConfig, SymbolicAirBuilder, Val, get_log_quotient_degree, get_symbolic_constraints,
+    Commitments, DebugConstraintBuilder, Domain, OpenedValues, PackedChallenge, PackedVal, Proof,
+    ProverConstraintFolder, StarkGenericConfig, SymbolicAirBuilder, Val, check_constraints,
+    get_log_quotient_degree, get_symbolic_constraints,
 };
-#[cfg(debug_assertions)]
-use crate::{DebugConstraintBuilder, check_constraints};
 
 /// Commits the preprocessed trace if present.
 /// Returns the commitment hash and prover data (available iff preprocessed is Some).
@@ -65,13 +64,13 @@ where
     let preprocessed_width = preprocessed_trace.as_ref().map(|m| m.width).unwrap_or(0);
 
     // Compute the constraint polynomials as vectors of symbolic expressions.
-    let aux_width_base = air.aux_width();
+    let aux_width = air.aux_width();
     let num_randomness = air.num_randomness();
     let symbolic_constraints = get_symbolic_constraints(
         air,
         preprocessed_width,
         public_values.len(),
-        aux_width_base,
+        aux_width,
         num_randomness,
     );
 
@@ -116,7 +115,7 @@ where
         preprocessed_width,
         public_values.len(),
         config.is_zk(),
-        aux_width_base,
+        aux_width,
         num_randomness,
     );
     let quotient_degree = 1 << (log_quotient_degree + config.is_zk());

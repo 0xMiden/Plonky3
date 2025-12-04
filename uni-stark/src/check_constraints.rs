@@ -1,11 +1,12 @@
+use alloc::vec::Vec;
+
 use p3_air::{
     AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder, PermutationAirBuilder,
 };
 use p3_field::{ExtensionField, Field};
+use p3_matrix::Matrix;
+use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_matrix::stack::ViewPair;
-#[cfg(debug_assertions)]
-use p3_matrix::{Matrix, dense::RowMajorMatrix, dense::RowMajorMatrixView};
-#[cfg(debug_assertions)]
 use tracing::instrument;
 
 /// Runs constraint checks using a given AIR definition and trace matrix.
@@ -21,7 +22,6 @@ use tracing::instrument;
 /// - `aux_randomness`: The randomness values that are used to generate `aux` trace
 /// - `public_values`: Public values provided to the builder
 #[instrument(name = "check constraints", skip_all)]
-#[cfg(debug_assertions)]
 pub(crate) fn check_constraints<F, EF, A>(
     air: &A,
     main: &RowMajorMatrix<F>,
@@ -107,9 +107,8 @@ pub(crate) fn check_constraints<F, EF, A>(
     });
 }
 
-// Helper: convert a flattened base-field row (slice of `F`) into a Vec<EF>
-#[cfg(debug_assertions)]
-fn row_to_ext<F, EF>(row: &[F]) -> alloc::vec::Vec<EF>
+/// Helper: convert a flattened base-field row (slice of `F`) into a Vec<EF>
+fn row_to_ext<F, EF>(row: &[F]) -> Vec<EF>
 where
     F: Field,
     EF: ExtensionField<F> + p3_field::BasedVectorSpace<F>,
@@ -246,7 +245,6 @@ impl<'a, F: Field, EF: ExtensionField<F>> PairBuilder for DebugConstraintBuilder
 }
 
 #[cfg(test)]
-#[cfg(debug_assertions)]
 mod tests {
     use alloc::vec;
 

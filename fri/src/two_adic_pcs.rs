@@ -89,15 +89,15 @@ pub type CommitmentWithOpeningPoints<Challenge, Commitment, Domain> = (
 );
 
 pub struct TwoAdicFriFolding<InputProof, InputError> {
-    pub log_folding_factor: usize,
-    pub _phantom: PhantomData<(InputProof, InputError)>,
+    log_folding_factor: usize,
+    _phantom: PhantomData<(InputProof, InputError)>,
 }
 
-impl<InputProof, InputError> TwoAdicFriFolding<InputProof, InputError> {
-    pub const fn new(log_folding_factor: usize) -> Self {
+impl<InputProof, InputError> Default for TwoAdicFriFolding<InputProof, InputError> {
+    fn default() -> Self {
         Self {
-            log_folding_factor,
-            _phantom: PhantomData,
+            log_folding_factor: 1,
+            _phantom: Default::default(),
         }
     }
 }
@@ -145,6 +145,14 @@ impl<F: TwoAdicField, InputProof, InputError: Debug, EF: ExtensionField<F>>
 }
 
 impl<InputProof, InputError: Debug> TwoAdicFriFolding<InputProof, InputError> {
+    pub fn new(log_folding_factor: usize) -> Self {
+        assert!(log_folding_factor > 0);
+        Self {
+            log_folding_factor,
+            _phantom: Default::default(),
+        }
+    }
+
     fn fold_row_2<EF, F>(
         &self,
         index: usize,
@@ -636,10 +644,7 @@ where
         // low degree functions.
         let fri_input = reduced_openings.into_iter().rev().flatten().collect_vec();
 
-        let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding {
-            log_folding_factor: self.fri.log_folding_factor,
-            _phantom: PhantomData,
-        };
+        let folding = TwoAdicFriFoldingForMmcs::<Val, InputMmcs>::new(self.fri.log_folding_factor);
 
         // Produce the FRI proof.
         let fri_proof = prover::prove_fri(
@@ -676,10 +681,7 @@ where
             }
         }
 
-        let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding {
-            log_folding_factor: self.fri.log_folding_factor,
-            _phantom: PhantomData,
-        };
+        let folding = TwoAdicFriFoldingForMmcs::<Val, InputMmcs>::new(self.fri.log_folding_factor);
 
         verifier::verify_fri(
             &folding,
