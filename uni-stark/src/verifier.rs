@@ -106,8 +106,10 @@ where
     let aux_next_ext;
     let aux = match (aux_local, aux_next) {
         (Some(local), Some(next)) => {
-            aux_local_ext = row_to_ext::<SC>(local).ok_or(VerificationError::InvalidProofShape)?;
-            aux_next_ext = row_to_ext::<SC>(next).ok_or(VerificationError::InvalidProofShape)?;
+            aux_local_ext =
+                verifier_row_to_ext::<SC>(local).ok_or(VerificationError::InvalidProofShape)?;
+            aux_next_ext =
+                verifier_row_to_ext::<SC>(next).ok_or(VerificationError::InvalidProofShape)?;
 
             VerticalPair::new(
                 RowMajorMatrixView::new_row(&aux_local_ext),
@@ -147,9 +149,11 @@ where
 }
 
 // Helper: convert a flattened base-field row into EF elements.
-fn row_to_ext<SC: StarkGenericConfig>(row: &[SC::Challenge]) -> Option<Vec<SC::Challenge>> {
+fn verifier_row_to_ext<SC: StarkGenericConfig>(
+    row: &[SC::Challenge],
+) -> Option<Vec<SC::Challenge>> {
     let dim = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
-    if row.len() % dim != 0 {
+    if !row.len().is_multiple_of(dim) {
         return None;
     }
 

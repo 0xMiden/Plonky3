@@ -1,6 +1,5 @@
 use p3_field::{BasedVectorSpace, ExtensionField, Field};
 
-
 /// Helper: convert a flattened base-field row (slice of `F`) into a Vec<EF>
 #[allow(dead_code)]
 pub(crate) fn prover_row_to_ext<F, EF>(row: &[F]) -> Vec<EF>
@@ -20,7 +19,7 @@ where
     EF: ExtensionField<F> + BasedVectorSpace<F>,
 {
     let dim = EF::DIMENSION;
-    if row.len() % dim != 0 {
+    if !row.len().is_multiple_of(dim) {
         return None;
     }
 
