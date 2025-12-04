@@ -1,7 +1,4 @@
-use p3_field::{BasedVectorSpace, ExtensionField, Field, PrimeCharacteristicRing};
-use p3_uni_stark::StarkGenericConfig;
-
-use crate::Val;
+use p3_field::{BasedVectorSpace, ExtensionField, Field};
 
 /// Helper: convert a flattened base-field row (slice of `F`) into a Vec<EF>
 #[allow(dead_code)]

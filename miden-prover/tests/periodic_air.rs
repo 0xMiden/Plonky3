@@ -2,13 +2,13 @@ use core::borrow::Borrow;
 
 use miden_air::{MidenAir, MidenAirBuilder};
 use miden_prover::{StarkConfig, prove, verify};
-use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField64};
 use p3_fri::{TwoAdicFriPcs, create_test_fri_params};
+use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
@@ -147,13 +147,13 @@ impl<F> Borrow<FibPeriodicRow<F>> for [F] {
     }
 }
 
-type Val = BabyBear;
-type Perm = Poseidon2BabyBear<16>;
+type Val = Goldilocks;
+type Perm = Poseidon2Goldilocks<16>;
 type MyHash = PaddingFreeSponge<Perm, 16, 8, 8>;
 type MyCompress = TruncatedPermutation<Perm, 2, 8, 16>;
 type ValMmcs =
     MerkleTreeMmcs<<Val as Field>::Packing, <Val as Field>::Packing, MyHash, MyCompress, 8>;
-type Challenge = BinomialExtensionField<Val, 4>;
+type Challenge = BinomialExtensionField<Val, 2>;
 type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
 type Challenger = DuplexChallenger<Val, Perm, 16, 8>;
 type Dft = Radix2DitParallel<Val>;
@@ -176,9 +176,9 @@ fn test_fibonacci_periodic_impl(a: u64, b: u64, n: usize, x: u64, log_final_poly
 
     let config = MyConfig::new(pcs, challenger);
     let pis = vec![
-        BabyBear::from_u64(a),
-        BabyBear::from_u64(b),
-        BabyBear::from_u64(x),
+        Goldilocks::from_u64(a),
+        Goldilocks::from_u64(b),
+        Goldilocks::from_u64(x),
     ];
 
     let air = FibonacciPeriodicAir::new();
@@ -227,24 +227,25 @@ fn test_fibonacci_periodic_wrong_selector() {
 
     // Generate trace with incorrect selector values
     let n = 1 << 3;
-    let mut trace = RowMajorMatrix::new(BabyBear::zero_vec(n * 3), 3);
-    let (prefix, rows, suffix) = unsafe { trace.values.align_to_mut::<FibPeriodicRow<BabyBear>>() };
+    let mut trace = RowMajorMatrix::new(Goldilocks::zero_vec(n * 3), 3);
+    let (prefix, rows, suffix) =
+        unsafe { trace.values.align_to_mut::<FibPeriodicRow<Goldilocks>>() };
     assert!(prefix.is_empty(), "Alignment should match");
     assert!(suffix.is_empty(), "Alignment should match");
 
-    rows[0] = FibPeriodicRow::new(BabyBear::ZERO, BabyBear::ONE, BabyBear::ZERO);
+    rows[0] = FibPeriodicRow::new(Goldilocks::ZERO, Goldilocks::ONE, Goldilocks::ZERO);
     for i in 1..n {
         rows[i].a = rows[i - 1].b;
         rows[i].b = rows[i - 1].a + rows[i - 1].b;
         // WRONG: set all selectors to 0 instead of alternating
-        rows[i].selector = BabyBear::ZERO;
+        rows[i].selector = Goldilocks::ZERO;
     }
 
     let fri_params = create_test_fri_params(challenge_mmcs, 2);
     let pcs = Pcs::new(dft, val_mmcs, fri_params);
     let challenger = Challenger::new(perm);
     let config = MyConfig::new(pcs, challenger);
-    let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u32(21)];
+    let pis = vec![Goldilocks::ZERO, Goldilocks::ONE, Goldilocks::from_u32(21)];
 
     let air = FibonacciPeriodicAir::new();
 

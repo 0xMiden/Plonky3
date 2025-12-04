@@ -265,12 +265,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    
-    use p3_goldilocks::Goldilocks;
+
     use p3_field::Field;
     use p3_field::PrimeCharacteristicRing;
     use p3_field::coset::TwoAdicMultiplicativeCoset;
     use p3_field::extension::BinomialExtensionField;
+    use p3_goldilocks::Goldilocks;
     use p3_interpolation::interpolate_coset;
     use p3_matrix::dense::RowMajorMatrix;
 
