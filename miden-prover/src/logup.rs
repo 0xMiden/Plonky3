@@ -225,7 +225,7 @@ mod tests {
 
         // Verify the last running sum is zero (permutation property)
         // Running sum starts at column 4 (third ext field = columns 4-5)
-        let last_running_sum = aux_trace.get(3, 4).unwrap().clone();
+        let last_running_sum = aux_trace.get(3, 4).unwrap();
         assert_eq!(last_running_sum, F::ZERO);
     }
 
@@ -254,9 +254,9 @@ mod tests {
 
         // Verify first row initialization: running_sum[0] = t[0] - w[0]
         // t0 is at columns 0-1, w0 is at columns 2-3, running_sum_0 is at columns 4-5
-        let t0 = aux_trace.get(0, 0).unwrap().clone();
-        let w0 = aux_trace.get(0, 2).unwrap().clone();
-        let running_sum_0 = aux_trace.get(0, 4).unwrap().clone();
+        let t0 = aux_trace.get(0, 0).unwrap();
+        let w0 = aux_trace.get(0, 2).unwrap();
+        let running_sum_0 = aux_trace.get(0, 4).unwrap();
         assert_eq!(running_sum_0, t0 - w0);
     }
 

@@ -280,7 +280,7 @@ mod tests {
             // ======================
             // aux trace
             // ======================
-            if <Self as MidenAir<F, EF>>::num_randomness(&self) != 0 {
+            if <Self as MidenAir<F, EF>>::num_randomness(self) != 0 {
                 // Note: For now this is hard coded with LogUp
                 // To show that {x_i} and {y_i} are permutations of each other
                 // We compute
@@ -341,14 +341,14 @@ mod tests {
     }
 
     // A very simple permutation
-    fn permute<F: Field>(x: &Vec<F>) -> Vec<F> {
+    fn permute<F: Field>(x: &[F]) -> Vec<F> {
         x.iter().rev().cloned().collect::<Vec<F>>()
     }
 
     // Generate a main trace.
     // The first column is incremental
     // The second column is the rev of the first column
-    fn gen_main(main_col: &Vec<Goldilocks>) -> RowMajorMatrix<Goldilocks> {
+    fn gen_main(main_col: &[Goldilocks]) -> RowMajorMatrix<Goldilocks> {
         let main_rev = permute(main_col);
         let main_values = main_col
             .iter()
@@ -361,7 +361,7 @@ mod tests {
 
     // Generate the aux trace for logup arguments (flattened for storage).
     fn gen_aux(
-        main_col: &Vec<Goldilocks>,
+        main_col: &[Goldilocks],
         aux_randomness: &BinomialExtensionField<Goldilocks, 2>,
     ) -> RowMajorMatrix<Goldilocks> {
         use p3_matrix::dense::DenseMatrix;
@@ -414,7 +414,7 @@ mod tests {
         // | 3  | 2  | 1/(r-3) | 1/(r-2) | .. |
         // | 4  | 1  | 1/(r-4) | 1/(r-1) | .. |
         let air = RowLogicAir { with_aux: true };
-        let main_col = (1..=len).map(|i| Goldilocks::new(i)).collect();
+        let main_col: Vec<_> = (1..=len).map(Goldilocks::new).collect();
         let main = gen_main(&main_col);
 
         let aux_randomness =
@@ -429,7 +429,7 @@ mod tests {
             &air,
             &main,
             &Some(aux),
-            &aux_randomness.as_basis_coefficients_slice(),
+            aux_randomness.as_basis_coefficients_slice(),
             &vec![Goldilocks::new(len), Goldilocks::new(1)],
         );
     }

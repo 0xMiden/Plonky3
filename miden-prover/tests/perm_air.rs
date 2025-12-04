@@ -16,14 +16,22 @@ use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
+type AuxBuilder<F, EF> = Box<dyn Fn(&RowMajorMatrix<F>, &[EF]) -> RowMajorMatrix<F> + Send + Sync>;
+
 /// An Air that enforce Fibonacci sequence and permutations.
 pub struct FibPermAir<F, EF> {
-    aux_builder: Option<Box<dyn Fn(&RowMajorMatrix<F>, &[EF]) -> RowMajorMatrix<F> + Send + Sync>>,
+    aux_builder: Option<AuxBuilder<F, EF>>,
 }
 
 impl<F: Field, EF: ExtensionField<F>> FibPermAir<F, EF> {
     pub fn new() -> Self {
         Self { aux_builder: None }
+    }
+}
+
+impl<F: Field, EF: ExtensionField<F>> Default for FibPermAir<F, EF> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -106,23 +114,23 @@ impl<F: Field, EF: ExtensionField<F>> MidenAir<F, EF> for FibPermAir<F, EF> {
             let aux_local = aux.row_slice(0).expect("Matrix is empty?");
             let aux_next = aux.row_slice(1).expect("Matrix only has 1 row?");
 
-            let t_i: AB::ExprEF = aux_local[0].clone().into();
-            let w_i: AB::ExprEF = aux_local[1].clone().into();
-            let s_i: AB::ExprEF = aux_local[2].clone().into();
-            let t_next: AB::ExprEF = aux_next[0].clone().into();
-            let w_next: AB::ExprEF = aux_next[1].clone().into();
-            let s_next: AB::ExprEF = aux_next[2].clone().into();
+            let t_i: AB::ExprEF = aux_local[0].into();
+            let w_i: AB::ExprEF = aux_local[1].into();
+            let s_i: AB::ExprEF = aux_local[2].into();
+            let t_next: AB::ExprEF = aux_next[0].into();
+            let w_next: AB::ExprEF = aux_next[1].into();
+            let s_next: AB::ExprEF = aux_next[2].into();
 
             let r_expr = builder.permutation_randomness()[0].into();
 
             // t * (r - x_i) == 1
             {
-                let xi_ext: AB::ExprEF = AB::Expr::from(xi.clone()).into();
+                let xi_ext: AB::ExprEF = AB::Expr::from(xi).into();
                 builder.assert_one_ext(t_i.clone() * (r_expr.clone() - xi_ext));
             }
             // w * (r - y_i) == 1
             {
-                let yi_ext: AB::ExprEF = AB::Expr::from(yi.clone()).into();
+                let yi_ext: AB::ExprEF = AB::Expr::from(yi).into();
                 builder.assert_one_ext(w_i.clone() * (r_expr - yi_ext));
             }
 
@@ -130,7 +138,7 @@ impl<F: Field, EF: ExtensionField<F>> MidenAir<F, EF> for FibPermAir<F, EF> {
             {
                 builder
                     .when_first_row()
-                    .assert_eq_ext(s_i.clone(), t_i.clone() - w_i.clone());
+                    .assert_eq_ext(s_i.clone(), t_i - w_i);
                 builder
                     .when_transition()
                     .assert_eq_ext(s_next, s_i.clone() + t_next - w_next);
@@ -158,7 +166,7 @@ pub fn generate_trace_rows<F: PrimeField64>(a: u64, b: u64, n: usize) -> RowMajo
     }
 
     for i in 0..n {
-        rows[i].m3 = rows[n - i - 1].m2
+        rows[i].m3 = rows[n - i - 1].m2;
     }
 
     trace

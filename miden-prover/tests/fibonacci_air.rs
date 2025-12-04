@@ -24,8 +24,14 @@ use rand::rngs::SmallRng;
 pub struct FibonacciAir;
 
 impl FibonacciAir {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
+    }
+}
+
+impl Default for FibonacciAir {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
