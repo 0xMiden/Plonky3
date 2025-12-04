@@ -65,8 +65,7 @@ pub trait MidenAir<F, EF>: Sync {
         &self,
         _main: &RowMajorMatrix<F>,
         _challenges: &[EF],
-    ) -> Option<RowMajorMatrix<EF>>
-    {
+    ) -> Option<RowMajorMatrix<EF>> {
         None
     }
 
