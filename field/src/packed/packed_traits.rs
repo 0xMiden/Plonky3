@@ -319,7 +319,20 @@ pub trait PackedFieldExtension<
     #[must_use]
     fn from_ext_slice(ext_slice: &[ExtField]) -> Self;
 
-    /// Given a iterator of packed extension field elements, convert to an iterator of
+    /// Unpack this packed extension field element into a slice of extension field elements.
+    ///
+    /// The output slice `out` must have length at least `BaseField::Packing::WIDTH`.
+    ///
+    /// This performs the inverse transformation to `from_ext_slice`.
+    #[inline]
+    fn to_ext_slice(&self, out: &mut [ExtField]) {
+        let packed_coeffs = self.as_basis_coefficients_slice();
+        for i in 0..BaseField::Packing::WIDTH {
+            out[i] = ExtField::from_basis_coefficients_fn(|j| packed_coeffs[j].as_slice()[i]);
+        }
+    }
+
+    /// Given an iterator of packed extension field elements, convert to an iterator of
     /// extension field elements.
     ///
     /// This performs the inverse transformation to `from_ext_slice`.

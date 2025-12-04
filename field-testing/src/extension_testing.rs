@@ -1,3 +1,4 @@
+use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_field::{ExtensionField, Field, PackedFieldExtension, PackedValue};
@@ -89,8 +90,8 @@ where
     );
 }
 
-/// Ensure that the methods `from_ext_slice`, `to_ext_iter`, `packed_ext_powers` and `packed_ext_powers_capped`
-/// all work as expected.
+/// Ensure that the methods `from_ext_slice`, `to_ext_slice`, `to_ext_iter`, `packed_ext_powers`
+/// and `packed_ext_powers_capped` all work as expected.
 pub fn test_packed_extension<F, EF>()
 where
     F: Field,
@@ -102,9 +103,15 @@ where
     let extension_elements: Vec<EF> = (0..width).map(|_| rng.random()).collect();
 
     let packed_extension = EF::ExtensionPacking::from_ext_slice(&extension_elements);
+
+    // Test to_ext_slice
+    let mut unpacked_slice = vec![EF::ZERO; width];
+    packed_extension.to_ext_slice(&mut unpacked_slice);
+    assert_eq!(extension_elements, unpacked_slice);
+
+    // Test to_ext_iter
     let unpacked_extension: Vec<EF> =
         EF::ExtensionPacking::to_ext_iter([packed_extension]).collect();
-
     assert_eq!(extension_elements, unpacked_extension);
 
     let base_powers = extension_elements[0].powers().collect_n(10 * width);
