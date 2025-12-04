@@ -4,6 +4,7 @@
 
 extern crate alloc;
 
+mod check_constraints;
 mod config;
 mod folder;
 mod proof;
@@ -13,8 +14,6 @@ mod symbolic_expression;
 mod symbolic_variable;
 mod utils;
 mod verifier;
-
-mod check_constraints;
 
 pub use check_constraints::*;
 pub use config::*;

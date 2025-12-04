@@ -1,3 +1,4 @@
+#[cfg(debug_assertions)]
 mod check_constraints;
 mod config;
 mod folder;
@@ -11,6 +12,7 @@ mod symbolic_variable;
 mod util;
 mod verifier;
 
+#[cfg(debug_assertions)]
 pub use check_constraints::*;
 pub use config::*;
 pub use folder::*;

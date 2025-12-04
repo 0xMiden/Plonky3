@@ -1,7 +1,4 @@
 use miden_air::{MidenAir, MidenAirBuilder};
-// use p3_air::{
-//     AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder, PermutationAirBuilder,
-// };
 use p3_field::{BasedVectorSpace, ExtensionField, Field};
 use p3_matrix::Matrix;
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
@@ -23,7 +20,6 @@ use crate::util::prover_row_to_ext;
 /// - `aux_randomness`: The randomness values that are used to generate `aux` trace
 /// - `public_values`: Public values provided to the builder
 #[instrument(name = "check constraints", skip_all)]
-#[allow(dead_code)]
 pub(crate) fn check_constraints<F, EF, A>(
     air: &A,
     main: &RowMajorMatrix<F>,
@@ -248,9 +244,9 @@ where
 #[cfg(test)]
 mod tests {
 
-    use p3_baby_bear::BabyBear;
     use p3_field::PrimeCharacteristicRing;
     use p3_field::extension::BinomialExtensionField;
+    use p3_goldilocks::Goldilocks;
 
     use super::*;
 
@@ -302,7 +298,7 @@ mod tests {
             // ======================
             // aux trace
             // ======================
-            if <Self as MidenAir<F, EF>>::num_randomness(&self) != 0 {
+            if <Self as MidenAir<F, EF>>::num_randomness(self) != 0 {
                 // Note: For now this is hard coded with LogUp
                 // To show that {x_i} and {y_i} are permutations of each other
                 // We compute
@@ -363,14 +359,14 @@ mod tests {
     }
 
     // A very simple permutation
-    fn permute<F: Field>(x: &Vec<F>) -> Vec<F> {
+    fn permute<F: Field>(x: &[F]) -> Vec<F> {
         x.iter().rev().cloned().collect::<Vec<F>>()
     }
 
     // Generate a main trace.
     // The first column is incremental
     // The second column is the rev of the first column
-    fn gen_main(main_col: &Vec<BabyBear>) -> RowMajorMatrix<BabyBear> {
+    fn gen_main(main_col: &[Goldilocks]) -> RowMajorMatrix<Goldilocks> {
         let main_rev = permute(main_col);
         let main_values = main_col
             .iter()
@@ -383,9 +379,9 @@ mod tests {
 
     // Generate the aux trace for logup arguments (flattened for storage).
     fn gen_aux(
-        main_col: &Vec<BabyBear>,
-        aux_randomness: &BinomialExtensionField<BabyBear, 4>,
-    ) -> RowMajorMatrix<BabyBear> {
+        main_col: &[Goldilocks],
+        aux_randomness: &BinomialExtensionField<Goldilocks, 2>,
+    ) -> RowMajorMatrix<Goldilocks> {
         use p3_matrix::dense::DenseMatrix;
         // Build a DenseMatrix main trace with width 2
         let main_rev = permute(main_col);
@@ -396,7 +392,7 @@ mod tests {
             .collect();
         let main = DenseMatrix::new(main_values, 2);
         // Use the library generator and return the flattened aux
-        super::super::generate_logup_trace::<BinomialExtensionField<BabyBear, 4>, _>(
+        super::super::generate_logup_trace::<BinomialExtensionField<Goldilocks, 2>, _>(
             &main,
             aux_randomness,
         )
@@ -408,19 +404,18 @@ mod tests {
         // Last row must match public values [4, 4]
         let air = RowLogicAir { with_aux: false };
         let values = vec![
-            BabyBear::ONE,    // Row 0
-            BabyBear::new(2), // Row 1
-            BabyBear::new(3), // Row 2
-            BabyBear::new(4), // Row 3 (last)
+            Goldilocks::ONE,    // Row 0
+            Goldilocks::new(2), // Row 1
+            Goldilocks::new(3), // Row 2
+            Goldilocks::new(4), // Row 3 (last)
         ];
         let main = gen_main(&values);
-        println!("main: {:?}", main);
-        check_constraints::<_, BinomialExtensionField<BabyBear, 4>, _>(
+        check_constraints::<_, BinomialExtensionField<Goldilocks, 2>, _>(
             &air,
             &main,
             &None,
             &[],
-            &vec![BabyBear::new(4), BabyBear::new(1)],
+            &vec![Goldilocks::new(4), Goldilocks::new(1)],
         );
     }
 
@@ -437,28 +432,23 @@ mod tests {
         // | 3  | 2  | 1/(r-3) | 1/(r-2) | .. |
         // | 4  | 1  | 1/(r-4) | 1/(r-1) | .. |
         let air = RowLogicAir { with_aux: true };
-        let main_col = (1..=len).map(|i| BabyBear::new(i)).collect();
+        let main_col: Vec<_> = (1..=len).map(Goldilocks::new).collect();
         let main = gen_main(&main_col);
 
-        let aux_randomness = BinomialExtensionField::<BabyBear, 4>::from_basis_coefficients_slice(
-            [
-                BabyBear::new(1005),
-                BabyBear::new(10010),
-                BabyBear::new(10015),
-                BabyBear::new(10020),
-            ]
-            .as_ref(),
-        )
-        .unwrap();
+        let aux_randomness =
+            BinomialExtensionField::<Goldilocks, 2>::from_basis_coefficients_slice(
+                [Goldilocks::new(1005), Goldilocks::new(10010)].as_ref(),
+            )
+            .unwrap();
 
         let aux = gen_aux(&main_col, &aux_randomness);
 
-        check_constraints::<BabyBear, BinomialExtensionField<BabyBear, 4>, _>(
+        check_constraints::<Goldilocks, BinomialExtensionField<Goldilocks, 2>, _>(
             &air,
             &main,
             &Some(aux),
-            &aux_randomness.as_basis_coefficients_slice(),
-            &vec![BabyBear::new(len), BabyBear::new(1)],
+            aux_randomness.as_basis_coefficients_slice(),
+            &vec![Goldilocks::new(len), Goldilocks::new(1)],
         );
     }
 
@@ -468,22 +458,22 @@ mod tests {
         // Row 2 does not equal row 1 + 1 → should fail on transition from row 1 to 2.
         let air = RowLogicAir { with_aux: false };
         let values = vec![
-            BabyBear::ONE,
-            BabyBear::ONE, // Row 0
-            BabyBear::new(2),
-            BabyBear::new(2), // Row 1
-            BabyBear::new(5),
-            BabyBear::new(5), // Row 2 (wrong)
-            BabyBear::new(6),
-            BabyBear::new(6), // Row 3
+            Goldilocks::ONE,
+            Goldilocks::ONE, // Row 0
+            Goldilocks::new(2),
+            Goldilocks::new(2), // Row 1
+            Goldilocks::new(5),
+            Goldilocks::new(5), // Row 2 (wrong)
+            Goldilocks::new(6),
+            Goldilocks::new(6), // Row 3
         ];
         let main = RowMajorMatrix::new(values, 2);
-        check_constraints::<_, BinomialExtensionField<BabyBear, 4>, _>(
+        check_constraints::<_, BinomialExtensionField<Goldilocks, 2>, _>(
             &air,
             &main,
             &None,
             &[],
-            &vec![BabyBear::new(6); 2],
+            &vec![Goldilocks::new(6); 2],
         );
     }
 
@@ -493,23 +483,23 @@ mod tests {
         // The transition logic is fine, but public value check fails at the last row.
         let air = RowLogicAir { with_aux: false };
         let values = vec![
-            BabyBear::ONE,
-            BabyBear::ONE, // Row 0
-            BabyBear::new(2),
-            BabyBear::new(2), // Row 1
-            BabyBear::new(3),
-            BabyBear::new(3), // Row 2
-            BabyBear::new(4),
-            BabyBear::new(4), // Row 3
+            Goldilocks::ONE,
+            Goldilocks::ONE, // Row 0
+            Goldilocks::new(2),
+            Goldilocks::new(2), // Row 1
+            Goldilocks::new(3),
+            Goldilocks::new(3), // Row 2
+            Goldilocks::new(4),
+            Goldilocks::new(4), // Row 3
         ];
         let main = RowMajorMatrix::new(values, 2);
         // Wrong public value on column 1
-        check_constraints::<_, BinomialExtensionField<BabyBear, 4>, _>(
+        check_constraints::<_, BinomialExtensionField<Goldilocks, 2>, _>(
             &air,
             &main,
             &None,
             &[],
-            &vec![BabyBear::new(4), BabyBear::new(5)],
+            &vec![Goldilocks::new(4), Goldilocks::new(5)],
         );
     }
 
@@ -520,16 +510,16 @@ mod tests {
         // Here: is_transition == false ⇒ so no assertions are enforced.
         let air = RowLogicAir { with_aux: false };
         let values = vec![
-            BabyBear::new(99),
-            BabyBear::new(77), // Row 0
+            Goldilocks::new(99),
+            Goldilocks::new(77), // Row 0
         ];
         let main = RowMajorMatrix::new(values, 2);
-        check_constraints::<_, BinomialExtensionField<BabyBear, 4>, _>(
+        check_constraints::<_, BinomialExtensionField<Goldilocks, 2>, _>(
             &air,
             &main,
             &None,
             &[],
-            &vec![BabyBear::new(99), BabyBear::new(77)],
+            &vec![Goldilocks::new(99), Goldilocks::new(77)],
         );
     }
 }

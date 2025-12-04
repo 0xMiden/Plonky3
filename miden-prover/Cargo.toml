@@ -28,16 +28,14 @@ serde = { workspace = true, features = ["derive", "alloc"] }
 tracing.workspace = true
 
 [dev-dependencies]
-p3-baby-bear.workspace = true
 p3-challenger.workspace = true
-p3-circle.workspace = true
 p3-commit = { workspace = true, features = ["test-utils"] }
 p3-dft.workspace = true
 p3-fri.workspace = true
+p3-goldilocks.workspace = true
 p3-keccak.workspace = true
 p3-matrix.workspace = true
 p3-merkle-tree.workspace = true
-p3-mersenne-31.workspace = true
 p3-symmetric.workspace = true
 
 postcard = { workspace = true, features = ["alloc"] }

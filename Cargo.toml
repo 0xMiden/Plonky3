@@ -26,7 +26,7 @@ members = [
     "mds",
     "merkle-tree",
     "mersenne-31",
-    "miden-air", 
+    "miden-air",
     "miden-prover",
     "monolith",
     "monty-31",
@@ -133,7 +133,6 @@ p3-uni-stark = { path = "uni-stark", version = "0.3.0" }
 p3-util = { path = "util", version = "0.3.0" }
 
 miden-air = { path = "miden-air", version = "0.3.0" }
-miden-prover = { path = "miden-prover", version = "0.3.0" }
 
 [workspace.package]
 # General description field used for the sub-crates that are currently missing a description.

@@ -265,7 +265,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use p3_baby_bear::BabyBear;
+    
+    use p3_goldilocks::Goldilocks;
     use p3_field::Field;
     use p3_field::PrimeCharacteristicRing;
     use p3_field::coset::TwoAdicMultiplicativeCoset;
@@ -273,8 +274,8 @@ mod tests {
     use p3_interpolation::interpolate_coset;
     use p3_matrix::dense::RowMajorMatrix;
 
-    type Val = BabyBear;
-    type Challenge = BinomialExtensionField<Val, 4>;
+    type Val = Goldilocks;
+    type Challenge = BinomialExtensionField<Val, 2>;
 
     /// Test that compute_periodic_on_quotient produces the same results as the naive method
     /// where we unpack the periodic table into a full column and do interpolation for the whole column

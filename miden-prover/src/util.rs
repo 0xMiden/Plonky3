@@ -16,19 +16,21 @@ where
 }
 
 // Helper: convert a flattened base-field row into EF elements.
-pub(crate) fn verifier_row_to_ext<SC: StarkGenericConfig>(
-    row: &[SC::Challenge],
-) -> Option<Vec<SC::Challenge>> {
-    let dim = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
-    if row.len() % dim != 0 {
+pub(crate) fn verifier_row_to_ext<F, EF>(row: &[EF]) -> Option<Vec<EF>>
+where
+    F: Field,
+    EF: ExtensionField<F> + BasedVectorSpace<F>,
+{
+    let dim = EF::DIMENSION;
+    if !row.len().is_multiple_of(dim) {
         return None;
     }
 
     let mut out = Vec::with_capacity(row.len() / dim);
     for chunk in row.chunks(dim) {
-        let mut acc = SC::Challenge::ZERO;
+        let mut acc = EF::ZERO;
         for (i, limb) in chunk.iter().enumerate() {
-            let basis = SC::Challenge::ith_basis_element(i).unwrap();
+            let basis = EF::ith_basis_element(i).unwrap();
             acc += basis * *limb;
         }
         out.push(acc);

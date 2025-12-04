@@ -187,14 +187,14 @@ fn is_permutation<F: Field>(col1: &[F], col2: &[F]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use p3_baby_bear::BabyBear;
     use p3_field::PrimeCharacteristicRing;
     use p3_field::extension::BinomialExtensionField;
+    use p3_goldilocks::Goldilocks;
 
     use super::*;
 
-    type F = BabyBear;
-    type EF = BinomialExtensionField<F, 4>;
+    type F = Goldilocks;
+    type EF = BinomialExtensionField<F, 2>;
 
     #[test]
     fn test_simple_permutation() {
@@ -219,12 +219,13 @@ mod tests {
 
         let aux_trace = generate_logup_trace::<EF, _>(&main_trace, &randomness);
 
-        // Check dimensions: 4 rows x 3 ext columns
+        // Check dimensions: 4 rows x 3 ext columns (each ext field element is 2 base field elements)
         assert_eq!(aux_trace.height(), 4);
-        assert_eq!(aux_trace.width(), 12);
+        assert_eq!(aux_trace.width(), 6);
 
         // Verify the last running sum is zero (permutation property)
-        let last_running_sum = aux_trace.get(3, 8).unwrap().clone();
+        // Running sum starts at column 4 (third ext field = columns 4-5)
+        let last_running_sum = aux_trace.get(3, 4).unwrap();
         assert_eq!(last_running_sum, F::ZERO);
     }
 
@@ -247,14 +248,15 @@ mod tests {
 
         let aux_trace = generate_logup_trace::<EF, _>(&main_trace, &randomness);
 
-        // Verify dimensions
+        // Verify dimensions (3 ext field columns x 2 base field elements per ext field = 6)
         assert_eq!(aux_trace.height(), 3);
-        assert_eq!(aux_trace.width(), 12);
+        assert_eq!(aux_trace.width(), 6);
 
         // Verify first row initialization: running_sum[0] = t[0] - w[0]
-        let t0 = aux_trace.get(0, 0).unwrap().clone();
-        let w0 = aux_trace.get(0, 4).unwrap().clone();
-        let running_sum_0 = aux_trace.get(0, 8).unwrap().clone();
+        // t0 is at columns 0-1, w0 is at columns 2-3, running_sum_0 is at columns 4-5
+        let t0 = aux_trace.get(0, 0).unwrap();
+        let w0 = aux_trace.get(0, 2).unwrap();
+        let running_sum_0 = aux_trace.get(0, 4).unwrap();
         assert_eq!(running_sum_0, t0 - w0);
     }
 

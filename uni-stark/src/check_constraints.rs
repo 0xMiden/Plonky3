@@ -1,12 +1,16 @@
+#[cfg(debug_assertions)]
 use alloc::vec::Vec;
 
 use p3_air::{
     AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder, PermutationAirBuilder,
 };
 use p3_field::{ExtensionField, Field};
+#[cfg(debug_assertions)]
 use p3_matrix::Matrix;
+#[cfg(debug_assertions)]
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_matrix::stack::ViewPair;
+#[cfg(debug_assertions)]
 use tracing::instrument;
 
 /// Runs constraint checks using a given AIR definition and trace matrix.
@@ -57,10 +61,10 @@ pub(crate) fn check_constraints<F, EF, A>(
         #[allow(clippy::option_if_let_else)]
         let aux = if let Some(aux_matrix) = aux_trace.as_ref() {
             let aux_local = unsafe { aux_matrix.row_slice_unchecked(row_index) };
-            aux_local_ext = row_to_ext::<F, EF>(&aux_local);
+            aux_local_ext = prover_row_to_ext::<F, EF>(&aux_local);
 
             let aux_next = unsafe { aux_matrix.row_slice_unchecked(row_index_next) };
-            aux_next_ext = row_to_ext::<F, EF>(&aux_next);
+            aux_next_ext = prover_row_to_ext::<F, EF>(&aux_next);
 
             p3_matrix::stack::VerticalPair::new(
                 RowMajorMatrixView::new_row(&aux_local_ext),
@@ -108,9 +112,9 @@ pub(crate) fn check_constraints<F, EF, A>(
     });
 }
 
+#[cfg(debug_assertions)]
 /// Helper: convert a flattened base-field row (slice of `F`) into a Vec<EF>
-#[allow(dead_code)]
-fn row_to_ext<F, EF>(row: &[F]) -> Vec<EF>
+fn prover_row_to_ext<F, EF>(row: &[F]) -> Vec<EF>
 where
     F: Field,
     EF: ExtensionField<F> + p3_field::BasedVectorSpace<F>,
@@ -246,6 +250,7 @@ impl<'a, F: Field, EF: ExtensionField<F>> PairBuilder for DebugConstraintBuilder
     }
 }
 
+#[cfg(debug_assertions)]
 #[cfg(test)]
 mod tests {
     use alloc::vec;

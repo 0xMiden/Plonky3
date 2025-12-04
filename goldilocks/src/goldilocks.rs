@@ -37,7 +37,7 @@ pub struct Goldilocks {
 }
 
 impl Goldilocks {
-    pub(crate) const fn new(value: u64) -> Self {
+    pub const fn new(value: u64) -> Self {
         Self { value }
     }
 
