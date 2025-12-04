@@ -3,20 +3,18 @@ use miden_air::MidenAir;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{
-    BasedVectorSpace, Field, PackedFieldExtension, PackedValue, PrimeCharacteristicRing,
-    TwoAdicField, batch_multiplicative_inverse,
+    BasedVectorSpace, PackedFieldExtension, PackedValue, PrimeCharacteristicRing, TwoAdicField,
 };
-use p3_interpolation::interpolate_coset_with_precomputation;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 use p3_util::log2_strict_usize;
-use std::collections::BTreeMap;
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{
     Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
     StarkGenericConfig, Val, get_log_quotient_degree, get_symbolic_constraints,
+    periodic_tables::compute_periodic_on_quotient,
 };
 
 /// Commits the preprocessed trace if present.
@@ -35,150 +33,6 @@ where
 {
     debug_span!("commit to preprocessed trace")
         .in_scope(|| pcs.commit([(trace_domain, preprocessed)]))
-}
-
-/// Computes evaluations of periodic columns over the entire quotient domain.
-///
-/// Periodic columns are those that repeat with a period dividing the trace length.
-/// Instead of committing to these columns, both prover and verifier compute them
-/// independently. During proving, we need to evaluate these periodic columns at all
-/// points in the quotient domain to compute the quotient polynomial.
-///
-/// # How it works
-///
-/// For a periodic column with period `P` and trace height `N` where `P | N`:
-/// 1. We group columns by their period to batch interpolation for efficiency
-/// 2. For each group with period `P`:
-///    - For each quotient point `z`, we compute `y = (z / shift)^(N/P)`
-///    - We interpolate the column over its minimal cycle (subgroup of size `P`)
-///      using barycentric Lagrange interpolation to evaluate at `y`
-/// 3. This produces a full evaluation vector for each periodic column over the
-///    quotient domain
-///
-/// # Complexity
-///
-/// The work scales as `sum(period_i) + quotient_size * (#period groups)` rather
-/// than `trace_height^2`. This is because:
-/// - We only interpolate over each column's minimal period `P_i`, not the full trace height
-/// - We group columns by period, so columns with the same period share interpolation work
-/// - For each quotient point, we do O(period) work per group
-///
-/// This assumes a two-adic trace domain so each period divides the trace height
-/// and `rate_bits = log2(trace_height / period)` is integral.
-///
-/// # Arguments
-///
-/// * `periodic_table` - Vector of periodic columns, where each column is a vector
-///   of length equal to its period (a power of 2 that divides trace height)
-/// * `trace_domain` - The domain over which the trace is defined
-/// * `quotient_points` - Pre-computed evaluation points in the quotient domain
-///
-/// # Returns
-///
-/// `Some(Vec<Vec<Challenge>>)` where the outer vector corresponds to periodic columns
-/// and the inner vector contains evaluations over all quotient points. Returns `None`
-/// if the periodic table is empty.
-fn compute_periodic_on_quotient<SC>(
-    periodic_table: Vec<Vec<Val<SC>>>,
-    trace_domain: Domain<SC>,
-    quotient_points: &[SC::Challenge],
-) -> Option<Vec<Vec<SC::Challenge>>>
-where
-    SC: StarkGenericConfig,
-    Val<SC>: TwoAdicField,
-{
-    if periodic_table.is_empty() {
-        return None;
-    }
-
-    let trace_height = trace_domain.size();
-    let log_trace_height = log2_strict_usize(trace_height); // panics if trace_height is not a power of 2
-    let quotient_size = quotient_points.len();
-
-    // Undo the trace-domain shift to map points to the unshifted subgroup via mutiplying shift_inv.
-    // If trace_domain = g·H for generator g, we need points in H for interpolation.
-    let shift_inv = trace_domain.first_point().inverse();
-    // Group columns by period to batch interpolation per unique cycle size.
-    // we batch all columns with the same period and reuse the same subgroup, diffs, and inverse computations.
-    let mut grouped: BTreeMap<usize, Vec<(usize, Vec<Val<SC>>)>> = BTreeMap::new();
-    // Allocate output slots per periodic column; filled group by group below.
-    let mut evals = vec![Vec::new(); periodic_table.len()];
-
-    // first, let's group the columns of same length together.
-    // they share a same subgroup.
-    for (idx, col) in periodic_table.into_iter().enumerate() {
-        if col.is_empty() {
-            // Question: prob we should panic here? Is there a case where any column is empty?
-            evals[idx] = vec![SC::Challenge::ZERO; quotient_size];
-            continue;
-        }
-
-        debug_assert!(
-            trace_height % col.len() == 0,
-            "Periodic column length must divide trace length"
-        );
-
-        grouped.entry(col.len()).or_default().push((idx, col));
-    }
-
-    // for each subgroup, compute the eval via interpolation
-    for (period, cols) in grouped {
-        let log_period = log2_strict_usize(period);
-        debug_assert!(
-            log_trace_height >= log_period,
-            "Periodic column period cannot exceed trace height"
-        );
-        // rate_bits = log2(trace_height / period); i.e. rate = 2^{rate_bits} so y = z^{rate}.
-        let rate_bits = log_trace_height - log_period;
-        let subgroup: Vec<_> = Val::<SC>::two_adic_generator(log_period)
-            .powers()
-            .take(period)
-            .collect();
-
-        let num_cols = cols.len();
-        let mut subgroup_values = Vec::with_capacity(period * num_cols);
-        for row in 0..period {
-            for (_, col) in cols.iter() {
-                subgroup_values.push(col[row]);
-            }
-        }
-        let subgroup_matrix = RowMajorMatrix::new(subgroup_values, num_cols);
-
-        let mut group_evals = vec![Vec::with_capacity(quotient_size); num_cols];
-        for &z in quotient_points {
-            let unshifted = z * SC::Challenge::from(shift_inv);
-            let y = unshifted.exp_power_of_2(rate_bits); // y = (z / shift)^{trace_height / period}
-            let diffs: Vec<_> = subgroup
-                .iter()
-                .map(|&g| y - SC::Challenge::from(g))
-                .collect();
-            let diff_invs = batch_multiplicative_inverse(&diffs);
-
-            let values_at_y = interpolate_coset_with_precomputation(
-                &subgroup_matrix,
-                Val::<SC>::ONE,
-                y,
-                &subgroup,
-                &diff_invs,
-            );
-
-            // group_evals is column-major for this period group:
-            // - rows: quotient points (iterate all quotient_points)
-            // - cols: columns in this group (order matches `cols`)
-            // After filling:
-            //   group_evals[c] = [value_at(z0), value_at(z1), ..., value_at(zQ-1)]
-            // for column c in the group.
-            for (col_idx, value) in values_at_y.into_iter().enumerate() {
-                group_evals[col_idx].push(value);
-            }
-        }
-
-        for (local_idx, (orig_idx, _)) in cols.iter().enumerate() {
-            evals[*orig_idx] = group_evals[local_idx].clone();
-        }
-    }
-
-    Some(evals)
 }
 
 #[instrument(skip_all)]
@@ -611,8 +465,11 @@ where
         pts
     };
 
-    let periodic_on_quotient =
-        compute_periodic_on_quotient::<SC>(periodic_table, trace_domain, &quotient_points);
+    let periodic_on_quotient = compute_periodic_on_quotient::<Val<SC>, SC::Challenge>(
+        periodic_table,
+        trace_domain,
+        &quotient_points,
+    );
 
     // =====================================
     // normal eval section
