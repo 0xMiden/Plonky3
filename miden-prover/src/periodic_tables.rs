@@ -47,12 +47,13 @@
 //! - [`evaluate_periodic_at_point`]: Evaluates periodic columns at a single challenge point.
 //!   Called by the verifier to check constraint satisfaction.
 
+use std::collections::BTreeMap;
+
 use p3_commit::PolynomialSpace;
 use p3_field::{ExtensionField, TwoAdicField, batch_multiplicative_inverse};
 use p3_interpolation::interpolate_coset_with_precomputation;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_util::log2_strict_usize;
-use std::collections::BTreeMap;
 
 /// Computes evaluations of periodic columns over the entire quotient domain.
 ///
@@ -264,15 +265,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    use p3_field::Field;
-    use p3_field::PrimeCharacteristicRing;
     use p3_field::coset::TwoAdicMultiplicativeCoset;
     use p3_field::extension::BinomialExtensionField;
+    use p3_field::{Field, PrimeCharacteristicRing};
     use p3_goldilocks::Goldilocks;
     use p3_interpolation::interpolate_coset;
     use p3_matrix::dense::RowMajorMatrix;
+
+    use super::*;
 
     type Val = Goldilocks;
     type Challenge = BinomialExtensionField<Val, 2>;

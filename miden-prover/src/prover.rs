@@ -11,10 +11,10 @@ use p3_maybe_rayon::prelude::*;
 use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
+use crate::periodic_tables::compute_periodic_on_quotient;
 use crate::{
     Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
     StarkGenericConfig, Val, get_log_quotient_degree, get_symbolic_constraints,
-    periodic_tables::compute_periodic_on_quotient,
 };
 
 /// Commits the preprocessed trace if present.
