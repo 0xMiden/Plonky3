@@ -1,237 +1,412 @@
-//! DEEP/Barycentric precomputation helpers for lifted FRI.
+//! ## Purpose
 //!
-//! Overview
-//! - Goal: precompute weights to efficiently evaluate, for any power‑of‑two degree `d ≤ d_max`, a
-//!   polynomial `p` at `p(z^r)` using only its evaluations over the coset `(g*H)^r`, where
-//!   `r = d_max / d` and `|H| = d_max`. Intuitively, this is “lifting”: extending polynomials to a
-//!   common top degree and evaluating them at a consistent lifted point.
+//! Precompute data to evaluate polynomials at a single extension‑field point `z` using
+//! barycentric weights, and to reuse single‑point quotients needed for the DEEP polynomial.
 //!
-//! - Setup: let `K = gH` be a two‑adic coset with `|H| = d_max` (up to an optional blowup in this
-//!   crate’s representation; see below). Let `K_base = K[..d_max]` denote the degree‑max domain in
-//!   bit‑reversed order. For a point `z ∈ EF` with `z ∉ K`, the Lagrange basis on `K_base` is
+//! ## Setting and Notation
+//! - Work with functions `f: H → F`, where `H` is a smooth subgroup of order `d`.
+//! - Use a larger domain `gK` with `|K| = b × |H|` (blowup factor `b`), so `H = K^b`.
+//! - For subgroups `H^r ≤ H`, extend functions to `(gK)^r` and “lift” them to the common top
+//!   domain `H` via
+//!   `( f(X) : H^r → F ) ↦ ( f′(X) = f(X^r) : H → F )`.
+//! - We evaluate all lifted functions `f′` at `z`, so we want an O(domain) method to compute
+//!   `f(z^r)` for the smaller domain size.
 //!
+//! ## DEEP Quotient
+//! - Precompute the single‑point quotient `q(X) = 1/(z − X)` over `gK`.
+//! - This supports efficient computation of the DEEP quotient `(f(z) − f(X)) / (z − X)` by
+//!   point‑wise multiplication.
+//! - These values are reused when constructing barycentric evaluation weights.
+//!
+//! ## Barycentric Evaluation on `gH`
+//! For a smooth coset `gH` of order `d`, a polynomial `f` with `deg f < d` can be evaluated
+//! in `O(d)` time from its samples on `gH`, using precomputed weights.
+//!
+//! Definitions
 //! ```text
-//! L_{K_base, i}(X) = ((X/g)^{d_max} - 1)/d_max * k_i/(X - k_i),   with 0 <= i < d_max and k_i in K_base.
+//! V_H(X) = X^d − 1                                    (vanishing polynomial of H)
+//! L_{H,i}(X) = (V_H(X)/d) ⋅ h_i / (X − h_i)           (Lagrange basis on H)
+//! L_{H,i}(X/g) = ((X/g)^d − 1)/d ⋅ h_i / (X/g − h_i)
+//! L_{gH,i}(X) = V_{gH}(X)/d ⋅ (g h_i)/(X − g h_i)
 //! ```
 //!
-//!   Hence, given a column of `f`‑values over `K_base`, we compute `f(z)` as
-//!
+//! We use
 //! ```text
-//! f(z) = s_max(z) * sum_{i=0}^{d_max-1} ( k_i/(z - k_i) * f(k_i) ),
-//! where s_max(z) = ((z/g)^{d_max} - 1)/d_max.
-//!
-//! - Lifting to smaller domains: for a degree `d`, set `r = d_max / d` (a power of two). We want
-//!   `p(z^r)` from evaluations over `(g*H)^r`, using only the first `d` points in bit‑reversed
-//!   order. We precompute the unscaled weights `w_i(z) = k_i/(z - k_i)` on the degree‑max domain
-//!   and obtain the weights for the degree‑`d` domain by repeated neighbor additions:
+//! w_{gH,i}(z) = (g h_i)/(z − g h_i)   (unscaled weights)
+//! s_{gH}(z)   = V_{gH}(z)/d           (global scale)
+//! ```
+//! and the evaluation identity
+//! ```text
+//! f(z) = s_{gH}(z) ⋅ Σ_{i<d} w_{gH,i}(z) ⋅ f(g h_i).
 //! ```
 //!
-//! - Storage is bit‑reversed: adjacent entries of `K` are `(x, -x)`. This lets us descend to
-//!   squared cosets `(K_base)^{2^j}` by pairing neighbors.
+//! ## Lifting (Squaring Step)
+//! Let `d` be even and `H = g⟨h⟩` a smooth coset of the same order, ordered in bit‑reversed
+//! order. For all `0 ≤ i < d/2` we assume:
+//! - `H[2i+1] = −H[2i]`
+//! - `H^2[i] = H[2i]^2`
 //!
-//! Key identity used to descend heights
-//! - Unscaled Lagrange weights pair:
-//!
+//! Given `f: H^2 → F`, lift to `f′: H → F` with `f′(X) = f(X^2)`. Using the weights over `H`,
+//! the barycentric formula gives
 //! ```text
-//! x/(z - x) + (-x)/(z + x) = 2 * x^2 / (z^2 - x^2).
-//!
-//! Repeating this `log2(r)` times halves the length each step and yields the degree‑`d` weights.
-//! The same scaling factor `s_max(z)` applies at all subdomains; the required factor `r` is baked
-//! into the repeated neighbor additions.
+//! f(z^2) = f′(z)
+//!        = s_H(z) ⋅ Σ_{i<d/2} [ w_{H,2i}(z) ⋅ f′(H[2i]) + w_{H,2i+1}(z) ⋅ f′(H[2i+1]) ].
 //! ```
 //!
-//! Because we store `(x, -x)` as neighbors, each descent step is just a pairwise sum. Repeating
-//! produces the entire tower down to height 1. We reuse the same `s(z)` at every level—pairwise
-//! sums already encode the required `2^j` factor.
+//! Since `f′` is even and using the bit‑reversed order of `H`:
+//! - `f′(H[2i])   = f(H[2i]^2) = f(H^2[i])`
+//! - `f′(H[2i+1]) = f′(−H[2i]) = f((−H[2i])^2) = f(H^2[i])`
+//!
+//! Taking `w_{H^2,i}(z) = w_{H,2i}(z) + w_{H,2i+1}(z)`, we obtain
+//! ```text
+//! f(z^2) = s_H(z) ⋅ Σ_{i<d/2} w_{H^2,i}(z) ⋅ f(H^2[i]).
+//! ```
+//!
+//! ## Consistency Check
+//! Using the explicit formulas for the weights over the coset `gH`:
+//! ```text
+//! w_{gH,2i}(X) + w_{gH,2i+1}(X)
+//!   = gH[2i]/(X − gH[2i]) + gH[2i+1]/(X − gH[2i+1])
+//!   = 2 ⋅ (gH[2i])^2 / (X^2 − (gH[2i])^2)
+//!   = 2 ⋅ w_{(gH)^2,i}(X)
+//!
+//! s_{(gH)^2}(X^2)
+//!   = ((X^2/g^2)^{d/2} − 1)/(d/2)
+//!   = ((X/g)^d − 1)/(d/2)
+//!   = s_H(X)/2
+//! ```
 
 use alloc::vec::Vec;
 use core::iter;
+use core::iter::zip;
 use core::marker::PhantomData;
 
 use p3_field::coset::TwoAdicMultiplicativeCoset;
-use p3_field::{BasedVectorSpace, ExtensionField, Field, PackedFieldExtension, PackedFieldPow2, PackedValue, TwoAdicField, batch_multiplicative_inverse, scale_slice_in_place_single_core};
+use p3_field::{
+    BasedVectorSpace, ExtensionField, Field, PackedFieldExtension, PackedValue, TwoAdicField,
+    batch_multiplicative_inverse, dot_product, scale_slice_in_place_single_core,
+};
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 use p3_util::linear_map::LinearMap;
 use p3_util::{log2_strict_usize, reverse_slice_index_bits};
 
-struct BarycentricWeights<F, EF> {
-    scaling: EF,
-    unscaled_weights: Vec<EF>,
+/// Precomputed barycentric/DEEP data for evaluating polynomials at `z`.
+///
+/// For each degree bound `d' ≤ d` (powers of two) and polynomial `f` of degree `d'`,
+/// with `r = d/d'`, this enables evaluating `f(z^r)` from evaluations `f((gK)^r)`.
+/// Also supports computing the DEEP quotient `(f(z^r) - f(X^r)) / (z - X)` over `gK`.
+pub struct Precomputation<F: TwoAdicField, EF: ExtensionField<F>> {
+    log_blowup: usize,
+    // evaluations of 1/(z-X) over gK
+    point_quotient: Vec<EF>,
+
+    // s_{D}(z)
+    // note that this scaling is valid for all domains since s_{D^2}(z^2) = s(z)
+    barycentric_scaling: EF,
+
+    // for each key log_d, gives the weight for evaluating a polynomial of degree < 2^log_d,
+    // let r = d_max/d
+    // at f(z^r) provided f((gH)^r)
+    // w_{D,i}(z)
+    barycentric_weights: LinearMap<usize, Vec<EF>>,
     _marker: PhantomData<F>,
 }
 
-impl<F: Field, EF: ExtensionField<F>> BarycentricWeights<F, EF> {
-    fn shrink(&self) -> Option<Self> {
-        let len = self.unscaled_weights.len();
-        if len == 1 {
-            return None;
-        }
-
-        let scaling = self.scaling.halve();
-        let unscaled_weights: Vec<EF> = if len < 2 * F::Packing::WIDTH {
-            let (pairs, _) = self.unscaled_weights.as_chunks::<2>();
-            pairs.iter().map(|&[x_0, x_1]| x_0 * x_1).collect()
-        } else {
-            let packing_width = F::Packing::WIDTH;
-            self.unscaled_weights
-                .par_chunks_exact(2 * packing_width)
-                .flat_map(|chunk| {
-                    let left: Vec<_> = (0..packing_width).map(|i| chunk[2 * i]).collect();
-                    let left = EF::ExtensionPacking::from_ext_slice(&left);
-                    let right: Vec<_> = (0..packing_width).map(|i| chunk[2 * i + 1]).collect();
-                    let right = EF::ExtensionPacking::from_ext_slice(&right);
-                    let sum = left + right;
-                    EF::ExtensionPacking::to_ext_iter([sum])
-                })
-                .collect()
-        };
-
-        Some(Self {
-            scaling,
-            unscaled_weights,
-            _marker: Default::default(),
-        })
-    }
-
-    fn eval_matrix<M: Matrix<F>>(&self, m: &M) -> Vec<EF> {
-        let mut evals = m.columnwise_dot_product(&self.unscaled_weights);
-        scale_slice_in_place_single_core(&mut evals, self.scaling);
-        evals
-    }
-}
-
-/// Precomputed barycentric/DEEP data at a point `z` for lifting over the coset tower rooted at `K = gH`.
-///
-/// Usage at a glance
-/// - To evaluate a column `f(·)` of degree `d` (with `r = d_max/d`) using evaluations over
-///   `(g*H)^r`, compute
-///
-/// ```text
-/// value = s_max(z) * dot( unscaled_lagrange[log_d], f_values_on_(K^r)[..d] )
-/// ```
-///
-///   where `unscaled_lagrange[log_d][i]` are the unscaled weights at degree `d`, derived by
-///   neighbor sums from the degree‑max unscaled weights. The scaling factor `s_max(z)` is shared
-///   by all subdomains.
-///
-/// Why this helps
-/// - The vectors are reusable for many columns and matrices once `z` is fixed.
-/// - We store `1/(z - K[i])` for the full coset to support DEEP/quotient steps.
-/// - The tower by `log_h` gives O(N) total precompute, O(N) memory, and O(N) dot per column.
-pub struct Precomputation<F: TwoAdicField, EF: ExtensionField<F>> {
-    /// Bit‑reversed points of the coset `K = gH`, length `N = d * 2^{log_blowup}`.
-    /// Neighboring entries are negations: `K[2i+1] = -K[2i]`.
-    coset_points: Vec<F>,
-
-    /// Evaluations of `1/(z-X)` over the largest coset `K`:
-    ///   `inverse_vanishing_evals[i] = 1/(z - K[i])`.
-    /// Stored once for later DEEP/quotient computations.
-    inverse_vanishing_evals: Vec<EF>,
-
-    /// Unscaled Lagrange weights by log‑degree, anchored at the maximum degree `d_max`.
-    ///
-    /// Top level (key `log_d_max`) stores `[ k_i/(z - k_i) ]` for `i < d_max` over `K_base = K[..d_max]`.
-    /// Each descent level halves via neighbor addition, e.g.
-    /// `w'_{i} = w_{2i} + w_{2i+1} = 2*x^2/(z^2 - x^2)`.
-    unscaled_lagrange: LinearMap<usize, Vec<EF>>,
-
-    /// Barycentric scaling for the maximum degree domain `K_base = K[..d_max]`:
-    ///   `s_max(z) = ((z/g)^{d_max} - 1) / d_max = (z^{d_max} - g^{d_max})/(d_max * g^{d_max})`.
-    /// The same `s_max(z)` multiplies unscaled weights at all subdomains; neighbor additions bake in `r = d_max/d`.
-    scaling_factor: EF,
-}
-
 impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
-    /// Build the precomputation for a point `z` over the ambient coset used for lifting.
+    /// Create precomputation for point `z` with max degree `d` and blowup `log_blowup`.
     ///
-    /// Inputs:
-    /// - `point`: the evaluation point `z ∈ EF` with `z ∉ K` (no poles)
-    /// - `d`: the maximum input degree bound `d_max`; pass the largest degree for which you want reuse.
-    /// - `log_blowup`: optional blowup exponent; the internal coset size is `N = d_max * 2^{log_blowup}`.
-    ///
-    /// Output caches:
-    /// - `inverse_vanishing_evals[i] = 1/(z - K[i])` for the entire coset `K` (length `N`).
-    /// - `unscaled_lagrange[log_h]` holds unscaled weights for degree `2^{log_h}`, anchored at `log_d_max`.
-    /// - `scaling_factor` is the barycentric scalar on `K_base = K[..d_max]` and is reused for all subdomains.
+    /// The evaluation domain has order `n = d << log_blowup`.
     pub fn new(point: EF, d: usize, log_blowup: usize) -> Self {
         let log_d = log2_strict_usize(d);
-        let n = d << log_blowup; // N = d · 2^{log_blowup}
+        let n = d << log_blowup;
         let log_n = log2_strict_usize(n);
+        let w = F::Packing::WIDTH;
 
-        // Build the coset K = gH at size N, then bit‑reverse it so neighbors are negatives.
+        // Coset gK in bit-reversed order. This ensures that
+        // - gK[2i+1] = -gK[2i]
+        // - gH = gK[..d]
+        let coset = TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_n).unwrap();
         let coset_points = {
-            let coset = TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_n).unwrap();
             let mut pts: Vec<F> = coset.iter().collect();
             reverse_slice_index_bits(&mut pts);
             pts
         };
 
-        // Inverse differences on the full coset: inv_diffs_full[i] = 1/(z - K[i]).
-        let inv_diffs_full = {
-            let diffs: Vec<EF> = coset_points.iter().map(|&x| point - x).collect();
-            batch_multiplicative_inverse(&diffs)
-        };
-
-        // Unscaled Lagrange weights at the top degree bound d: w_i(z) = k_i/(z - k_i) for i < d.
-        // Reuse the prefix of inv_diffs_full to avoid recomputing inverses.
-        let top_unscaled: Vec<EF> = coset_points
-            .iter()
-            .zip(inv_diffs_full.iter())
-            .take(d)
-            .map(|(&k, &inv)| EF::from(k) * inv)
-            .collect();
-
-        // Descend to squared sub‑cosets by pairing neighbors.
-        // Bit‑reversed neighbors are (x, -x), so
-        //   w_{2i}(z) + w_{2i+1}(z) = x/(z - x) + (-x)/(z + x) = 2*x^2/(z^2 - x^2).
-        // Repeating this halves the length at each level and yields the entire tower.
-
-        let unscaled_lagrange: LinearMap<usize, Vec<EF>> =
-            iter::successors(Some((log_d, top_unscaled)), |(prev_log, prev)| {
-                if prev.len() == 1 {
-                    return None;
-                }
-                let next: Vec<EF> = prev.par_chunks_exact(2).map(|c| c[0] + c[1]).collect();
-                Some((prev_log - 1, next))
-            })
-            .collect();
-
-        // Barycentric scaling over the maximum‑degree domain K_base (size d_max = d):
-        //   s_max(z) = ((z/shift)^{d_max} - 1) / d_max, using the same shift as K.
-        // The same s_max(z) multiplies unscaled weights at all subdomains.
-        let scaling_factor = {
-            let z_over_shift = point * EF::from(F::GENERATOR.inverse());
+        // V_{H}(X/g) / d = ( (X/g)^d - 1)/d
+        let barycentric_scaling = {
+            let z_over_shift = point * coset.shift_inverse();
             let t = z_over_shift.exp_power_of_2(log_d) - EF::ONE;
             t.div_2exp_u64(log_d as u64)
         };
 
+        // q(X) = 1 / (z - X) evaluated over gK
+        let point_quotient = {
+            let mut diffs = EF::zero_vec(n);
+
+            if d < w {
+                diffs
+                    .iter_mut()
+                    .zip(&coset_points)
+                    .for_each(|(diff_pt, x)| {
+                        *diff_pt = point - *x;
+                    });
+            } else {
+                let point_packed = EF::ExtensionPacking::from(point);
+                diffs
+                    .par_chunks_exact_mut(w)
+                    .zip(coset_points.par_chunks_exact(w))
+                    .for_each(|(diff_chunk, coset_chunk)| {
+                        let coset_point_packed = F::Packing::from_slice(coset_chunk);
+                        let diff_packed = point_packed - *coset_point_packed;
+                        diff_packed.to_ext_slice(diff_chunk);
+                    });
+            }
+            batch_multiplicative_inverse(&diffs)
+        };
+
+        // w_{gH, i}(z) = w_{H,i}(z/g) = h^i / ( (z/g) - h^i ) = gh^i / (z - gh^i)
+        // Reuse the point quotient evaluations since gH = gK[..d] in bit-reversed order.
+        let top_weights: Vec<EF> = coset_points
+            .into_par_iter()
+            .zip(point_quotient[..d].par_iter())
+            .map(|(k, &inv)| EF::from(k) * inv)
+            .collect();
+
+        // For each degree bound d' < d (powers of 2), let r = d/d' be the shrinking factor
+        // get the weights for evaluating f(z^r) over (gH)^r
+        let barycentric_weights: LinearMap<usize, Vec<EF>> =
+            iter::successors(Some((log_d, top_weights)), |(prev_log_d, prev_weights)| {
+                if *prev_log_d == 0 {
+                    None
+                } else {
+                    let new_weights = shrink_weights::<F, EF>(prev_weights);
+                    Some((*prev_log_d - 1, new_weights))
+                }
+            })
+            .collect();
+
         Self {
-            coset_points,
-            inverse_vanishing_evals: inv_diffs_full,
-            unscaled_lagrange,
-            scaling_factor,
+            log_blowup,
+            point_quotient,
+            barycentric_scaling,
+            barycentric_weights,
+            _marker: Default::default(),
         }
     }
 
-    /// Return the bit‑reversed coset points `K = gH` at the tallest height.
-    #[inline]
-    pub fn coset_points(&self) -> &[F] {
-        &self.coset_points
+    /// Evaluate polynomials at `z` from their coset evaluations.
+    ///
+    /// Given a matrix with columns `[f_1(gH), ..., f_m(gH)]`, returns `[f_1(z), ..., f_m(z)]`.
+    pub fn eval_matrix<M: Matrix<F>>(&self, m: &M) -> Vec<EF> {
+        let log_d = log2_strict_usize(m.height()) - self.log_blowup;
+        let d = 1 << log_d;
+        let weights = &self.barycentric_weights[&log_d];
+        let mut evals = m.columnwise_dot_product(&weights[..d]);
+        scale_slice_in_place_single_core(&mut evals, self.barycentric_scaling);
+        evals
     }
 
-    /// Get the unscaled Lagrange weights at a specific degree‑bound log‑height.
-    /// Returns `Some(&[EF])` representing `k/(z - k)` folded by neighbor sums down to the requested height.
-    #[inline]
-    pub fn unscaled_lagrange_at(&self, log_h: usize) -> Option<&[EF]> {
-        self.unscaled_lagrange.get(&log_h).map(|v| v.as_slice())
+    /// Accumulate the DEEP quotient into `acc` in-place.
+    ///
+    /// For each row `i`, adds `(eval_reduced + neg_reduced_matrix[i]) * point_quotient[i]` to `acc[i]`,
+    /// where `neg_reduced_matrix = -f_reduced` (pre-computed with negated coefficients) and
+    /// `eval_reduced = reduce_evals(evals_groups, coeffs_groups)` is a single scalar.
+    ///
+    /// Uses a SIMD branch over chunks of `F::Packing::WIDTH` and a scalar tail for any remainder.
+    pub fn accumulate_deep_quotient(
+        &self,
+        acc: &mut [EF],
+        neg_reduced_matrix: &[EF],
+        evals_groups: &[Vec<Vec<EF>>],
+        coeffs_groups: &[Vec<Vec<EF>>],
+    ) {
+        let n = acc.len();
+        debug_assert_eq!(neg_reduced_matrix.len(), n);
+        debug_assert_eq!(self.point_quotient.len(), n);
+
+        let eval_reduced: EF = reduce_evals(evals_groups, coeffs_groups);
+
+        let packing_width = F::Packing::WIDTH;
+        if n < packing_width {
+            // Small scalar path; no need to parallelize tiny slices.
+            for ((a, &neg_f), &q) in acc
+                .iter_mut()
+                .zip(neg_reduced_matrix.iter())
+                .zip(self.point_quotient[..n].iter())
+            {
+                *a += (eval_reduced + neg_f) * q;
+            }
+        } else {
+            // SIMD branch only; chunk sizes are guaranteed by par_chunks_exact
+            assert_eq!(n % packing_width, 0,);
+            acc.par_chunks_exact_mut(packing_width)
+                .zip(neg_reduced_matrix.par_chunks_exact(packing_width))
+                .zip(self.point_quotient[..n].par_chunks_exact(packing_width))
+                .for_each(|((acc_chunk, neg_chunk), q_chunk)| {
+                    let acc_p = EF::ExtensionPacking::from_ext_slice(acc_chunk);
+                    let neg_p = EF::ExtensionPacking::from_ext_slice(neg_chunk);
+                    let q_p = EF::ExtensionPacking::from_ext_slice(q_chunk);
+                    let eval_p = EF::ExtensionPacking::from(eval_reduced);
+                    let res_p: EF::ExtensionPacking = acc_p + q_p * (neg_p + eval_p);
+                    res_p.to_ext_slice(acc_chunk);
+                });
+        }
+    }
+}
+
+/// Accumulate weighted matrix rows with upsampling for height differences.
+///
+/// Matrices must be sorted by height (ascending, powers of two). For each matrix,
+/// computes the dot product of each row with its coefficients and adds to an accumulator.
+/// When height increases, the accumulator is upsampled by repeating each entry.
+pub fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
+    matrices: &[M],
+    coeffs: &[Vec<EF>],
+) -> Vec<EF> {
+    let n = matrices.last().unwrap().height();
+    let packing_width = F::Packing::WIDTH;
+
+    let mut acc = EF::zero_vec(n);
+    let mut scratch = EF::zero_vec(n);
+
+    let mut active_height = matrices.first().unwrap().height();
+
+    for (matrix, coeffs) in zip(matrices, coeffs) {
+        let height = matrix.height();
+
+        // Upsample if height increased (repeat each entry scaling_factor times)
+        // E.g., [a, b] with scaling=2 → [a, a, b, b]
+        if height > active_height {
+            let scaling_factor = height / active_height;
+            scratch[..height]
+                .par_chunks_mut(scaling_factor)
+                .zip(acc[..active_height].par_iter())
+                .for_each(|(chunk, &val)| chunk.fill(val));
+            acc[..height].swap_with_slice(&mut scratch[..height]);
+        }
+
+        // Compute dot products
+        if height < packing_width {
+            // Scalar path for small matrices
+            acc[..height]
+                .iter_mut()
+                .zip(matrix.rows())
+                .for_each(|(acc_val, row)| {
+                    *acc_val += dot_product::<EF, _, _>(coeffs.iter().copied(), row);
+                });
+        } else {
+            // SIMD path using horizontal packing
+            // Pack coefficients: group WIDTH coefficients into each ExtensionPacking
+            let packed_coeffs: Vec<EF::ExtensionPacking> = coeffs
+                .chunks(packing_width)
+                .map(|chunk| {
+                    if chunk.len() == packing_width {
+                        EF::ExtensionPacking::from_ext_slice(chunk)
+                    } else {
+                        // Pad with zeros for the last chunk
+                        let mut padded = EF::zero_vec(packing_width);
+                        padded[..chunk.len()].copy_from_slice(chunk);
+                        EF::ExtensionPacking::from_ext_slice(&padded)
+                    }
+                })
+                .collect();
+
+            matrix
+                .rowwise_packed_dot_product::<EF>(&packed_coeffs)
+                .zip(acc[..height].par_iter_mut())
+                .for_each(|(dot_result, acc_val)| {
+                    *acc_val += dot_result;
+                });
+        }
+
+        active_height = height;
     }
 
-    /// Return the barycentric scaling factor `s(z)` on `K_base = K[..d]`.
-    #[inline]
-    pub fn scaling_factor(&self) -> EF {
-        self.scaling_factor
+    acc
+}
+
+/// Compute the reduced matrix by accumulating all matrices with negated coefficients.
+/// Returns `-f_reduced` where f_reduced = Σ coeff_i * matrix_i(row).
+pub fn reduce_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
+    matrices_groups: &[Vec<M>],
+    coeffs_groups: &[Vec<Vec<EF>>],
+    n: usize,
+) -> Vec<EF> {
+    // Negate all coefficients
+    let neg_coeffs_groups: Vec<Vec<Vec<EF>>> = coeffs_groups
+        .iter()
+        .map(|group| {
+            group
+                .iter()
+                .map(|coeffs| coeffs.iter().copied().map(EF::neg).collect())
+                .collect()
+        })
+        .collect();
+
+    let width = F::Packing::WIDTH;
+
+    zip(matrices_groups, &neg_coeffs_groups)
+        .map(|(matrices_group, coeffs_group)| accumulate_matrices(matrices_group, coeffs_group))
+        .reduce(|mut acc, next| {
+            assert_eq!(acc.len(), next.len());
+            if acc.len() < width {
+                EF::add_slices(&mut acc, &next);
+            } else {
+                assert!(acc.len().is_multiple_of(width));
+                acc.par_chunks_exact_mut(width)
+                    .zip(next.par_chunks_exact(width))
+                    .for_each(|(acc_chunk, next_chunk)| {
+                        EF::add_slices(acc_chunk, next_chunk);
+                    });
+            }
+            acc
+        })
+        .unwrap_or_else(|| EF::zero_vec(n))
+}
+
+/// Compute the reduced evals by summing Σ coeff_i * eval_i across all groups/matrices/columns.
+pub fn reduce_evals<EF: Field>(
+    evals_groups: &[Vec<Vec<EF>>],
+    coeffs_groups: &[Vec<Vec<EF>>],
+) -> EF {
+    zip(evals_groups, coeffs_groups)
+        .flat_map(|(evals_group, coeffs_group)| {
+            zip(evals_group, coeffs_group)
+                .flat_map(|(evals, coeffs)| zip(evals, coeffs).map(|(&e, &c)| e * c))
+        })
+        .sum()
+}
+
+/// Halve the weight vector by summing adjacent pairs.
+///
+/// Used to descend from degree `d` to `d/2` in the barycentric weight tower.
+fn shrink_weights<F: Field, EF: ExtensionField<F>>(weights: &[EF]) -> Vec<EF> {
+    let w = F::Packing::WIDTH;
+    let n = weights.len();
+    if n < 2 * w {
+        let (pairs, _) = weights.as_chunks::<2>();
+        return pairs.iter().map(|&[a, b]| a + b).collect();
     }
+    let mut new_weights = EF::zero_vec(n / 2);
+    new_weights
+        .par_chunks_exact_mut(w)
+        .zip(weights.par_chunks_exact(2 * w))
+        .for_each(|(new_chunk, old_chunk)| {
+            let left = EF::ExtensionPacking::from_basis_coefficients_fn(|coeff_idx| {
+                F::Packing::from_fn(|lane| {
+                    old_chunk[2 * lane].as_basis_coefficients_slice()[coeff_idx]
+                })
+            });
+            let right = EF::ExtensionPacking::from_basis_coefficients_fn(|coeff_idx| {
+                F::Packing::from_fn(|lane| {
+                    old_chunk[2 * lane + 1].as_basis_coefficients_slice()[coeff_idx]
+                })
+            });
+            let sum: EF::ExtensionPacking = left + right;
+            sum.to_ext_slice(new_chunk);
+        });
+    new_weights
 }
 
 #[cfg(test)]
@@ -239,146 +414,259 @@ mod tests {
     use alloc::vec;
 
     use p3_baby_bear::BabyBear as F;
-    use p3_field::extension::BinomialExtensionField as EFx;
+    use p3_field::extension::BinomialExtensionField;
     use p3_field::{Field, PrimeCharacteristicRing};
-    use p3_util::log2_strict_usize;
-    use rand::rngs::SmallRng;
+    use p3_matrix::dense::RowMajorMatrix;
+    use rand::distr::StandardUniform;
+    use rand::prelude::SmallRng;
     use rand::{Rng, SeedableRng};
 
-    use super::Precomputation;
+    use super::*;
+    type EF = BinomialExtensionField<F, 4>;
 
-    type EF = EFx<F, 4>;
+    // Evaluate polynomial with base-field coefficients at an extension-field point via Horner.
+    fn horner_ext<F: Field, EF: ExtensionField<F>>(coeffs: &[F], x: EF) -> EF {
+        coeffs
+            .iter()
+            .copied()
+            .rev()
+            .fold(EF::ZERO, |acc, c| acc * x + c)
+    }
 
-    fn horner_eval(coeffs: &[EF], x: EF) -> EF {
-        coeffs.iter().rev().fold(EF::ZERO, |acc, &c| acc * x + c)
+    // Evaluate polynomial with base-field coefficients at an extension-field point via Horner.
+    fn horner_base<F: Field>(coeffs: &[F], x: F) -> F {
+        coeffs
+            .iter()
+            .copied()
+            .rev()
+            .fold(F::ZERO, |acc, c| acc * x + c)
     }
 
     #[test]
-    fn pairwise_identities_hold() {
-        let mut rng = SmallRng::seed_from_u64(0xC0FFEE);
-        let n = 16usize; // degree bound
-        let log_blowup = 0usize; // so N = n
-        let log_n = log2_strict_usize(n << log_blowup);
+    fn check_shrink() {
+        let rng = &mut SmallRng::seed_from_u64(1);
+        for log_size in 1..10_usize {
+            let size = 1 << log_size;
+            let weights: Vec<EF> = rng.sample_iter(StandardUniform).take(size).collect();
 
-        // Choose z randomly in EF and ensure z ∉ gH by checking against first few points
-        let mut z: EF = EF::from(F::new(rng.random::<u32>()));
-        let pre = Precomputation::<F, EF>::new(z, n, log_blowup);
-        // If unlucky, resample a couple of times
-        for _ in 0..3 {
-            if pre.coset_points().iter().take(8).all(|&y| z != EF::from(y)) {
-                break;
+            let expected: Vec<EF> = (0..size / 2)
+                .map(|i| weights[2 * i] + weights[2 * i + 1])
+                .collect();
+
+            let real = shrink_weights::<F, EF>(&weights);
+            assert_eq!(expected, real);
+        }
+    }
+
+    #[test]
+    fn check_quotient() {
+        let rng = &mut SmallRng::seed_from_u64(1);
+
+        let z: EF = rng.sample(StandardUniform);
+        // Domain sizes
+        let d: usize = 16;
+        let log_blowup: usize = 2;
+        let n = d << log_blowup;
+        let log_n = log2_strict_usize(n);
+
+        // Build precomputation at z.
+        let pre = Precomputation::<F, EF>::new(z, d, log_blowup);
+
+        // Reconstruct gK in the same bit-reversed order as Precomputation.
+        let gk = TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_n).unwrap();
+        let mut gk_points: Vec<F> = gk.iter().collect();
+        reverse_slice_index_bits(&mut gk_points);
+
+        // Verify the point quotient q(X) = 1/(z - X) over gK.
+        assert_eq!(gk_points.len(), pre.point_quotient.len());
+        for (x, &q) in gk_points.iter().zip(pre.point_quotient.iter()) {
+            let expected = (z - *x).inverse();
+            assert_eq!(q, expected, "q(x) mismatch at x={:?}", x);
+        }
+    }
+
+    #[test]
+    fn deep_precomputation_matches_horner() {
+        let rng = &mut SmallRng::seed_from_u64(1);
+
+        // Domain sizes
+        let d: usize = 64;
+        let log_blowup: usize = 4;
+
+        let n: usize = d << log_blowup;
+        let log_n = log2_strict_usize(n);
+
+        let z: EF = rng.sample(StandardUniform);
+
+        // Build precomputation at z.
+        let pre = Precomputation::<F, EF>::new(z, d, log_blowup);
+
+        // Reconstruct gK in the same bit-reversed order as Precomputation.
+        let gk = TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_n).unwrap();
+        let mut gk_points: Vec<F> = gk.iter().collect();
+        reverse_slice_index_bits(&mut gk_points);
+
+        for log_scaling in [0, 1, 2] {
+            let d_lift = d >> log_scaling;
+
+            let gk_lift = gk.exp_power_of_2(log_scaling).unwrap();
+
+            let mut gk_lift_points = gk_lift.iter().collect();
+            reverse_slice_index_bits(&mut gk_lift_points);
+            let poly: Vec<F> = rng.sample_iter(StandardUniform).take(d_lift).collect();
+
+            let z_lift = z.exp_power_of_2(log_scaling);
+
+            let evals_gk: Vec<_> = gk_lift_points
+                .iter()
+                .map(|pt| horner_base(&poly, *pt))
+                .collect();
+            let evals_gk = RowMajorMatrix::new_col(evals_gk);
+
+            let eval_expected = horner_ext(&poly, z_lift);
+
+            let eval = pre.eval_matrix(&evals_gk)[0];
+            assert_eq!(eval_expected, eval);
+        }
+    }
+
+    /// End-to-end test for DEEP quotient accumulation.
+    ///
+    /// Creates 3 groups with [3, 3, 2] matrices of varying polynomial degrees,
+    /// uses two evaluation points, and verifies the accumulated DEEP quotient
+    /// matches the naive computation.
+    #[test]
+    fn deep_quotient_end_to_end() {
+        let rng = &mut SmallRng::seed_from_u64(42);
+
+        // Parameters: d_max = 64, blowup = 4, n = 256
+        let log_d_max = 10;
+        let d_max: usize = 1 << log_d_max;
+        let log_blowup: usize = 2;
+        let n = d_max << log_blowup;
+        let log_n = log_d_max + log_blowup;
+
+        // Two evaluation points
+        let z1: EF = rng.sample(StandardUniform);
+        let z2: EF = rng.sample(StandardUniform);
+
+        // Coset gK in bit-reversed order
+        let coset = TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_n).unwrap();
+        let mut domain: Vec<F> = coset.iter().collect();
+        reverse_slice_index_bits(&mut domain);
+
+        // Create 3 groups with [3, 3, 2] matrices
+        // specs: (log_scaling, width) where degree = d_max >> log_scaling
+        // Group 0: degrees 16, 32, 64 (log_scaling 2, 1, 0) with widths 2, 3, 4
+        // Group 1: degrees 16, 32, 64 with widths 1, 2, 3
+        // Group 2: degrees 32, 64 with widths 2, 3
+        let group_specs: Vec<Vec<(usize, usize)>> = vec![
+            vec![(2, 2), (1, 3), (0, 4)],
+            vec![(2, 1), (1, 2), (0, 3)],
+            vec![(1, 2), (0, 3)],
+        ];
+
+        // Store polynomial coefficients for naive verification
+        struct PolyData {
+            coeffs: Vec<F>,
+        }
+
+        let mut matrices_groups: Vec<Vec<RowMajorMatrix<F>>> = Vec::new();
+        let mut coeffs_groups: Vec<Vec<Vec<EF>>> = Vec::new();
+        let mut polys_data: Vec<Vec<Vec<PolyData>>> = Vec::new();
+
+        for specs in &group_specs {
+            let mut group_matrices = Vec::new();
+            let mut group_coeffs = Vec::new();
+            let mut group_polys = Vec::new();
+
+            for &(log_scaling, width) in specs {
+                let degree = d_max >> log_scaling;
+
+                // Get the lifted coset for evaluation
+                let lifted_coset = coset.exp_power_of_2(log_scaling).unwrap();
+                let mut lifted_points: Vec<F> = lifted_coset.iter().collect();
+                reverse_slice_index_bits(&mut lifted_points);
+                let height = lifted_points.len();
+
+                // Generate polynomials
+                let mut matrix_polys = Vec::new();
+                for _ in 0..width {
+                    let poly: Vec<F> = rng.sample_iter(StandardUniform).take(degree).collect();
+                    matrix_polys.push(PolyData { coeffs: poly });
+                }
+
+                // Build matrix in row-major order: for each domain point, evaluate all polynomials
+                let mut matrix_data = Vec::with_capacity(height * width);
+                for &pt in &lifted_points {
+                    for poly_data in &matrix_polys {
+                        matrix_data.push(horner_base(&poly_data.coeffs, pt));
+                    }
+                }
+
+                group_matrices.push(RowMajorMatrix::new(matrix_data, width));
+                group_coeffs.push(rng.sample_iter(StandardUniform).take(width).collect());
+                group_polys.push(matrix_polys);
             }
-            z = EF::from(F::new(rng.random::<u32>()));
+
+            matrices_groups.push(group_matrices);
+            coeffs_groups.push(group_coeffs);
+            polys_data.push(group_polys);
         }
 
-        let coset = pre.coset_points();
-        let var_top = pre.unscaled_lagrange_at(log2_strict_usize(n)).unwrap();
-        let var_next = pre.unscaled_lagrange_at(log2_strict_usize(n) - 1).unwrap();
+        // Create precomputations for both points
+        let pre1 = Precomputation::<F, EF>::new(z1, d_max, log_blowup);
+        let pre2 = Precomputation::<F, EF>::new(z2, d_max, log_blowup);
 
-        for i in 0..(n / 2) {
-            // Adjacent pair (x, -x) in bit-reversed order
-            let x = coset[2 * i];
-            let neg_x = coset[2 * i + 1];
-            assert_eq!(neg_x, -x, "bit-reversed neighbors must be negatives");
+        // Compute polynomial evaluations at z1 and z2 using barycentric interpolation
+        let evals_groups_1: Vec<Vec<Vec<EF>>> = matrices_groups
+            .iter()
+            .map(|group| group.iter().map(|m| pre1.eval_matrix(m)).collect())
+            .collect();
+        let evals_groups_2: Vec<Vec<Vec<EF>>> = matrices_groups
+            .iter()
+            .map(|group| group.iter().map(|m| pre2.eval_matrix(m)).collect())
+            .collect();
 
-            // Variable parts sum: x/(z - x) + (-x)/(z + x)
-            let sum = var_top[2 * i] + var_top[2 * i + 1];
-            assert_eq!(var_next[i], sum, "variable parts pairwise sum");
+        // Compute neg_reduced_matrix = -Σ coeff * f(X) with upsampling
+        let neg_reduced = reduce_matrices(&matrices_groups, &coeffs_groups, n);
 
-            // And equals 2 x^2 /(z^2 - x^2)
-            let two = EF::TWO;
-            let x2 = EF::from(x * x);
-            let z2 = z * z;
-            let denom = z2 - x2;
-            let expected = two * x2 * denom.inverse();
-            assert_eq!(var_next[i], expected, "variable parts closed form");
-        }
-    }
+        // Accumulate DEEP quotients for both points
+        let mut acc = EF::zero_vec(n);
+        pre1.accumulate_deep_quotient(&mut acc, &neg_reduced, &evals_groups_1, &coeffs_groups);
+        pre2.accumulate_deep_quotient(&mut acc, &neg_reduced, &evals_groups_2, &coeffs_groups);
 
-    #[test]
-    fn barycentric_matches_polynomial_evaluation() {
-        let mut rng = SmallRng::seed_from_u64(0xBADA55);
-        let d = 16usize; // degree bound for test
-        let log_blowup = 0usize;
-        let _log_n = log2_strict_usize(d << log_blowup);
-        let z = EF::from(F::new(1234567));
-        let pre = Precomputation::<F, EF>::new(z, d, log_blowup);
+        // Naive verification at each domain point
+        for i in 0..n {
+            let x = domain[i];
+            let mut expected = EF::ZERO;
 
-        let coset = pre.coset_points();
-        let var_top = pre.unscaled_lagrange_at(log2_strict_usize(d)).unwrap();
-        let s = pre.scaling_factor();
+            for (z, evals_groups) in [(z1, &evals_groups_1), (z2, &evals_groups_2)] {
+                let mut eval_at_z = EF::ZERO;
+                let mut eval_at_x = EF::ZERO;
 
-        // Random polynomial of degree < d in EF
-        let mut coeffs = vec![EF::ZERO; d];
-        for c in &mut coeffs {
-            *c = EF::from(F::new(rng.random::<u32>()));
-        }
+                for (g, specs) in group_specs.iter().enumerate() {
+                    for (m, &(log_scaling, _)) in specs.iter().enumerate() {
+                        let x_lifted: F = x.exp_u64(1u64 << log_scaling);
 
-        // Evaluate polynomial at the first d coset points in EF
-        let mut evals = vec![EF::ZERO; d];
-        for (i, &y) in coset.iter().take(d).enumerate() {
-            evals[i] = horner_eval(&coeffs, EF::from(y));
-        }
+                        for (col, poly_data) in polys_data[g][m].iter().enumerate() {
+                            let coeff = coeffs_groups[g][m][col];
 
-        // Barycentric evaluation via precomputation: s · sum var_i * f(y_i)
-        let mut dot = EF::ZERO;
-        for i in 0..d {
-            dot += var_top[i] * evals[i];
-        }
-        let bary = s * dot;
+                            // Evaluation at z from barycentric interpolation
+                            eval_at_z += coeff * evals_groups[g][m][col];
 
-        // Direct polynomial evaluation at z
-        let direct = horner_eval(&coeffs, z);
-        assert_eq!(bary, direct, "barycentric equals direct evaluation");
-    }
+                            // Evaluation at x (lifted)
+                            let f_x = horner_base(&poly_data.coeffs, x_lifted);
+                            eval_at_x += coeff * f_x;
+                        }
+                    }
+                }
 
-    #[test]
-    fn barycentric_with_blowup_matches_polynomial_evaluation() {
-        // Use a non-zero blowup to ensure we operate on the prefix K[..d].
-        let mut rng = SmallRng::seed_from_u64(0xF00DCAFE);
-        let d = 16usize; // degree bound
-        let log_blowup = 2usize; // N = d * 4
-        let _log_n = log2_strict_usize(d << log_blowup);
-
-        // Pick a z unlikely to be in the prefix; resample a bit if needed.
-        let mut z: EF = EF::from(F::new(rng.random::<u32>()));
-        let pre = Precomputation::<F, EF>::new(z, d, log_blowup);
-        for _ in 0..3 {
-            if pre.coset_points().iter().take(d).all(|&y| z != EF::from(y)) {
-                break;
+                // DEEP quotient: (f(z) - f(x)) / (z - x)
+                expected += (eval_at_z - eval_at_x) / (z - x);
             }
-            z = EF::from(F::new(rng.random::<u32>()));
+
+            assert_eq!(acc[i], expected, "Mismatch at domain point {}", i);
         }
-        let pre = Precomputation::<F, EF>::new(z, d, log_blowup);
-
-        let coset = pre.coset_points(); // length N
-        let var_top = pre.unscaled_lagrange_at(log2_strict_usize(d)).unwrap(); // length d
-        let s = pre.scaling_factor();
-
-        // Random polynomial of degree < d in EF
-        let mut coeffs = vec![EF::ZERO; d];
-        for c in &mut coeffs {
-            *c = EF::from(F::new(rng.random::<u32>()));
-        }
-
-        // Evaluate polynomial at the first d points of the coset
-        let mut evals = vec![EF::ZERO; d];
-        for (i, &y) in coset.iter().take(d).enumerate() {
-            evals[i] = horner_eval(&coeffs, EF::from(y));
-        }
-
-        // Compute barycentric via precomputation
-        let mut dot = EF::ZERO;
-        for i in 0..d {
-            dot += var_top[i] * evals[i];
-        }
-        let bary = s * dot;
-
-        // Direct polynomial evaluation at z
-        let direct = horner_eval(&coeffs, z);
-        assert_eq!(
-            bary, direct,
-            "barycentric with blowup equals direct evaluation"
-        );
     }
 }

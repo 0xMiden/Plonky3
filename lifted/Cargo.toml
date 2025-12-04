@@ -24,12 +24,16 @@ serde = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
 p3-baby-bear.workspace = true
+p3-goldilocks.workspace = true
 p3-keccak.workspace = true
 p3-merkle-tree.workspace = true
 p3-sha256.workspace = true
 
 criterion.workspace = true
 rand.workspace = true
+
+[features]
+parallel = ["p3-maybe-rayon/parallel"]
 
 [[bench]]
 name = "lifted"
@@ -41,6 +45,10 @@ harness = false
 
 [[bench]]
 name = "lmcs_hashes"
+harness = false
+
+[[bench]]
+name = "deep_quotient"
 harness = false
 
 [lints]

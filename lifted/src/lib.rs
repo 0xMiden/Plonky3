@@ -2,7 +2,7 @@
 
 extern crate alloc;
 
+pub mod fri;
 mod merkle_tree;
-mod fri;
 
 pub use merkle_tree::*;
