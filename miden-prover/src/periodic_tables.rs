@@ -93,13 +93,11 @@ where
         return None;
     }
 
-    let trace_height = trace_domain.size();
-    let log_trace_height = log2_strict_usize(trace_height);
+    let (trace_height, log_trace_height, shift_inv) = trace_context(&trace_domain);
     let quotient_size = quotient_points.len();
 
     // Undo the trace-domain shift to map points to the unshifted subgroup via multiplying shift_inv.
     // If trace_domain = g·H for generator g, we need points in H for interpolation.
-    let shift_inv = trace_domain.first_point().inverse();
     // Group columns by period to batch interpolation per unique cycle size.
     // we batch all columns with the same period and reuse the same subgroup, diffs, and inverse computations.
     let mut grouped: BTreeMap<usize, Vec<(usize, Vec<F>)>> = BTreeMap::new();
@@ -112,27 +110,12 @@ where
         // The check for this should happen much earlier e.g., when defining the AIR
         assert!(!col.is_empty());
 
-        debug_assert!(
-            trace_height.is_multiple_of(col.len()),
-            "Periodic column length must divide trace length"
-        );
-
         grouped.entry(col.len()).or_default().push((idx, col));
     }
 
     // for each subgroup, compute the eval via interpolation
     for (period, cols) in grouped {
-        let log_period = log2_strict_usize(period);
-        debug_assert!(
-            log_trace_height >= log_period,
-            "Periodic column period cannot exceed trace height"
-        );
-        // rate_bits = log2(trace_height / period); i.e. rate = 2^{rate_bits} so y = z^{rate}.
-        let rate_bits = log_trace_height - log_period;
-        let subgroup: Vec<_> = F::two_adic_generator(log_period)
-            .powers()
-            .take(period)
-            .collect();
+        let (rate_bits, subgroup) = subgroup_data::<F>(trace_height, log_trace_height, period);
 
         let num_cols = cols.len();
         let mut subgroup_values = Vec::with_capacity(period * num_cols);
@@ -146,7 +129,8 @@ where
         let mut group_evals = vec![Vec::with_capacity(quotient_size); num_cols];
         for &x in quotient_points {
             let unshifted = x * EF::from(shift_inv);
-            let y = unshifted.exp_power_of_2(rate_bits); // y = (x / shift)^{trace_height / period}
+            // y = (x / shift)^{trace_height / period}
+            let y = unshifted.exp_power_of_2(rate_bits);
             let diffs: Vec<_> = subgroup.iter().map(|&g| y - EF::from(g)).collect();
             let diff_invs = batch_multiplicative_inverse(&diffs);
 
@@ -213,10 +197,7 @@ where
         return Vec::new();
     }
 
-    let trace_height = trace_domain.size();
-    let log_trace_height = log2_strict_usize(trace_height);
-    // Multiplier to move into the unshifted subgroup.
-    let shift_inv = trace_domain.first_point().inverse();
+    let (trace_height, log_trace_height, shift_inv) = trace_context(&trace_domain);
     let unshifted_zeta = zeta * EF::from(shift_inv);
 
     periodic_table
@@ -226,24 +207,11 @@ where
                 return EF::ZERO;
             }
 
-            debug_assert!(
-                trace_height.is_multiple_of(col.len()),
-                "Periodic column length must divide trace length"
-            );
+            let (rate_bits, subgroup) =
+                subgroup_data::<F>(trace_height, log_trace_height, col.len());
 
-            let log_period = log2_strict_usize(col.len());
-            debug_assert!(
-                log_trace_height >= log_period,
-                "Periodic column period cannot exceed trace height"
-            );
-            // rate_bits = log2(trace_height / period); rate = 2^{rate_bits} so y = (zeta/shift)^{rate}.
-            let rate_bits = log_trace_height - log_period;
-            let y = unshifted_zeta.exp_power_of_2(rate_bits); // y = (zeta / shift)^{trace_height / period}
-
-            let subgroup: Vec<_> = F::two_adic_generator(log_period)
-                .powers()
-                .take(col.len())
-                .collect();
+            // y = (zeta / shift)^{trace_height / period}
+            let y = unshifted_zeta.exp_power_of_2(rate_bits);
             let diffs: Vec<_> = subgroup.iter().map(|&g| y - EF::from(g)).collect();
             let diff_invs = batch_multiplicative_inverse(&diffs);
 
@@ -258,6 +226,42 @@ where
             .expect("single-column interpolation should return one value")
         })
         .collect()
+}
+
+/// Returns the trace height, its log2, and the inverse of the domain shift.
+fn trace_context<F>(trace_domain: &impl PolynomialSpace<Val = F>) -> (usize, usize, F)
+where
+    F: TwoAdicField,
+{
+    let trace_height = trace_domain.size();
+    let log_trace_height = log2_strict_usize(trace_height);
+    let shift_inv = trace_domain.first_point().inverse();
+    (trace_height, log_trace_height, shift_inv)
+}
+
+/// For a given period, returns the exponent needed to fold into the period and the subgroup elements.
+fn subgroup_data<F>(trace_height: usize, log_trace_height: usize, period: usize) -> (usize, Vec<F>)
+where
+    F: TwoAdicField,
+{
+    debug_assert!(
+        trace_height.is_multiple_of(period),
+        "Periodic column length must divide trace length"
+    );
+
+    let log_period = log2_strict_usize(period);
+    debug_assert!(
+        log_trace_height >= log_period,
+        "Periodic column period cannot exceed trace height"
+    );
+    // rate_bits = log2(trace_height / period); rate = 2^{rate_bits} so y = z^{rate}.
+    let rate_bits = log_trace_height - log_period;
+    let subgroup: Vec<_> = F::two_adic_generator(log_period)
+        .powers()
+        .take(period)
+        .collect();
+
+    (rate_bits, subgroup)
 }
 
 #[cfg(test)]
