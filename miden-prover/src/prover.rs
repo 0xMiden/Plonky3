@@ -1,8 +1,5 @@
-use alloc::vec;
-use alloc::vec::Vec;
-
 use itertools::Itertools;
-use p3_air::{Air, BaseAirWithAuxTrace};
+use miden_air::MidenAir;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, PackedValue, PrimeCharacteristicRing};
@@ -14,10 +11,8 @@ use tracing::{debug_span, info_span, instrument};
 
 use crate::{
     Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
-    StarkGenericConfig, SymbolicAirBuilder, Val, get_log_quotient_degree, get_symbolic_constraints,
+    StarkGenericConfig, Val, get_log_quotient_degree, get_symbolic_constraints,
 };
-#[cfg(debug_assertions)]
-use crate::{DebugConstraintBuilder, check_constraints};
 
 /// Commits the preprocessed trace if present.
 /// Returns the commitment hash and prover data (available iff preprocessed is Some).
@@ -39,11 +34,7 @@ where
 
 #[instrument(skip_all)]
 #[allow(clippy::multiple_bound_locations, clippy::type_repetition_in_bounds)] // cfg not supported in where clauses?
-pub fn prove<
-    SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<DebugConstraintBuilder<'a, Val<SC>, SC::Challenge>>,
-    #[cfg(not(debug_assertions))] A,
->(
+pub fn prove<SC, A>(
     config: &SC,
     air: &A,
     trace: &RowMajorMatrix<Val<SC>>,
@@ -51,9 +42,7 @@ pub fn prove<
 ) -> Proof<SC>
 where
     SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>>
-        + for<'a> Air<ProverConstraintFolder<'a, SC>>
-        + BaseAirWithAuxTrace<Val<SC>, SC::Challenge>,
+    A: MidenAir<Val<SC>, SC::Challenge>,
 {
     // Compute the height `N = 2^n` and `log_2(height)`, `n`, of the trace.
     let degree = trace.height();
@@ -111,7 +100,7 @@ where
     // From the degree of the constraint polynomial, compute the number
     // of quotient polynomials we will split Q(x) into. This is chosen to
     // always be a power of 2.
-    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, A>(
+    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, SC::Challenge, A>(
         air,
         preprocessed_width,
         public_values.len(),
@@ -207,7 +196,7 @@ where
         };
 
     #[cfg(debug_assertions)]
-    check_constraints::<Val<SC>, SC::Challenge, _>(
+    crate::check_constraints::<Val<SC>, SC::Challenge, _>(
         air,
         trace,
         &_aux_trace_opt,
@@ -261,7 +250,7 @@ where
     //          `C(T_1(x), ..., T_w(x), T_1(hx), ..., T_w(hx), selectors(x)) / Z_H(x)`
     // at every point in the quotient domain. The degree of `Q(x)` is `<= deg(C(x)) - N = 2N - 2` in the case
     // where `deg(C) = 3`. (See the discussion above constraint_degree for more details.)
-    let quotient_values = quotient_values(
+    let quotient_values: Vec<SC::Challenge> = quotient_values::<SC, A, _>(
         air,
         public_values,
         trace_domain,
@@ -438,7 +427,7 @@ pub fn quotient_values<SC, A, Mat>(
 ) -> Vec<SC::Challenge>
 where
     SC: StarkGenericConfig,
-    A: for<'a> Air<ProverConstraintFolder<'a, SC>>,
+    A: MidenAir<Val<SC>, SC::Challenge>,
     Mat: Matrix<Val<SC>> + Sync,
 {
     let quotient_size = quotient_domain.size();
@@ -482,7 +471,8 @@ where
             let inv_vanishing = *PackedVal::<SC>::from_slice(&sels.inv_vanishing[i_range]);
 
             let main = RowMajorMatrix::new(
-                trace_on_quotient_domain.vertically_packed_row_pair(i_start, next_step),
+                trace_on_quotient_domain
+                    .vertically_packed_row_pair::<PackedVal<SC>>(i_start, next_step),
                 width,
             );
             let aux = aux_trace_on_quotient_domain.as_ref().map_or_else(
@@ -512,7 +502,7 @@ where
             let preprocessed = preprocessed_on_quotient_domain.map(|preprocessed| {
                 let preprocessed_width = preprocessed.width();
                 RowMajorMatrix::new(
-                    preprocessed.vertically_packed_row_pair(i_start, next_step),
+                    preprocessed.vertically_packed_row_pair::<PackedVal<SC>>(i_start, next_step),
                     preprocessed_width,
                 )
             });
@@ -522,7 +512,7 @@ where
                 randomness.iter().copied().map(Into::into).collect();
 
             let accumulator = PackedChallenge::<SC>::ZERO;
-            let mut folder = ProverConstraintFolder {
+            let mut folder: ProverConstraintFolder<'_, SC> = ProverConstraintFolder {
                 main: main.as_view(),
                 aux: aux.as_view(),
                 preprocessed: preprocessed.as_ref().map(|m| m.as_view()),

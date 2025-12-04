@@ -1,10 +1,7 @@
 //! See `prover.rs` for an overview of the protocol and a more detailed soundness analysis.
 
-use alloc::vec;
-use alloc::vec::Vec;
-
 use itertools::Itertools;
-use p3_air::{Air, BaseAirWithAuxTrace};
+use miden_air::MidenAir;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing};
@@ -13,7 +10,8 @@ use p3_matrix::stack::VerticalPair;
 use p3_util::zip_eq::zip_eq;
 use tracing::{debug_span, instrument};
 
-use crate::symbolic_builder::{SymbolicAirBuilder, get_log_quotient_degree};
+use crate::symbolic_builder::get_log_quotient_degree;
+use crate::util::verifier_row_to_ext;
 use crate::{Domain, PcsError, Proof, StarkGenericConfig, Val, VerifierConstraintFolder};
 
 /// Recomposes the quotient polynomial from its chunks evaluated at a point.
@@ -84,7 +82,7 @@ pub fn verify_constraints<SC, A, PcsErr>(
 ) -> Result<(), VerificationError<PcsErr>>
 where
     SC: StarkGenericConfig,
-    A: for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+    A: MidenAir<Val<SC>, SC::Challenge>,
 {
     let sels = trace_domain.selectors_at_point(zeta);
 
@@ -106,10 +104,10 @@ where
     let aux_next_ext;
     let aux = match (aux_local, aux_next) {
         (Some(local), Some(next)) => {
-            aux_local_ext =
-                verifier_row_to_ext::<SC>(local).ok_or(VerificationError::InvalidProofShape)?;
-            aux_next_ext =
-                verifier_row_to_ext::<SC>(next).ok_or(VerificationError::InvalidProofShape)?;
+            aux_local_ext = verifier_row_to_ext::<Val<SC>, SC::Challenge>(local)
+                .ok_or(VerificationError::InvalidProofShape)?;
+            aux_next_ext = verifier_row_to_ext::<Val<SC>, SC::Challenge>(next)
+                .ok_or(VerificationError::InvalidProofShape)?;
 
             VerticalPair::new(
                 RowMajorMatrixView::new_row(&aux_local_ext),
@@ -125,7 +123,7 @@ where
             )
         }
     };
-    let mut folder = VerifierConstraintFolder {
+    let mut folder: VerifierConstraintFolder<'_, SC> = VerifierConstraintFolder {
         main,
         aux,
         randomness,
@@ -148,27 +146,6 @@ where
     Ok(())
 }
 
-// Helper: convert a flattened base-field row into EF elements.
-fn verifier_row_to_ext<SC: StarkGenericConfig>(
-    row: &[SC::Challenge],
-) -> Option<Vec<SC::Challenge>> {
-    let dim = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
-    if !row.len().is_multiple_of(dim) {
-        return None;
-    }
-
-    let mut out = Vec::with_capacity(row.len() / dim);
-    for chunk in row.chunks(dim) {
-        let mut acc = SC::Challenge::ZERO;
-        for (i, limb) in chunk.iter().enumerate() {
-            let basis = SC::Challenge::ith_basis_element(i).unwrap();
-            acc += basis * *limb;
-        }
-        out.push(acc);
-    }
-    Some(out)
-}
-
 /// Validates and commits the preprocessed trace if present.
 /// Returns the preprocessed width and its commitment hash (available iff width > 0).
 #[allow(clippy::type_complexity)]
@@ -187,7 +164,7 @@ fn process_preprocessed_trace<SC, A>(
 >
 where
     SC: StarkGenericConfig,
-    A: for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+    A: MidenAir<Val<SC>, SC::Challenge>,
 {
     // If verifier asked for preprocessed trace, then proof should have it
     let preprocessed = air.preprocessed_trace();
@@ -230,9 +207,7 @@ pub fn verify<SC, A>(
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
     SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>>
-        + BaseAirWithAuxTrace<Val<SC>, SC::Challenge>
-        + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+    A: MidenAir<Val<SC>, SC::Challenge>,
 {
     let Proof {
         commitments,
@@ -251,7 +226,7 @@ where
     let (preprocessed_width, preprocessed_commit) =
         process_preprocessed_trace::<SC, A>(air, opened_values, pcs, trace_domain, config.is_zk())?;
 
-    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, A>(
+    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, SC::Challenge, A>(
         air,
         preprocessed_width,
         public_values.len(),

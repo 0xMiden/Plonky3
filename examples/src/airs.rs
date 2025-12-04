@@ -7,9 +7,10 @@ use p3_keccak_air::KeccakAir;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_poseidon2::GenericPoseidon2LinearLayers;
 use p3_poseidon2_air::{Poseidon2Air, VectorizedPoseidon2Air};
+#[cfg(debug_assertions)]
+use p3_uni_stark::DebugConstraintBuilder;
 use p3_uni_stark::{
-    DebugConstraintBuilder, ProverConstraintFolder, StarkGenericConfig, SymbolicAirBuilder,
-    VerifierConstraintFolder,
+    ProverConstraintFolder, StarkGenericConfig, SymbolicAirBuilder, VerifierConstraintFolder,
 };
 use rand::distr::StandardUniform;
 use rand::prelude::Distribution;
@@ -47,11 +48,31 @@ pub enum ProofObjective<
 ///
 /// A key feature is the ability to randomly generate a trace which proves
 /// the output of some number of hashes using a given hash function.
+#[cfg(debug_assertions)]
 pub trait ExampleHashAir<F: Field, SC: StarkGenericConfig>:
     BaseAir<F>
     + BaseAirWithAuxTrace<F, SC::Challenge>
     + Air<SymbolicAirBuilder<F>>
     + for<'a> Air<DebugConstraintBuilder<'a, F, SC::Challenge>>
+    + for<'a> Air<ProverConstraintFolder<'a, SC>>
+    + for<'a> Air<VerifierConstraintFolder<'a, SC>>
+where
+    SC::Challenge: ExtensionField<F>,
+{
+    fn generate_trace_rows(
+        &self,
+        num_hashes: usize,
+        extra_capacity_bits: usize,
+    ) -> RowMajorMatrix<F>
+    where
+        StandardUniform: Distribution<F>;
+}
+
+#[cfg(not(debug_assertions))]
+pub trait ExampleHashAir<F: Field, SC: StarkGenericConfig>:
+    BaseAir<F>
+    + BaseAirWithAuxTrace<F, SC::Challenge>
+    + Air<SymbolicAirBuilder<F>>
     + for<'a> Air<ProverConstraintFolder<'a, SC>>
     + for<'a> Air<VerifierConstraintFolder<'a, SC>>
 where

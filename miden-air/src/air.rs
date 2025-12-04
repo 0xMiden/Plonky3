@@ -61,11 +61,12 @@ pub trait MidenAir<F, EF>: Sync {
 
     /// Build an aux trace (EF-based) given the main trace and EF challenges.
     /// Return None to indicate no aux or to fall back to legacy behavior.
+    /// The output is a matrix of EF elements, flattened to a matrix of F elements.
     fn build_aux_trace(
         &self,
         _main: &RowMajorMatrix<F>,
         _challenges: &[EF],
-    ) -> Option<RowMajorMatrix<EF>> {
+    ) -> Option<RowMajorMatrix<F>> {
         None
     }
 
@@ -74,7 +75,7 @@ pub trait MidenAir<F, EF>: Sync {
     /// An aux builder takes in a main matrix and a randomness, and generate a aux matrix.
     fn with_aux_builder<Builder>(&mut self, _builder: Builder)
     where
-        Builder: Fn(&RowMajorMatrix<F>, &[EF]) -> RowMajorMatrix<EF> + Send + Sync + 'static,
+        Builder: Fn(&RowMajorMatrix<F>, &[EF]) -> RowMajorMatrix<F> + Send + Sync + 'static,
     {
         // default: do nothing
     }
@@ -89,7 +90,7 @@ pub trait MidenAir<F, EF>: Sync {
     ///
     /// # Arguments
     /// - `builder`: Mutable reference to a `MidenAirBuilder` for defining constraints.
-    fn eval<AB: MidenAirBuilder<F = F, EF = EF>>(&self, builder: &mut AB);
+    fn eval<AB: MidenAirBuilder<F = F>>(&self, builder: &mut AB);
 }
 
 /// Helper macro to implement p3-air traits by delegating to MidenAir.
