@@ -12,6 +12,7 @@ pub enum Entry {
     Aux { offset: usize },
     Permutation { offset: usize },
     Public,
+    Periodic,
     Challenge,
 }
 
@@ -36,7 +37,7 @@ impl<F> SymbolicVariable<F> {
         match self.entry {
             Entry::Preprocessed { .. } | Entry::Main { .. } | Entry::Permutation { .. } => 1,
             Entry::Aux { .. } => 1,
-            Entry::Public | Entry::Challenge => 0,
+            Entry::Public | Entry::Periodic | Entry::Challenge => 0,
         }
     }
 }

@@ -10,12 +10,109 @@ use p3_field::{
 use p3_interpolation::interpolate_coset_with_precomputation;
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_matrix::stack::VerticalPair;
+use p3_util::log2_strict_usize;
 use p3_util::zip_eq::zip_eq;
 use tracing::{debug_span, instrument};
 
 use crate::symbolic_builder::get_log_quotient_degree;
 use crate::util::verifier_row_to_ext;
 use crate::{Domain, PcsError, Proof, StarkGenericConfig, Val, VerifierConstraintFolder};
+
+/// Evaluates periodic columns at an out-of-domain challenge point `zeta`.
+///
+/// Periodic columns repeat with a period that divides the trace length. Rather than
+/// committing to these columns, both prover and verifier independently compute them.
+/// During verification, we need to evaluate these periodic columns at the random
+/// out-of-domain point `zeta` to check constraint satisfaction.
+///
+/// # How it works
+///
+/// For a periodic column with period `P` and trace height `N` where `P | N`:
+/// 1. The column repeats `N/P` times over the trace domain
+/// 2. We shift `zeta` by the trace domain's offset to get `unshifted_zeta`
+/// 3. We compute `y = unshifted_zeta^(N/P)`, which maps `zeta` to its position
+///    within a single period
+/// 4. We interpolate the column over its minimal cycle (the subgroup of size `P`)
+///    using barycentric Lagrange interpolation to evaluate at `y`
+///
+/// This assumes a two-adic trace domain so each period divides the trace height
+/// and `rate_bits = log2(trace_height / period)` is integral.
+///
+/// This is efficient because we only interpolate over the period `P` rather than
+/// the full trace height `N`, and we only store the minimal repeating cycle.
+///
+/// # Arguments
+///
+/// * `periodic_table` - Vector of periodic columns, where each column is a vector
+///   of length equal to its period (a power of 2 that divides trace height)
+/// * `trace_domain` - The domain over which the trace is defined
+/// * `zeta` - The out-of-domain challenge point at which to evaluate
+///
+/// # Returns
+///
+/// A vector containing the evaluation of each periodic column at `zeta`
+fn evaluate_periodic_at_point<SC>(
+    periodic_table: Vec<Vec<Val<SC>>>,
+    trace_domain: Domain<SC>,
+    zeta: SC::Challenge,
+) -> Vec<SC::Challenge>
+where
+    SC: StarkGenericConfig,
+    Val<SC>: TwoAdicField,
+{
+    if periodic_table.is_empty() {
+        return Vec::new();
+    }
+
+    let trace_height = trace_domain.size();
+    let log_trace_height = log2_strict_usize(trace_height); // panics if trace_height is not a power of 2
+    // Multiplier to move into the unshifted subgroup.
+    let shift_inv = trace_domain.first_point().inverse();
+    let unshifted_zeta = zeta * SC::Challenge::from(shift_inv);
+
+    periodic_table
+        .into_iter()
+        .map(|col| {
+            if col.is_empty() {
+                return SC::Challenge::ZERO;
+            }
+
+            debug_assert!(
+                trace_height % col.len() == 0,
+                "Periodic column length must divide trace length"
+            );
+
+            let log_period = log2_strict_usize(col.len());
+            debug_assert!(
+                log_trace_height >= log_period,
+                "Periodic column period cannot exceed trace height"
+            );
+            // rate_bits = log2(trace_height / period); rate = 2^{rate_bits} so y = (zeta/shift)^{rate}.
+            let rate_bits = log_trace_height - log_period;
+            let y = unshifted_zeta.exp_power_of_2(rate_bits); // y = (zeta / shift)^{trace_height / period}
+
+            let subgroup: Vec<_> = Val::<SC>::two_adic_generator(log_period)
+                .powers()
+                .take(col.len())
+                .collect();
+            let diffs: Vec<_> = subgroup
+                .iter()
+                .map(|&g| y - SC::Challenge::from(g))
+                .collect();
+            let diff_invs = batch_multiplicative_inverse(&diffs);
+
+            interpolate_coset_with_precomputation(
+                &RowMajorMatrix::new(col, 1),
+                Val::<SC>::ONE,
+                y,
+                &subgroup,
+                &diff_invs,
+            )
+            .pop()
+            .expect("single-column interpolation should return one value")
+        })
+        .collect()
+}
 
 /// Recomposes the quotient polynomial from its chunks evaluated at a point.
 ///
@@ -93,48 +190,8 @@ where
     // =====================================
     // Periodic entires
     // =====================================
-    // Compute periodic values at zeta by interpolating the full trace-domain sequence.
-    let periodic_table = air.periodic_table();
-    let trace_height = trace_domain.size();
-    let periodic_values: Vec<SC::Challenge> = if periodic_table.is_empty() {
-        Vec::new()
-    } else {
-        let num_cols = periodic_table.len();
-
-        // Collect trace-domain points.
-        let mut trace_points = Vec::with_capacity(trace_height);
-        let mut point = trace_domain.first_point();
-        trace_points.push(point);
-        for _ in 1..trace_height {
-            point = trace_domain
-                .next_point(point)
-                .expect("trace_domain should yield enough points");
-            trace_points.push(point);
-        }
-
-        // Build the periodic evaluations over the trace domain.
-        let mut values = Vec::with_capacity(trace_height * num_cols);
-        for row in 0..trace_height {
-            for col in periodic_table.iter() {
-                values.push(col[row % col.len()]);
-            }
-        }
-        let periodic_trace = RowMajorMatrix::new(values, num_cols);
-
-        let diffs: Vec<_> = trace_points
-            .iter()
-            .map(|&x| zeta - SC::Challenge::from(x))
-            .collect();
-        let diff_invs = batch_multiplicative_inverse(&diffs);
-
-        interpolate_coset_with_precomputation(
-            &periodic_trace,
-            trace_domain.first_point(),
-            zeta,
-            &trace_points,
-            &diff_invs,
-        )
-    };
+    let periodic_values: Vec<SC::Challenge> =
+        evaluate_periodic_at_point::<SC>(air.periodic_table(), trace_domain, zeta);
 
     // =====================================
     // Main trace
