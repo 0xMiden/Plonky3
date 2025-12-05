@@ -3,6 +3,7 @@ mod check_constraints;
 mod config;
 mod folder;
 mod logup;
+mod periodic_tables;
 mod proof;
 mod prover;
 mod symbolic_builder;

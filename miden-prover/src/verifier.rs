@@ -4,12 +4,13 @@ use itertools::Itertools;
 use miden_air::MidenAir;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
-use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing};
+use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing, TwoAdicField};
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::VerticalPair;
 use p3_util::zip_eq::zip_eq;
 use tracing::{debug_span, instrument};
 
+use crate::periodic_tables::evaluate_periodic_at_point;
 use crate::symbolic_builder::get_log_quotient_degree;
 use crate::util::verifier_row_to_ext;
 use crate::{Domain, PcsError, Proof, StarkGenericConfig, Val, VerifierConstraintFolder};
@@ -83,14 +84,30 @@ pub fn verify_constraints<SC, A, PcsErr>(
 where
     SC: StarkGenericConfig,
     A: MidenAir<Val<SC>, SC::Challenge>,
+    Val<SC>: TwoAdicField,
 {
     let sels = trace_domain.selectors_at_point(zeta);
 
+    // =====================================
+    // Periodic entires
+    // =====================================
+    let periodic_values: Vec<SC::Challenge> = evaluate_periodic_at_point::<Val<SC>, SC::Challenge>(
+        air.periodic_table(),
+        trace_domain,
+        zeta,
+    );
+
+    // =====================================
+    // Main trace
+    // =====================================
     let main = VerticalPair::new(
         RowMajorMatrixView::new_row(trace_local),
         RowMajorMatrixView::new_row(trace_next),
     );
 
+    // =====================================
+    // Preprocessed trace
+    // =====================================
     let preprocessed = match (preprocessed_local, preprocessed_next) {
         (Some(local), Some(next)) => Some(VerticalPair::new(
             RowMajorMatrixView::new_row(local),
@@ -99,6 +116,9 @@ where
         _ => None,
     };
 
+    // =====================================
+    // Aux trace
+    // =====================================
     // Aux trace is committed as flattened base limbs. Recompose into EF values.
     let aux_local_ext;
     let aux_next_ext;
@@ -129,6 +149,7 @@ where
         randomness,
         preprocessed,
         public_values,
+        periodic_values: &periodic_values,
         is_first_row: sels.is_first_row,
         is_last_row: sels.is_last_row,
         is_transition: sels.is_transition,
@@ -165,6 +186,7 @@ fn process_preprocessed_trace<SC, A>(
 where
     SC: StarkGenericConfig,
     A: MidenAir<Val<SC>, SC::Challenge>,
+    Val<SC>: TwoAdicField,
 {
     // If verifier asked for preprocessed trace, then proof should have it
     let preprocessed = air.preprocessed_trace();
@@ -208,6 +230,7 @@ pub fn verify<SC, A>(
 where
     SC: StarkGenericConfig,
     A: MidenAir<Val<SC>, SC::Challenge>,
+    Val<SC>: TwoAdicField,
 {
     let Proof {
         commitments,

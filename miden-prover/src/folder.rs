@@ -22,6 +22,8 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     pub preprocessed: Option<RowMajorMatrixView<'a, PackedVal<SC>>>,
     /// Public inputs to the AIR
     pub public_values: &'a [Val<SC>],
+    /// Periodic column values (precomputed for the current row)
+    pub periodic_values: &'a [PackedChallenge<SC>],
     /// Evaluations of the Selector polynomial for the first row of the trace
     pub is_first_row: PackedVal<SC>,
     /// Evaluations of the Selector polynomial for the last row of the trace
@@ -50,7 +52,7 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
     type VarEF = PackedChallenge<SC>;
     type MP = RowMajorMatrixView<'a, PackedChallenge<SC>>;
     type RandomVar = PackedChallenge<SC>;
-    type PeriodicVal = SC::Challenge;
+    type PeriodicVal = PackedChallenge<SC>;
 
     #[inline]
     fn main(&self) -> Self::M {
@@ -119,7 +121,7 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
     }
 
     fn periodic_evals(&self) -> &[Self::PeriodicVal] {
-        unimplemented!()
+        self.periodic_values
     }
 }
 
@@ -139,6 +141,8 @@ pub struct VerifierConstraintFolder<'a, SC: StarkGenericConfig> {
     pub preprocessed: Option<ViewPair<'a, SC::Challenge>>,
     /// Public values that are inputs to the computation
     pub public_values: &'a [Val<SC>],
+    /// Periodic column values (precomputed for the current row)
+    pub periodic_values: &'a [SC::Challenge],
     /// Evaluations of the Selector polynomial for the first row of the trace
     pub is_first_row: SC::Challenge,
     /// Evaluations of the Selector polynomial for the last row of the trace
@@ -227,6 +231,6 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for VerifierConstraintFolder<'a
     }
 
     fn periodic_evals(&self) -> &[Self::PeriodicVal] {
-        unimplemented!()
+        self.periodic_values
     }
 }

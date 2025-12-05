@@ -253,11 +253,6 @@ fn test_public_value_deg5() {
     test_public_value_impl_deg5(1 << 3, 21, 2);
 }
 
-// #[test]
-// fn test_public_value_deg8() {
-//     test_public_value_impl_deg8(1 << 3, 21, 2);
-// }
-
 // Degree-5 extension variant
 fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
     use p3_commit::ExtensionMmcs;
@@ -293,42 +288,6 @@ fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
     let proof = prove(&config, &air, &trace, &pis);
     verify(&config, &air, &proof, &pis).expect("verification failed");
 }
-
-// // Degree-8 extension variant
-// fn test_public_value_impl_deg8(n: usize, x: u64, log_final_poly_len: usize) {
-//     use p3_commit::ExtensionMmcs;
-//     use p3_field::extension::BinomialExtensionField;
-//     use p3_fri::TwoAdicFriPcs;
-//     use p3_uni_stark::StarkConfig;
-
-//     type Challenge8 = BinomialExtensionField<Val, 8>;
-//     type ChallengeMmcs8 = ExtensionMmcs<Val, Challenge8, ValMmcs>;
-//     type Pcs8 = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs8>;
-//     type MyConfig8 = StarkConfig<Pcs8, Challenge8, Challenger>;
-
-//     let mut rng = SmallRng::seed_from_u64(1);
-//     let perm = Perm::new_from_rng_128(&mut rng);
-//     let hash = MyHash::new(perm.clone());
-//     let compress = MyCompress::new(perm.clone());
-//     let val_mmcs = ValMmcs::new(hash, compress);
-//     let challenge_mmcs = ChallengeMmcs8::new(val_mmcs.clone());
-//     let dft = Dft::default();
-//     let trace = generate_trace_rows::<Val>(0, 1, n);
-//     let fri_params = create_test_fri_params(challenge_mmcs, log_final_poly_len);
-//     let pcs = Pcs8::new(dft, val_mmcs, fri_params);
-//     let challenger = Challenger::new(perm);
-
-//     let config = MyConfig8::new(pcs, challenger);
-//     let pis = vec![Goldilocks::ZERO, Goldilocks::ONE, Goldilocks::from_u64(x)];
-
-//     let mut air = FibPermAir::<Goldilocks, BinomialExtensionField<Goldilocks, 8>>::new();
-//     air.with_aux_builder(|main: &RowMajorMatrix<Val>, challenges: &[Challenge8]| {
-//         miden_prover::generate_logup_trace::<Challenge8, _>(main, &challenges[0])
-//     });
-
-//     let proof = prove(&config, &air, &trace, &pis);
-//     verify(&config, &air, &proof, &pis).expect("verification failed");
-// }
 
 #[cfg(debug_assertions)]
 #[test]
