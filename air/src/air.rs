@@ -1,3 +1,4 @@
+// no_std
 use core::ops::{Add, Mul, Sub};
 
 use p3_field::{Algebra, ExtensionField, Field, PrimeCharacteristicRing};
@@ -8,7 +9,6 @@ use p3_matrix::dense::RowMajorMatrix;
 pub trait BaseAir<F>: Sync {
     /// The number of columns (a.k.a. registers) in this AIR.
     fn width(&self) -> usize;
-
     /// Return an optional preprocessed trace matrix to be included in the prover's trace.
     fn preprocessed_trace(&self) -> Option<RowMajorMatrix<F>> {
         None
@@ -20,6 +20,40 @@ pub trait BaseAirWithPublicValues<F>: BaseAir<F> {
     /// Return the number of expected public values.
     fn num_public_values(&self) -> usize {
         0
+    }
+}
+
+/// An extension of `BaseAir` that includes support for auxiliary traces.
+pub trait BaseAirWithAuxTrace<F, EF>: BaseAir<F> {
+    /// Number of challenges (extension fields) that is required to compute the aux trace
+    fn num_randomness(&self) -> usize {
+        0
+    }
+
+    /// Number of columns (in extension field) that is required for aux trace
+    fn aux_width(&self) -> usize {
+        0
+    }
+
+    /// Build an aux trace (EF-based) given the main trace and EF challenges.
+    /// Return None to indicate no aux or to fall back to legacy behavior.
+    fn build_aux_trace(
+        &self,
+        _main: &RowMajorMatrix<F>,
+        _challenges: &[EF],
+    ) -> Option<RowMajorMatrix<F>> {
+        // default: do nothing
+        None
+    }
+
+    /// Load an aux builder.
+    ///
+    /// An aux builder takes in a main matrix and a randomness, and generate a aux matrix.
+    fn with_aux_builder<Builder>(&mut self, _builder: Builder)
+    where
+        Builder: Fn(&RowMajorMatrix<F>, &[EF]) -> RowMajorMatrix<F> + Send + Sync + 'static,
+    {
+        // default: do nothing
     }
 }
 
@@ -214,19 +248,24 @@ pub trait ExtensionBuilder: AirBuilder<F: Field> {
     where
         I: Into<Self::ExprEF>,
     {
-        self.assert_eq_ext(x, Self::ExprEF::ONE)
+        self.assert_eq_ext(x, Self::ExprEF::ONE);
     }
 }
 
-/// Trait for builders supporting permutation arguments (e.g., for lookup constraints).
+/// Trait for builders supporting permutation-style auxiliary traces.
+///
+/// This extends [`ExtensionBuilder`] because permutation traces typically live in an extension
+/// field, while the AIR itself may still work over the base field. Randomness is supplied in the
+/// base expression type to preserve compatibility with existing AIR code that expects to work with
+/// flattened components.
 pub trait PermutationAirBuilder: ExtensionBuilder {
-    /// Matrix type over extension field variables representing a permutation.
+    /// Matrix type over extension-field variables representing permutation registers.
     type MP: Matrix<Self::VarEF>;
 
     /// Randomness variable type used in permutation commitments.
     type RandomVar: Into<Self::ExprEF> + Copy;
 
-    /// Return the matrix representing permutation registers.
+    /// Return the matrix representing permutation registers over EF variables.
     fn permutation(&self) -> Self::MP;
 
     /// Return the list of randomness values for permutation argument.
@@ -282,6 +321,12 @@ impl<AB: AirBuilder> AirBuilder for FilteredAirBuilder<'_, AB> {
     }
 }
 
+impl<AB: PairBuilder> PairBuilder for FilteredAirBuilder<'_, AB> {
+    fn preprocessed(&self) -> Self::M {
+        self.inner.preprocessed()
+    }
+}
+
 impl<AB: ExtensionBuilder> ExtensionBuilder for FilteredAirBuilder<'_, AB> {
     type EF = AB::EF;
     type ExprEF = AB::ExprEF;
@@ -297,7 +342,6 @@ impl<AB: ExtensionBuilder> ExtensionBuilder for FilteredAirBuilder<'_, AB> {
 
 impl<AB: PermutationAirBuilder> PermutationAirBuilder for FilteredAirBuilder<'_, AB> {
     type MP = AB::MP;
-
     type RandomVar = AB::RandomVar;
 
     fn permutation(&self) -> Self::MP {

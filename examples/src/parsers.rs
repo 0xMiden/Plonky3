@@ -27,6 +27,7 @@ pub enum DftOptions {
     None,
     Radix2DitParallel,
     RecursiveDft,
+    SmallBatch,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -46,6 +47,7 @@ pub enum MerkleHashOptions {
 /// allowed strings:
 ///
 /// `koala-bear, k, ko, koa, koal, koala, koala-, koala-b, koala-be, koala-bea, koalab, koalabe, koalabea, koalabear, kb`
+#[allow(clippy::option_if_let_else)]
 fn get_aliases(
     base: &'static str,
     min_unique_base_prefix: usize,
@@ -114,7 +116,12 @@ impl ValueEnum for ProofOptions {
 
 impl ValueEnum for DftOptions {
     fn value_variants<'a>() -> &'a [Self] {
-        &[Self::Radix2DitParallel, Self::RecursiveDft, Self::None]
+        &[
+            Self::Radix2DitParallel,
+            Self::RecursiveDft,
+            Self::SmallBatch,
+            Self::None,
+        ]
     }
 
     fn to_possible_value(&self) -> Option<PossibleValue> {
@@ -124,6 +131,11 @@ impl ValueEnum for DftOptions {
                 "radix-2-dit-parallel",
                 2,
                 Some(vec![("radix2ditparallel", 6), ("parallel", 1)]),
+            ),
+            Self::SmallBatch => get_aliases(
+                "small-batch-dft",
+                1,
+                Some(vec![("smallbatchdft", 6), ("sb", 2)]),
             ),
             Self::None => PossibleValue::new(""),
         })

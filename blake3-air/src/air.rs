@@ -3,7 +3,7 @@ use core::borrow::Borrow;
 
 use itertools::izip;
 use p3_air::utils::{add2, add3, pack_bits_le, xor_32_shift};
-use p3_air::{Air, AirBuilder, BaseAir};
+use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithAuxTrace};
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -38,7 +38,7 @@ impl Blake3Air {
     fn quarter_round_function<AB: AirBuilder>(
         &self,
         builder: &mut AB,
-        trace: &QuarterRound<<AB as AirBuilder>::Var, <AB as AirBuilder>::Expr>,
+        trace: &QuarterRound<'_, <AB as AirBuilder>::Var, <AB as AirBuilder>::Expr>,
     ) {
         // We need to pack some bits together to verify the additions.
         // First we verify a' = a + b + m_{2i} mod 2^32
@@ -230,6 +230,8 @@ impl<F> BaseAir<F> for Blake3Air {
     }
 }
 
+impl<F, EF> BaseAirWithAuxTrace<F, EF> for Blake3Air {}
+
 impl<AB: AirBuilder> Air<AB> for Blake3Air {
     #[inline]
     fn eval(&self, builder: &mut AB) {
@@ -253,7 +255,7 @@ impl<AB: AirBuilder> Air<AB> for Blake3Air {
             .chain(initial_row_3.iter())
             .for_each(|elem| {
                 elem.iter()
-                    .for_each(|bool| builder.assert_bool(bool.clone()))
+                    .for_each(|bool| builder.assert_bool(bool.clone()));
             });
 
         // Next we ensure that the row0 and row2 for our initial state have been initialized correctly.
@@ -399,7 +401,7 @@ impl<AB: AirBuilder> Air<AB> for Blake3Air {
             // We can reuse xor_32_shift with a shift of 0.
             // As a = b ^ c if and only if b = a ^ c we can perform our xor on the
             // elements which we have the bits of and then check against a.
-            xor_32_shift(builder, &left_words, &out_bits, &right_bits, 0)
+            xor_32_shift(builder, &left_words, &out_bits, &right_bits, 0);
         }
 
         // When i = 4, 5, 6, 7 we already have the bits of state[i] and state[i + 8] making this easy.

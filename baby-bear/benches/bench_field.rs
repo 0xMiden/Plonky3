@@ -6,7 +6,7 @@ use p3_field_testing::bench_func::{
     benchmark_mul_latency, benchmark_mul_throughput, benchmark_sub_latency,
     benchmark_sub_throughput,
 };
-use p3_field_testing::benchmark_dot_array;
+use p3_field_testing::{benchmark_dot_array, benchmark_exp_const};
 use p3_util::pretty_name;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -48,12 +48,12 @@ fn bench_field(c: &mut Criterion) {
             || rng.random::<F>(),
             |x| x.exp_u64(1725656503),
             BatchSize::SmallInput,
-        )
+        );
     });
 }
 
 fn bench_packedfield(c: &mut Criterion) {
-    let name = pretty_name::<<F as Field>::Packing>().to_string();
+    let name = pretty_name::<<F as Field>::Packing>();
     // Note that each round of throughput has 10 operations
     // So we should have 10 * more repetitions for latency tests.
     const REPS: usize = 100;
@@ -65,6 +65,11 @@ fn bench_packedfield(c: &mut Criterion) {
     benchmark_sub_throughput::<<F as Field>::Packing, REPS>(c, &name);
     benchmark_mul_latency::<<F as Field>::Packing, L_REPS>(c, &name);
     benchmark_mul_throughput::<<F as Field>::Packing, REPS>(c, &name);
+
+    const EXP_REPS: usize = 1000;
+    benchmark_exp_const::<<F as Field>::Packing, 3, EXP_REPS>(c, &name);
+    benchmark_exp_const::<<F as Field>::Packing, 5, EXP_REPS>(c, &name);
+    benchmark_exp_const::<<F as Field>::Packing, 7, EXP_REPS>(c, &name);
 }
 
 criterion_group!(baby_bear_arithmetic, bench_field, bench_packedfield);

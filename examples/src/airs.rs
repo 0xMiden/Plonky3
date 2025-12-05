@@ -1,4 +1,4 @@
-use p3_air::{Air, AirBuilder, BaseAir};
+use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithAuxTrace};
 use p3_blake3_air::Blake3Air;
 use p3_challenger::FieldChallenger;
 use p3_commit::PolynomialSpace;
@@ -7,9 +7,10 @@ use p3_keccak_air::KeccakAir;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_poseidon2::GenericPoseidon2LinearLayers;
 use p3_poseidon2_air::{Poseidon2Air, VectorizedPoseidon2Air};
+#[cfg(debug_assertions)]
+use p3_uni_stark::DebugConstraintBuilder;
 use p3_uni_stark::{
-    DebugConstraintBuilder, ProverConstraintFolder, StarkGenericConfig, SymbolicAirBuilder,
-    VerifierConstraintFolder,
+    ProverConstraintFolder, StarkGenericConfig, SymbolicAirBuilder, VerifierConstraintFolder,
 };
 use rand::distr::StandardUniform;
 use rand::prelude::Distribution;
@@ -47,12 +48,35 @@ pub enum ProofObjective<
 ///
 /// A key feature is the ability to randomly generate a trace which proves
 /// the output of some number of hashes using a given hash function.
+#[cfg(debug_assertions)]
 pub trait ExampleHashAir<F: Field, SC: StarkGenericConfig>:
     BaseAir<F>
-    + for<'a> Air<DebugConstraintBuilder<'a, F>>
+    + BaseAirWithAuxTrace<F, SC::Challenge>
+    + Air<SymbolicAirBuilder<F>>
+    + for<'a> Air<DebugConstraintBuilder<'a, F, SC::Challenge>>
+    + for<'a> Air<ProverConstraintFolder<'a, SC>>
+    + for<'a> Air<VerifierConstraintFolder<'a, SC>>
+where
+    SC::Challenge: ExtensionField<F>,
+{
+    fn generate_trace_rows(
+        &self,
+        num_hashes: usize,
+        extra_capacity_bits: usize,
+    ) -> RowMajorMatrix<F>
+    where
+        StandardUniform: Distribution<F>;
+}
+
+#[cfg(not(debug_assertions))]
+pub trait ExampleHashAir<F: Field, SC: StarkGenericConfig>:
+    BaseAir<F>
+    + BaseAirWithAuxTrace<F, SC::Challenge>
     + Air<SymbolicAirBuilder<F>>
     + for<'a> Air<ProverConstraintFolder<'a, SC>>
     + for<'a> Air<VerifierConstraintFolder<'a, SC>>
+where
+    SC::Challenge: ExtensionField<F>,
 {
     fn generate_trace_rows(
         &self,
@@ -92,6 +116,29 @@ impl<
             Self::Keccak(k_air) => <KeccakAir as BaseAir<F>>::width(k_air),
         }
     }
+}
+impl<
+    F: PrimeCharacteristicRing + Sync + Field,
+    EF: ExtensionField<F>,
+    LinearLayers: Sync,
+    const WIDTH: usize,
+    const SBOX_DEGREE: u64,
+    const SBOX_REGISTERS: usize,
+    const HALF_FULL_ROUNDS: usize,
+    const PARTIAL_ROUNDS: usize,
+    const VECTOR_LEN: usize,
+> BaseAirWithAuxTrace<F, EF>
+    for ProofObjective<
+        F,
+        LinearLayers,
+        WIDTH,
+        SBOX_DEGREE,
+        SBOX_REGISTERS,
+        HALF_FULL_ROUNDS,
+        PARTIAL_ROUNDS,
+        VECTOR_LEN,
+    >
+{
 }
 
 impl<

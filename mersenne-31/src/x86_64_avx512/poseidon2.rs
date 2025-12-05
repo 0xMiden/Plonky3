@@ -105,7 +105,9 @@ impl<const WIDTH: usize> Poseidon2ExternalLayerMersenne31<WIDTH> {
 pub(crate) fn mul_2exp_i<const I: u32, const I_PRIME: u32>(
     val: PackedMersenne31AVX512,
 ) -> PackedMersenne31AVX512 {
-    assert_eq!(I + I_PRIME, 31);
+    const {
+        assert!(I + I_PRIME == 31);
+    }
     unsafe {
         // Safety: If this code got compiled then AVX512-F intrinsics are available.
         let input = val.to_vector();
@@ -228,7 +230,7 @@ impl InternalLayer<PackedMersenne31AVX512, 16, 5> for Poseidon2InternalLayerMers
     fn permute_state(&self, state: &mut [PackedMersenne31AVX512; 16]) {
         self.packed_internal_constants
             .iter()
-            .for_each(|&rc| internal_16(state, rc))
+            .for_each(|&rc| internal_16(state, rc));
     }
 }
 
@@ -248,7 +250,7 @@ impl InternalLayer<PackedMersenne31AVX512, 24, 5> for Poseidon2InternalLayerMers
     fn permute_state(&self, state: &mut [PackedMersenne31AVX512; 24]) {
         self.packed_internal_constants
             .iter()
-            .for_each(|&rc| internal_24(state, rc))
+            .for_each(|&rc| internal_24(state, rc));
     }
 }
 

@@ -116,7 +116,9 @@ pub(crate) fn mul_2exp_i<const I: i32, const I_PRIME: i32>(
         throughput: 1.33 cyc/vec
         latency: 3 cyc
     */
-    assert_eq!(I + I_PRIME, 31);
+    const {
+        assert!(I + I_PRIME == 31);
+    }
     unsafe {
         // Safety: If this code got compiled then AVX2 intrinsics are available.
         let input = val.to_vector();
@@ -289,7 +291,7 @@ impl InternalLayer<PackedMersenne31AVX2, 16, 5> for Poseidon2InternalLayerMersen
     fn permute_state(&self, state: &mut [PackedMersenne31AVX2; 16]) {
         self.packed_internal_constants
             .iter()
-            .for_each(|&rc| internal_16(state, rc))
+            .for_each(|&rc| internal_16(state, rc));
     }
 }
 
@@ -309,7 +311,7 @@ impl InternalLayer<PackedMersenne31AVX2, 24, 5> for Poseidon2InternalLayerMersen
     fn permute_state(&self, state: &mut [PackedMersenne31AVX2; 24]) {
         self.packed_internal_constants
             .iter()
-            .for_each(|&rc| internal_24(state, rc))
+            .for_each(|&rc| internal_24(state, rc));
     }
 }
 

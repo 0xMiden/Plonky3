@@ -99,7 +99,7 @@ where
         prover_data: &Self::ProverData<M>,
     ) -> BatchOpening<P::Value, Self> {
         let (salted_openings, siblings) = self.inner.open_batch(index, prover_data).unpack();
-        let (openings, salts): (Vec<_>, Vec<_>) = salted_openings
+        let (openings, salts) = salted_openings
             .into_iter()
             .map(|row| {
                 let (a, b) = row.split_at(row.len() - SALT_ELEMS);
@@ -121,7 +121,7 @@ where
         commit: &Self::Commitment,
         dimensions: &[Dimensions],
         index: usize,
-        batch_opening: BatchOpeningRef<P::Value, Self>,
+        batch_opening: BatchOpeningRef<'_, P::Value, Self>,
     ) -> Result<(), Self::Error> {
         let (opened_values, (salts, siblings)) = batch_opening.unpack();
 

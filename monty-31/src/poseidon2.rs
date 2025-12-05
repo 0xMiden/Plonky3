@@ -35,7 +35,7 @@ pub trait InternalLayerBaseParameters<MP: MontyParameters, const WIDTH: usize>:
 
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub trait InternalLayerParameters<FP: FieldParameters, const WIDTH: usize>:
-    InternalLayerBaseParameters<FP, WIDTH>
+    InternalLayerBaseParameters<FP, WIDTH> + crate::InternalLayerParametersNeon<FP, WIDTH>
 {
 }
 #[cfg(all(
@@ -81,7 +81,7 @@ where
             let full_sum = part_sum + state[0];
             state[0] = part_sum - state[0];
             P2P::internal_layer_mat_mul(state, full_sum);
-        })
+        });
     }
 }
 

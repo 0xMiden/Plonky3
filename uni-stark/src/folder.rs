@@ -1,6 +1,8 @@
 use alloc::vec::Vec;
 
-use p3_air::{AirBuilder, AirBuilderWithPublicValues};
+use p3_air::{
+    AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder, PermutationAirBuilder,
+};
 use p3_field::{BasedVectorSpace, PackedField};
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::ViewPair;
@@ -16,8 +18,15 @@ use crate::{PackedChallenge, PackedVal, StarkGenericConfig, Val};
 pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     /// The matrix containing rows on which the constraint polynomial is to be evaluated
     pub main: RowMajorMatrixView<'a, PackedVal<SC>>,
+    /// The matrix containing rows on which the aux constraint polynomial is to be evaluated (may have zero width)
+    pub aux: RowMajorMatrixView<'a, PackedChallenge<SC>>,
+    /// The randomness used to compute the aux trace; can be zero width.
+    /// Cached EF randomness packed from base randomness to avoid temporary leaks
+    pub packed_randomness: Vec<PackedChallenge<SC>>,
+    /// The preprocessed columns (if any)
+    pub preprocessed: Option<RowMajorMatrixView<'a, PackedVal<SC>>>,
     /// Public inputs to the AIR
-    pub public_values: &'a Vec<Val<SC>>,
+    pub public_values: &'a [Val<SC>],
     /// Evaluations of the Selector polynomial for the first row of the trace
     pub is_first_row: PackedVal<SC>,
     /// Evaluations of the Selector polynomial for the last row of the trace
@@ -43,8 +52,14 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
 pub struct VerifierConstraintFolder<'a, SC: StarkGenericConfig> {
     /// Pair of consecutive rows from the committed polynomial evaluations
     pub main: ViewPair<'a, SC::Challenge>,
+    /// Pair of consecutive rows from the committed polynomial evaluations (may have zero width)
+    pub aux: ViewPair<'a, SC::Challenge>,
+    /// The randomness used to compute the aux tract; can be zero width.
+    pub randomness: &'a [SC::Challenge],
+    /// The preprocessed columns (if any)
+    pub preprocessed: Option<ViewPair<'a, SC::Challenge>>,
     /// Public values that are inputs to the computation
-    pub public_values: &'a Vec<Val<SC>>,
+    pub public_values: &'a [Val<SC>],
     /// Evaluations of the Selector polynomial for the first row of the trace
     pub is_first_row: SC::Challenge,
     /// Evaluations of the Selector polynomial for the last row of the trace
@@ -119,6 +134,42 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverConstraintFold
     }
 }
 
+impl<SC: StarkGenericConfig> ExtensionBuilder for ProverConstraintFolder<'_, SC> {
+    type EF = SC::Challenge;
+    type ExprEF = PackedChallenge<SC>;
+    type VarEF = PackedChallenge<SC>;
+
+    fn assert_zero_ext<I>(&mut self, x: I)
+    where
+        I: Into<Self::ExprEF>,
+    {
+        let alpha_power = self.alpha_powers[self.constraint_index];
+        self.accumulator += Into::<PackedChallenge<SC>>::into(alpha_power) * x.into();
+        self.constraint_index += 1;
+    }
+}
+
+impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for ProverConstraintFolder<'a, SC> {
+    type MP = RowMajorMatrixView<'a, PackedChallenge<SC>>;
+    type RandomVar = PackedChallenge<SC>;
+
+    fn permutation(&self) -> Self::MP {
+        self.aux
+    }
+
+    fn permutation_randomness(&self) -> &[Self::RandomVar] {
+        self.packed_randomness.as_slice()
+    }
+}
+
+impl<'a, SC: StarkGenericConfig> PairBuilder for ProverConstraintFolder<'a, SC> {
+    #[inline]
+    fn preprocessed(&self) -> Self::M {
+        self.preprocessed
+            .expect("Air does not provide preprocessed columns, hence can not be consumed")
+    }
+}
+
 impl<'a, SC: StarkGenericConfig> AirBuilder for VerifierConstraintFolder<'a, SC> {
     type F = Val<SC>;
     type Expr = SC::Challenge;
@@ -160,5 +211,39 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for VerifierConstraintFo
 
     fn public_values(&self) -> &[Self::F] {
         self.public_values
+    }
+}
+
+impl<SC: StarkGenericConfig> ExtensionBuilder for VerifierConstraintFolder<'_, SC> {
+    type EF = SC::Challenge;
+    type ExprEF = SC::Challenge;
+    type VarEF = SC::Challenge;
+
+    fn assert_zero_ext<I>(&mut self, x: I)
+    where
+        I: Into<Self::ExprEF>,
+    {
+        self.accumulator *= self.alpha;
+        self.accumulator += x.into();
+    }
+}
+
+impl<'a, SC: StarkGenericConfig> PermutationAirBuilder for VerifierConstraintFolder<'a, SC> {
+    type MP = ViewPair<'a, SC::Challenge>; //VerifierEfAuxView<'a, SC>;
+    type RandomVar = SC::Challenge;
+
+    fn permutation(&self) -> Self::MP {
+        // VerifierEfAuxView::new(self.aux)
+        self.aux
+    }
+
+    fn permutation_randomness(&self) -> &[Self::RandomVar] {
+        self.randomness
+    }
+}
+impl<'a, SC: StarkGenericConfig> PairBuilder for VerifierConstraintFolder<'a, SC> {
+    fn preprocessed(&self) -> Self::M {
+        self.preprocessed
+            .expect("Air does not provide preprocessed columns, hence can not be consumed")
     }
 }

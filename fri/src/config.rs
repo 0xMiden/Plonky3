@@ -9,10 +9,15 @@ use p3_matrix::Matrix;
 pub struct FriParameters<M> {
     pub log_blowup: usize,
     // TODO: This parameter and FRI early stopping are not yet implemented in `CirclePcs`.
+    /// Log of the size of the final polynomial.
+    /// Since we fold `log_folding_factor` bits in each iteration, it must be that
+    ///   log_final_poly_len \equiv log_original_poly_len \pmod log_folding_factor
     pub log_final_poly_len: usize,
     pub num_queries: usize,
     pub proof_of_work_bits: usize,
     pub mmcs: M,
+    /// Log of the folding factor (arity). Must be >= 1.
+    pub log_folding_factor: usize,
 }
 
 impl<M> FriParameters<M> {
@@ -22,6 +27,10 @@ impl<M> FriParameters<M> {
 
     pub const fn final_poly_len(&self) -> usize {
         1 << self.log_final_poly_len
+    }
+
+    pub const fn folding_factor(&self) -> usize {
+        1 << self.log_folding_factor
     }
 
     /// Returns the soundness bits of this FRI instance based on the
@@ -44,9 +53,13 @@ pub trait FriFoldingStrategy<F: Field, EF: ExtensionField<F>> {
     /// They will be passed to our callbacks, but ignored (shifted off) by FRI.
     fn extra_query_index_bits(&self) -> usize;
 
+    /// Log of the folding factor (arity). Defaults to 1 (folding factor of 2).
+    fn log_folding_factor(&self) -> usize {
+        1
+    }
+
     /// Fold a row, returning a single column.
-    /// Right now the input row will always be 2 columns wide,
-    /// but we may support higher folding arity in the future.
+    /// Supporting arbitrary folding width that is a power of 2.
     fn fold_row(
         &self,
         index: usize,
@@ -71,6 +84,7 @@ pub const fn create_test_fri_params<Mmcs>(
         num_queries: 2,
         proof_of_work_bits: 1,
         mmcs,
+        log_folding_factor: 1,
     }
 }
 
@@ -83,6 +97,7 @@ pub const fn create_test_fri_params_zk<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> 
         num_queries: 2,
         proof_of_work_bits: 1,
         mmcs,
+        log_folding_factor: 1,
     }
 }
 
@@ -95,17 +110,19 @@ pub const fn create_benchmark_fri_params<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs
         num_queries: 100,
         proof_of_work_bits: 16,
         mmcs,
+        log_folding_factor: 1,
     }
 }
 
 /// Creates a set of `FriParameters` suitable for benchmarking with zk enabled.
 /// These parameters represent typical settings used in production-like scenarios.
-pub fn create_benchmark_fri_params_zk<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> {
+pub const fn create_benchmark_fri_params_zk<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> {
     FriParameters {
         log_blowup: 2,
         log_final_poly_len: 0,
         num_queries: 100,
         proof_of_work_bits: 16,
         mmcs,
+        log_folding_factor: 1,
     }
 }

@@ -110,7 +110,7 @@ impl<FP: FieldParameters> MontyField31<FP> {
         powers_of_two
     };
 
-    const HALF: Self = MontyField31::new(FP::HALF_P_PLUS_1);
+    const HALF: Self = Self::new(FP::HALF_P_PLUS_1);
 }
 
 impl<FP: MontyParameters> Ord for MontyField31<FP> {
@@ -426,7 +426,7 @@ impl<FP: FieldParameters> Field for MontyField31<FP> {
         // We could do a % operation here, but monty reduction is faster.
         // This does remove a factor of `R` from the result so we will need to
         // correct for that.
-        let uncorrected_value = Self::new_monty(monty_reduce::<FP>(pos_inverse as u64));
+        let uncorrected_value = Self::new_monty(monty_reduce::<FP>(pos_inverse));
 
         // Currently, uncorrected_value = R^{-1} * 2^{60} * val^{-1} mod P = 2^{28} * val^{-1} mod P`.
         // But `val` is really the monty form of some value `x` satisfying `val = xR mod P`. We want

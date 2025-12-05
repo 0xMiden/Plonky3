@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "air",
     "baby-bear",
+    "batch-stark",
     "blake3",
     "blake3-air",
     "bn254",
@@ -19,10 +20,14 @@ members = [
     "keccak",
     "keccak-air",
     "koala-bear",
+    "lookup",
     "matrix",
     "maybe-rayon",
+    "mds",
     "merkle-tree",
     "mersenne-31",
+    "miden-air",
+    "miden-prover",
     "monolith",
     "monty-31",
     "multilinear-util",
@@ -36,13 +41,35 @@ members = [
     "util",
 ]
 
+[workspace.lints]
+rust.rust_2018_idioms = { level = "deny", priority = -1 }
+rust.unused_must_use = "deny"
+rust.rust_2024_incompatible_pat = "warn"
+rustdoc.all = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+# Some pedantic lints
+semicolon_if_nothing_returned = "warn"
+match_bool = "warn"
+needless_pass_by_value = "warn"
+
+redundant_pub_crate = "allow"
+too_long_first_doc_paragraph = "allow"
+unused_peekable = "allow"
+tuple_array_conversions = "allow"
+transmute_undefined_repr = "allow"
+cognitive_complexity = "allow"
+
 [workspace.dependencies]
 bincode = { version = "2.0.0", default-features = false }
 blake3 = { version = "1.5", default-features = false }
 clap = { version = "4.5.23", features = ["derive"] }
 clap_derive = "4.5.18"
 criterion = "0.7"
-hashbrown = "0.15.0"
+hashbrown = "0.16.0"
 hex-literal = "1.0.0"
 itertools = { version = "0.14.0", default-features = false, features = [
     "use_alloc",
@@ -50,19 +77,20 @@ itertools = { version = "0.14.0", default-features = false, features = [
 num-bigint = { version = "0.4.3", default-features = false }
 paste = "1.0.15"
 postcard = { version = "1.0.0", default-features = false }
-proptest = "1.7"
+proptest = "1.8"
 rand = { version = "0.9.0", default-features = false, features = ["small_rng"] }
 rand_xoshiro = "0.7.0"
-rayon = "1.7.0"
+rayon = "1.11.0"
 serde = { version = "1.0", default-features = false }
 serde_json = "1.0.113"
 sha2 = { version = "0.10.8", default-features = false }
 sha3 = { version = "0.10.8", default-features = false }
+spin = "0.10.0"
 tiny-keccak = "2.0.2"
 tracing = { version = "0.1.37", default-features = false, features = [
     "attributes",
 ] }
-tracing-forest = "0.2.0"
+tracing-forest = "0.3.0"
 tracing-subscriber = { version = "0.3.17", default-features = false, features = [
     "alloc",
 ] }
@@ -88,6 +116,7 @@ p3-interpolation = { path = "interpolation", version = "0.3.0" }
 p3-keccak = { path = "keccak", version = "0.3.0" }
 p3-keccak-air = { path = "keccak-air", version = "0.3.0" }
 p3-koala-bear = { path = "koala-bear", version = "0.3.0" }
+p3-lookup = { path = "lookup", version = "0.3.0" }
 p3-matrix = { path = "matrix", version = "0.3.0" }
 p3-maybe-rayon = { path = "maybe-rayon", version = "0.3.0" }
 p3-mds = { path = "mds", version = "0.3.0" }
@@ -103,6 +132,8 @@ p3-sha256 = { path = "sha256", version = "0.3.0" }
 p3-symmetric = { path = "symmetric", version = "0.3.0" }
 p3-uni-stark = { path = "uni-stark", version = "0.3.0" }
 p3-util = { path = "util", version = "0.3.0" }
+
+miden-air = { path = "miden-air", version = "0.3.0" }
 
 [workspace.package]
 # General description field used for the sub-crates that are currently missing a description.

@@ -1,5 +1,3 @@
-use core::marker::PhantomData;
-
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use p3_baby_bear::BabyBear;
 use p3_field::extension::{BinomialExtensionField, Complex};
@@ -20,7 +18,7 @@ where
     let name = format!("fold_matrix::<{}>", pretty_name::<EF>(),);
     let mut group = c.benchmark_group(&name);
     group.sample_size(10);
-    let folding = TwoAdicFriFolding::<(), ()>(PhantomData);
+    let folding = TwoAdicFriFolding::<(), ()>::default();
 
     for log_size in log_sizes {
         let n = 1 << log_size;
@@ -32,7 +30,7 @@ where
         group.bench_function(BenchmarkId::from_parameter(n), |b| {
             b.iter(|| {
                 folding.fold_matrix(beta, mat.clone());
-            })
+            });
         });
     }
 }
