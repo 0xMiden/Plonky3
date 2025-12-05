@@ -800,6 +800,13 @@ pub trait Field:
         self.try_inverse().expect("Tried to invert zero")
     }
 
+    /// Compute the inverse of the field element. Return 0 if the input is 0
+    #[must_use]
+    #[inline]
+    fn inverse_unwrap_zero(&self) -> Self {
+        self.try_inverse().map_or(Self::ZERO, |p| p)
+    }
+
     /// Add two slices of field elements together, returning the result in the first slice.
     ///
     /// Makes use of packing to speed up the addition.
