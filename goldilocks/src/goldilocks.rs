@@ -172,7 +172,7 @@ impl Randomizable for Goldilocks {
         if value >= P {
             None
         } else {
-            Some(Goldilocks { value })
+            Some(Self { value })
         }
     }
 }

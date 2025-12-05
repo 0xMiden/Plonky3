@@ -804,10 +804,7 @@ pub trait Field:
     #[must_use]
     #[inline]
     fn inverse_unwrap_zero(&self) -> Self {
-        match self.try_inverse() {
-            None => Self::ZERO,
-            Some(p) => p,
-        }
+        self.try_inverse().map_or(Self::ZERO, |p| p)
     }
 
     /// Add two slices of field elements together, returning the result in the first slice.
