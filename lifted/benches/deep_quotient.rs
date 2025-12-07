@@ -121,6 +121,7 @@ fn bench_deep_quotient(c: &mut Criterion) {
                 &precomputations,
                 &data.matrices_groups,
                 challenge,
+                1,
             ))
         })
     });
@@ -140,6 +141,7 @@ fn bench_deep_quotient(c: &mut Criterion) {
                 &[pre1, pre2],
                 &data.matrices_groups,
                 challenge,
+                1,
             ))
         })
     });

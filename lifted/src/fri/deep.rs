@@ -230,6 +230,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
         precomputations: &[Self],
         matrices_groups: &[Vec<M>],
         challenge: EF,
+        padding: usize,
     ) -> Vec<EF> {
         assert!(
             !precomputations.is_empty(),
@@ -240,23 +241,30 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
         let n = precomputations[0].point_quotient.len();
         let log_blowup = precomputations[0].log_blowup;
 
-        // Step 1: Derive batching coefficients c_i = challenge^i
-        let coeffs_groups = derive_coeffs_from_challenge(matrices_groups, challenge);
+        // Compute padded widths and group sizes for splitting coeffs later
+        let group_sizes: Vec<usize> = matrices_groups.iter().map(|g| g.len()).collect();
+        let padded_widths: Vec<usize> = matrices_groups
+            .iter()
+            .flat_map(|g| g.iter().map(|m| m.width().next_multiple_of(padding)))
+            .collect();
+
+        // Step 1: Derive batching coefficients c_i = challenge^i (flat)
+        let coeffs: Vec<Vec<EF>> = derive_coeffs_from_challenge(&padded_widths, challenge);
 
         // Step 2: Compute -f_reduced(X) = -Σ_i c_i · f_i(X) over the domain
         // We negate here so that the inner loop computes: f_reduced(z_j) + (-f_reduced(X))
-        let neg_coeffs_groups: Vec<Vec<Vec<EF>>> = coeffs_groups
+        let neg_coeffs: Vec<Vec<EF>> = coeffs
             .iter()
-            .map(|group| {
-                group
-                    .iter()
-                    .map(|coeffs| coeffs.iter().copied().map(EF::neg).collect())
-                    .collect()
-            })
+            .map(|c| c.iter().copied().map(EF::neg).collect())
             .collect();
 
-        let neg_f_reduced = zip(matrices_groups, &neg_coeffs_groups)
-            .map(|(matrices_group, coeffs_group)| accumulate_matrices(matrices_group, coeffs_group))
+        // Split neg_coeffs back into groups for accumulate_matrices
+        let mut neg_coeffs_iter = neg_coeffs.iter();
+        let neg_f_reduced = zip(matrices_groups, &group_sizes)
+            .map(|(matrices_group, &size)| {
+                let group_coeffs: Vec<&Vec<EF>> = neg_coeffs_iter.by_ref().take(size).collect();
+                accumulate_matrices(matrices_group, &group_coeffs)
+            })
             .reduce(|mut acc, next| {
                 debug_assert_eq!(acc.len(), next.len());
                 acc.par_chunks_mut(w).zip(next.par_chunks(w)).for_each(
@@ -277,7 +285,9 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
             debug_assert_eq!(pre.log_blowup, log_blowup);
 
             // f_reduced(z_j) = Σ_i c_i · f_i(z_j), a single scalar
-            let f_reduced_at_z: EF = reduce_evals(&pre.evals_groups, &coeffs_groups);
+            let evals_flat = pre.evals_groups.iter().flatten().map(|v| v.as_slice());
+            let coeffs_flat = coeffs.iter().map(|v| v.as_slice());
+            let f_reduced_at_z: EF = reduce_evals(evals_flat, coeffs_flat);
             let f_reduced_at_z_packed = EF::ExtensionPacking::from(f_reduced_at_z);
 
             // acc[k] += (f_reduced(z_j) + neg_f_reduced[k]) · q_j[k]
@@ -298,23 +308,50 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
     }
 }
 
-/// Derive coefficient groups from a single challenge using powers.
+/// Derive batching coefficients from a single challenge using powers.
 ///
-/// Returns `[1, c, c², c³, ...]` assigned to matrix columns in order.
-pub fn derive_coeffs_from_challenge<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
-    matrices_groups: &[Vec<M>],
+/// Returns coefficients in reverse order: `[..., c², c, 1]` for each width.
+/// This ordering enables efficient recursive verification.
+///
+/// Takes padded widths directly. This accounts for matrices that were
+/// committed with zero-padded columns for alignment.
+pub fn derive_coeffs_from_challenge<EF: Field>(
+    padded_widths: &[usize],
     challenge: EF,
-) -> Vec<Vec<Vec<EF>>> {
-    let mut powers = challenge.powers();
-    matrices_groups
+) -> Vec<Vec<EF>> {
+    // Compute total number of coefficients needed
+    let total: usize = padded_widths.iter().sum();
+
+    // Collect all powers at once, then reverse
+    let all_powers: Vec<EF> = challenge.powers().take(total).collect();
+    let mut rev_powers_iter = all_powers.into_iter().rev();
+
+    // Assign reversed powers to each width
+    padded_widths
         .iter()
-        .map(|group| {
-            group
-                .iter()
-                .map(|m| powers.by_ref().take(m.width()).collect())
-                .collect()
-        })
+        .map(|&width| rev_powers_iter.by_ref().take(width).collect())
         .collect()
+}
+
+/// Compute the reduced evals by summing Σ coeff_i * eval_i across all matrices/columns.
+///
+/// Evals can be over base field `F` while coeffs are over extension field `EF`.
+/// This allows calling with matrix rows (over `F`) or precomputed evals (over `EF`).
+pub fn reduce_evals<'a, F: Field, EF: ExtensionField<F>>(
+    evals: impl IntoIterator<Item = &'a [F]>,
+    coeffs: impl IntoIterator<Item = &'a [EF]>,
+) -> EF {
+    zip(evals, coeffs)
+        .flat_map(|(evals, coeffs)| {
+            debug_assert!(
+                evals.len() <= coeffs.len(),
+                "evals length {} exceeds coeffs length {}",
+                evals.len(),
+                coeffs.len()
+            );
+            zip(evals, coeffs).map(|(&e, &c)| c * e)
+        })
+        .sum()
 }
 
 /// Accumulate weighted matrix rows with upsampling for height differences.
@@ -324,9 +361,9 @@ pub fn derive_coeffs_from_challenge<F: Field, EF: ExtensionField<F>, M: Matrix<F
 /// When height increases, the accumulator is upsampled by repeating each entry.
 ///
 /// Requires all matrix heights to be `>= WIDTH` and divisible by `WIDTH`.
-pub fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
+fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>, C: AsRef<[EF]>>(
     matrices: &[M],
-    coeffs: &[Vec<EF>],
+    coeffs: &[C],
 ) -> Vec<EF> {
     let n = matrices.last().unwrap().height();
 
@@ -336,10 +373,17 @@ pub fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
     let mut active_height = matrices.first().unwrap().height();
 
     for (matrix, coeffs) in zip(matrices, coeffs) {
+        let coeffs = coeffs.as_ref();
         let height = matrix.height();
         debug_assert!(
             height.is_power_of_two(),
             "matrix height must be a power of two"
+        );
+        debug_assert!(
+            matrix.width() <= coeffs.len(),
+            "matrix width {} exceeds coeffs length {}",
+            matrix.width(),
+            coeffs.len()
         );
 
         // Upsample if height increased (repeat each entry scaling_factor times)
@@ -381,19 +425,6 @@ pub fn accumulate_matrices<F: Field, EF: ExtensionField<F>, M: Matrix<F>>(
     }
 
     acc
-}
-
-/// Compute the reduced evals by summing Σ coeff_i * eval_i across all groups/matrices/columns.
-pub fn reduce_evals<EF: Field>(
-    evals_groups: &[Vec<Vec<EF>>],
-    coeffs_groups: &[Vec<Vec<EF>>],
-) -> EF {
-    zip(evals_groups, coeffs_groups)
-        .flat_map(|(evals_group, coeffs_group)| {
-            zip(evals_group, coeffs_group)
-                .flat_map(|(evals, coeffs)| zip(evals, coeffs).map(|(&e, &c)| e * c))
-        })
-        .sum()
 }
 
 #[cfg(test)]
@@ -607,10 +638,15 @@ mod tests {
 
         // Generate a random challenge and compute DEEP quotient using the new API
         let challenge: EF = rng.sample(StandardUniform);
-        let acc = Precomputation::compute_deep_quotient(&[pre1, pre2], &matrices_groups, challenge);
+        let acc =
+            Precomputation::compute_deep_quotient(&[pre1, pre2], &matrices_groups, challenge, 1);
 
-        // Derive coefficients the same way as compute_deep_quotient
-        let coeffs_groups = derive_coeffs_from_challenge(&matrices_groups, challenge);
+        // Derive coefficients (no padding needed for scalar reduce_evals verification)
+        let widths: Vec<usize> = matrices_groups
+            .iter()
+            .flat_map(|g| g.iter().map(|m| m.width()))
+            .collect();
+        let coeffs = derive_coeffs_from_challenge(&widths, challenge);
 
         // For naive verification, we need the evaluations at z1 and z2
         // These are stored in pre1.evals_groups and pre2.evals_groups, but we can
@@ -647,12 +683,13 @@ mod tests {
                 let mut eval_at_z = EF::ZERO;
                 let mut eval_at_x = EF::ZERO;
 
+                let mut coeff_idx = 0;
                 for (g, specs) in group_specs.iter().enumerate() {
                     for (m, &(log_scaling, _)) in specs.iter().enumerate() {
                         let x_lifted: F = x.exp_u64(1u64 << log_scaling);
 
                         for (col, poly_data) in polys_data[g][m].iter().enumerate() {
-                            let coeff = coeffs_groups[g][m][col];
+                            let coeff = coeffs[coeff_idx][col];
 
                             // Evaluation at z from naive Horner
                             eval_at_z += coeff * evals_groups[g][m][col];
@@ -661,6 +698,7 @@ mod tests {
                             let f_x = horner_base(&poly_data.coeffs, x_lifted);
                             eval_at_x += coeff * f_x;
                         }
+                        coeff_idx += 1;
                     }
                 }
 
