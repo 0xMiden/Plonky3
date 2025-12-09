@@ -26,7 +26,7 @@ use p3_maybe_rayon::prelude::IntoParallelRefIterator;
 ///
 /// Given evaluations of a polynomial `f` on a coset of size `ARITY`, this trait
 /// provides a method to recover `f(β)` for an arbitrary challenge point `β`.
-pub trait FriFold<F: Field, EF: ExtensionField<F>, const ARITY: usize> {
+pub trait FriFold<F: TwoAdicField, const ARITY: usize> {
     /// Evaluate `f(β)` from evaluations on a coset.
     ///
     /// ## Inputs
@@ -34,9 +34,9 @@ pub trait FriFold<F: Field, EF: ExtensionField<F>, const ARITY: usize> {
     /// - `evals`: evaluations in bit-reversed order
     /// - `s_inv`: inverse of the coset generator `s`
     /// - `beta`: the FRI folding challenge `β`
-    fn fold_evals(evals: [EF; ARITY], s_inv: F, beta: EF) -> EF;
+    fn fold_evals<EF: ExtensionField<F>>(evals: [EF; ARITY], s_inv: F, beta: EF) -> EF;
 
-    fn fold_matrix(
+    fn fold_matrix<EF: ExtensionField<F>>(
         input: RowMajorMatrixView<'_, EF>,
         s_invs: &[F],
         beta: EF,
@@ -95,11 +95,7 @@ pub struct TwoAdicFriFold;
 // Since we only have evaluations on the coset `{s, −s}`, we interpolate using the identity
 // above, noting that `fₑ` and `fₒ` are constant on this coset (they depend only on `s²`).
 
-impl<F, EF> FriFold<F, EF, 2> for TwoAdicFriFold
-where
-    F: Field,
-    EF: ExtensionField<F> + PrimeCharacteristicRing,
-{
+impl<F: TwoAdicField> FriFold<F, 2> for TwoAdicFriFold {
     /// Evaluate `f(β)` from evaluations on a coset `{s, −s}`.
     ///
     /// ## Inputs
@@ -116,7 +112,7 @@ where
     /// 2. Compute `fₒ(s²) = (f(s) − f(−s)) / (2s)`
     /// 3. Return `f(β) = fₑ(s²) + β · fₒ(s²)` (valid since `β² = s²` in the folded domain)
     #[inline(always)]
-    fn fold_evals(evals: [EF; 2], s_inv: F, beta: EF) -> EF {
+    fn fold_evals<EF: ExtensionField<F>>(evals: [EF; 2], s_inv: F, beta: EF) -> EF {
         // y₀ = f(s), y₁ = f(−s)
         let [y0, y1] = evals;
 
@@ -199,11 +195,7 @@ where
     ]
 }
 
-impl<F, EF> FriFold<F, EF, 4> for TwoAdicFriFold
-where
-    F: TwoAdicField,
-    EF: ExtensionField<F>,
-{
+impl<F: TwoAdicField> FriFold<F, 4> for TwoAdicFriFold {
     /// Evaluate `f(β)` from evaluations on a coset.
     ///
     /// ## Inputs
@@ -219,7 +211,7 @@ where
     /// The verifier needs to check that `f(β)` equals the claimed folded value.
     /// This function recovers `f(β)` from the four coset evaluations via interpolation.
     #[inline(always)]
-    fn fold_evals(evals: [EF; 4], s_inv: F, beta: EF) -> EF {
+    fn fold_evals<EF: ExtensionField<F>>(evals: [EF; 4], s_inv: F, beta: EF) -> EF {
         // Recover coefficients [c₀, c₁, c₂, c₃] of 4·f(sX) via inverse FFT.
         let coeffs = ifft4::<F, EF>(evals);
 
@@ -275,8 +267,8 @@ mod tests {
     fn test_fold<F, EF, const ARITY: usize>()
     where
         F: TwoAdicField,
-        EF: ExtensionField<F> + PrimeCharacteristicRing,
-        TwoAdicFriFold: FriFold<F, EF, ARITY>,
+        EF: ExtensionField<F>,
+        TwoAdicFriFold: FriFold<F, ARITY>,
         StandardUniform: Distribution<EF> + Distribution<F>,
     {
         let rng = &mut SmallRng::seed_from_u64(1);

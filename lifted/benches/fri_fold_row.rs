@@ -22,8 +22,8 @@ fn bench_fold_matrix_impl<F, EF, const ARITY: usize>(
     n_rows: usize,
 ) where
     F: TwoAdicField,
-    EF: ExtensionField<F> + PrimeCharacteristicRing,
-    TwoAdicFriFold: FriFold<F, EF, ARITY>,
+    EF: ExtensionField<F>,
+    TwoAdicFriFold: FriFold<F, ARITY>,
     StandardUniform: Distribution<F> + Distribution<EF>,
 {
     let rng = &mut SmallRng::seed_from_u64(2025);
