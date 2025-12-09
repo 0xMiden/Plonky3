@@ -242,7 +242,7 @@ mod tests {
 
     use p3_baby_bear::BabyBear;
     use p3_field::extension::BinomialExtensionField;
-    use p3_field::{Field, PrimeCharacteristicRing, TwoAdicField};
+    use p3_field::{Field, TwoAdicField};
     use p3_util::reverse_slice_index_bits;
     use rand::distr::{Distribution, StandardUniform};
     use rand::prelude::SmallRng;

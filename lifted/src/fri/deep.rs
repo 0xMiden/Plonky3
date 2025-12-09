@@ -83,13 +83,15 @@ use core::marker::PhantomData;
 
 use p3_field::coset::TwoAdicMultiplicativeCoset;
 use p3_field::{
-    batch_multiplicative_inverse, scale_slice_in_place_single_core, ExtensionField, Field,
-    PackedFieldExtension, PackedValue, TwoAdicField,
+    ExtensionField, Field, PackedFieldExtension, PackedValue, TwoAdicField,
+    batch_multiplicative_inverse, dot_product, scale_slice_in_place_single_core,
 };
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 use p3_util::linear_map::LinearMap;
 use p3_util::{log2_strict_usize, reverse_slice_index_bits};
+
+use super::MatrixGroupEvals;
 
 /// Precomputed barycentric/DEEP data for evaluating polynomials at `z`.
 ///
@@ -102,7 +104,7 @@ pub struct Precomputation<F: TwoAdicField, EF: ExtensionField<F>> {
     /// Evaluations of 1/(z-X) over gK.
     point_quotient: Vec<EF>,
     /// Evaluated matrices: evals_groups[g][m][col] = f_{g,m,col}(z^r).
-    evals_groups: Vec<Vec<Vec<EF>>>,
+    evals_groups: Vec<MatrixGroupEvals<EF>>,
     _marker: PhantomData<F>,
 }
 
@@ -182,10 +184,10 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
         };
 
         // Evaluate all matrices at point using precomputed barycentric weights.
-        let evals_groups: Vec<Vec<Vec<EF>>> = matrices_groups
+        let evals_groups: Vec<MatrixGroupEvals<EF>> = matrices_groups
             .iter()
             .map(|group| {
-                group
+                let evals = group
                     .iter()
                     .map(|m| {
                         let weights = &barycentric_weights[&m.height()];
@@ -193,7 +195,8 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
                         scale_slice_in_place_single_core(&mut evals, barycentric_scaling);
                         evals
                     })
-                    .collect()
+                    .collect();
+                MatrixGroupEvals::new(evals)
             })
             .collect();
 
@@ -206,7 +209,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
     }
 
     /// Get the evaluated matrices: `evals()[g][m][col] = f_{g,m,col}(z^r)`.
-    pub fn evals(&self) -> &[Vec<Vec<EF>>] {
+    pub fn evals(&self) -> &[MatrixGroupEvals<EF>] {
         &self.evals_groups
     }
 
@@ -290,9 +293,9 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
             debug_assert_eq!(pre.log_blowup, log_blowup);
 
             // f_reduced(z_j) = Σ_i c_i · f_i(z_j), a single scalar
-            let evals_flat = pre.evals_groups.iter().flatten().map(|v| v.as_slice());
-            let coeffs_flat = coeffs.iter().map(|v| v.as_slice());
-            let f_reduced_at_z: EF = reduce_evals(evals_flat, coeffs_flat);
+            let coeffs_flat = coeffs.iter().flatten().copied();
+            let evals_flat = pre.evals_groups.iter().flat_map(|g| g.flatten()).copied();
+            let f_reduced_at_z: EF = dot_product(coeffs_flat, evals_flat);
             let f_reduced_at_z_packed = EF::ExtensionPacking::from(f_reduced_at_z);
 
             // acc[k] += (f_reduced(z_j) + neg_f_reduced[k]) · q_j[k]
@@ -349,71 +352,58 @@ pub fn derive_coeffs_from_challenge<EF: Field>(
         .collect()
 }
 
-/// Compute the reduced evals by summing Σ coeff_i * eval_i across all matrices/columns.
+/// Reduce slices using Horner's method with padding alignment.
 ///
-/// Evals can be over base field `F` while coeffs are over extension field `EF`.
-/// This allows calling with matrix rows (over `F`) or precomputed evals (over `EF`).
-pub fn reduce_evals<'a, F: Field, EF: ExtensionField<F>>(
-    evals: impl IntoIterator<Item = &'a [F]>,
-    coeffs: impl IntoIterator<Item = &'a [EF]>,
-) -> EF {
-    zip(evals, coeffs)
-        .flat_map(|(evals, coeffs)| {
-            debug_assert!(
-                evals.len() <= coeffs.len(),
-                "evals length {} exceeds coeffs length {}",
-                evals.len(),
-                coeffs.len()
-            );
-            zip(evals, coeffs).map(|(&e, &c)| c * e)
-        })
-        .sum()
+/// For slices with widths `[w0, w1, ...]` and padding `p`, computes:
+/// ```text
+/// Σ_i Σ_j c^{n-1-k} * slices[i][j]
+/// ```
+/// where `k` is the padded coefficient index matching [`derive_coeffs_from_challenge`].
+pub fn reduce_with_powers<'a, F, EF>(
+    slices: impl IntoIterator<Item = &'a [F]>,
+    challenge: EF,
+    padding: usize,
+) -> EF
+where
+    F: Field + 'a,
+    EF: ExtensionField<F>,
+{
+    slices.into_iter().fold(EF::ZERO, |acc, slice| {
+        // Horner's method on this slice
+        let acc = slice.iter().fold(acc, |a, &val| a * challenge + val);
+        // Skip padding gap to align with next slice's coefficients
+        let gap = slice.len().next_multiple_of(padding) - slice.len();
+        acc * challenge.exp_u64(gap as u64)
+    })
 }
 
 /// Evaluate the DEEP polynomial at a single domain point.
 ///
 /// Computes the DEEP quotient value at `row_point`:
 /// ```text
-/// Σ_j (reduced_evals[j] - reduced_row) / (opening_points[j] - row_point)
+/// Σ_j (reduced_eval_j - reduced_row) / (point_j - row_point)
 /// ```
 ///
 /// The `reduced_row` is computed using Horner's method with padding alignment,
 /// matching the coefficient structure from [`derive_coeffs_from_challenge`].
 ///
 /// # Parameters
-/// - `reduced_evals`: Pre-computed reduced evaluations at each opening point
-/// - `opening_points`: The evaluation points (z_1, z_2, ...)
+/// - `reduced_openings`: Pre-computed `(point, reduced_eval)` pairs
 /// - `rows`: Iterator of row slices, one per matrix column set
 /// - `row_point`: The domain point X
 /// - `challenge`: The batching challenge
 /// - `padding`: Coefficient alignment width (must match [`derive_coeffs_from_challenge`])
 pub fn eval_deep<'a, F: Field, EF: ExtensionField<F>>(
-    reduced_evals: &[EF],
-    opening_points: &[EF],
+    reduced_openings: &[(EF, EF)],
     rows: impl IntoIterator<Item = &'a [F]>,
     row_point: F,
     challenge: EF,
     padding: usize,
 ) -> EF {
-    // Compute reduced_row using Horner's method with padding alignment.
-    //
-    // For widths [w0, w1, ...] with padding p, derive_coeffs_from_challenge assigns:
-    //   Matrix 0: [c^(total-1), ..., c^(total-w0)], then skip (p0 - w0) padding
-    //   Matrix 1: [c^(total-p0-1), ..., c^(total-p0-w1)], then skip (p1 - w1) padding
-    // where p_i = w_i.next_multiple_of(p), total = sum of all padded widths.
-    //
-    // Horner naturally computes coefficients [c^(n-1), ..., c, 1]. After each slice,
-    // we skip (padded - width) positions by multiplying by c^(padded - width).
-    // The final coefficient is c^0 = 1, matching derive_coeffs_from_challenge.
-    let reduced_row = rows.into_iter().fold(EF::ZERO, |acc, slice| {
-        // Horner's method on this matrix's row
-        let acc = slice.iter().fold(acc, |a, &val| a * challenge + val);
-        // Skip padding gap to align with next matrix's coefficients
-        let gap = slice.len().next_multiple_of(padding) - slice.len();
-        acc * challenge.exp_u64(gap as u64)
-    });
-    zip(reduced_evals, opening_points)
-        .map(|(reduced_eval, point)| (*reduced_eval - reduced_row) / (*point - row_point))
+    let reduced_row = reduce_with_powers(rows, challenge, padding);
+    reduced_openings
+        .iter()
+        .map(|(point, reduced_eval)| (*reduced_eval - reduced_row) / (*point - row_point))
         .sum()
 }
 
@@ -495,8 +485,8 @@ mod tests {
     use alloc::vec;
 
     use p3_baby_bear::BabyBear as F;
-    use p3_field::extension::BinomialExtensionField;
     use p3_field::PrimeCharacteristicRing;
+    use p3_field::extension::BinomialExtensionField;
     use p3_matrix::dense::RowMajorMatrix;
     use rand::distr::StandardUniform;
     use rand::prelude::SmallRng;
@@ -505,12 +495,12 @@ mod tests {
     use super::*;
     type EF = BinomialExtensionField<F, 4>;
 
-    /// Verify that `reduce_evals` with explicit coefficients matches Horner evaluation.
+    /// Verify that `reduce_evals` with explicit coefficients matches `reduce_with_powers`.
     ///
-    /// This invariant is critical: `eval_deep` (uses Horner) must be consistent with
-    /// `derive_coeffs_from_challenge` + `reduce_evals` (used in `compute_deep_quotient`).
+    /// This invariant is critical: `eval_deep` (uses `reduce_with_powers`) must be consistent
+    /// with `derive_coeffs_from_challenge` + `reduce_evals` (used in `compute_deep_quotient`).
     #[test]
-    fn reduce_evals_matches_horner() {
+    fn reduce_evals_matches_reduce_with_powers() {
         let c: EF = EF::from(F::from_u64(2));
         let padding = 3;
         let widths = [2usize, 3];
@@ -522,17 +512,13 @@ mod tests {
         let coeffs = derive_coeffs_from_challenge(&widths, c, padding);
 
         // Explicit coefficient sum using reduce_evals
-        let explicit: EF = reduce_evals(
-            rows.iter().map(|r| r.as_slice()),
-            coeffs.iter().map(|c| c.as_slice()),
+        let explicit: EF = dot_product(
+            coeffs.iter().flatten().copied(),
+            rows.iter().flatten().copied(),
         );
 
-        // Horner with padding gaps (same method used in eval_deep)
-        let horner: EF = rows.iter().fold(EF::ZERO, |acc, slice| {
-            let acc = slice.iter().fold(acc, |a, &val| a * c + val);
-            let gap = slice.len().next_multiple_of(padding) - slice.len();
-            acc * c.exp_u64(gap as u64)
-        });
+        // Horner using reduce_with_powers (same as used in eval_deep)
+        let horner: EF = reduce_with_powers(rows.iter().map(|r| r.as_slice()), c, padding);
 
         assert_eq!(explicit, horner);
     }
@@ -588,7 +574,7 @@ mod tests {
             let expected = interpolate_coset(&evals_std_order[m], shift, z_lifted);
 
             for (col, &exp) in expected.iter().enumerate() {
-                let actual = pre.evals_groups[0][m][col];
+                let actual = pre.evals_groups[0].0[m][col];
                 assert_eq!(actual, exp, "Mismatch at matrix {m}, col {col}");
             }
         }
@@ -656,13 +642,15 @@ mod tests {
 
         // Compute reduced evals at each opening point
         let compute_reduced_eval = |pre: &Precomputation<F, EF>| -> EF {
-            reduce_evals(
-                pre.evals().iter().flatten().map(|v| v.as_slice()),
-                coeffs.iter().map(|v| v.as_slice()),
+            dot_product(
+                pre.evals().iter().flat_map(|g| g.flatten()).copied(),
+                coeffs.iter().flatten().copied(),
             )
         };
-        let reduced_evals = vec![compute_reduced_eval(&pre1), compute_reduced_eval(&pre2)];
-        let opening_points = vec![z1, z2];
+        let reduced_openings: Vec<(EF, EF)> = vec![
+            (z1, compute_reduced_eval(&pre1)),
+            (z2, compute_reduced_eval(&pre2)),
+        ];
 
         // Compute DEEP quotient using the API
         let acc = Precomputation::compute_deep_quotient(
@@ -686,8 +674,7 @@ mod tests {
                 .collect();
 
             let expected = eval_deep(
-                &reduced_evals,
-                &opening_points,
+                &reduced_openings,
                 rows.iter().map(|v| v.as_slice()),
                 domain[i],
                 challenge,
