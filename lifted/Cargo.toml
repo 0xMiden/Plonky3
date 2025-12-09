@@ -10,8 +10,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-p3-commit.workspace = true
 p3-challenger.workspace = true
+p3-commit.workspace = true
 p3-dft.workspace = true
 p3-field.workspace = true
 p3-matrix.workspace = true
@@ -25,6 +25,7 @@ serde = { workspace = true, features = ["alloc"] }
 [dev-dependencies]
 p3-baby-bear.workspace = true
 p3-goldilocks.workspace = true
+p3-interpolation.workspace = true
 p3-keccak.workspace = true
 p3-merkle-tree.workspace = true
 p3-sha256.workspace = true

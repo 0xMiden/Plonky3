@@ -83,8 +83,8 @@ use core::marker::PhantomData;
 
 use p3_field::coset::TwoAdicMultiplicativeCoset;
 use p3_field::{
-    ExtensionField, Field, PackedFieldExtension, PackedValue, TwoAdicField,
-    batch_multiplicative_inverse, scale_slice_in_place_single_core,
+    batch_multiplicative_inverse, scale_slice_in_place_single_core, ExtensionField, Field,
+    PackedFieldExtension, PackedValue, TwoAdicField,
 };
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
@@ -112,7 +112,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
     /// Computes the point quotient 1/(z-X) over gK, and evaluates all matrices at z
     /// using barycentric interpolation. The barycentric weights are computed only
     /// for heights that appear in the matrices.
-    pub fn new<M: Matrix<F>>(point: EF, matrices_groups: &[Vec<M>], log_blowup: usize) -> Self {
+    pub fn new<M: Matrix<F>>(point: EF, matrices_groups: &[Vec<&M>], log_blowup: usize) -> Self {
         // Determine n from largest matrix height
         let n = matrices_groups
             .iter()
@@ -233,7 +233,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
     ///   batched matrices.
     pub fn compute_deep_quotient<M: Matrix<F>>(
         precomputations: &[Self],
-        matrices_groups: &[Vec<M>],
+        matrices_groups: &[Vec<&M>],
         challenge: EF,
         padding: usize,
     ) -> Vec<EF> {
@@ -253,7 +253,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
             .flat_map(|g| g.iter().map(|m| m.width()))
             .collect();
 
-        // Step 1: Derive batching coefficients c_i = challenge^i (flat)
+        // Step 1: Derive batching coefficients c_i = challenge^i (flat), in reverse order
         let coeffs: Vec<Vec<EF>> = derive_coeffs_from_challenge(&widths, challenge, padding);
 
         // Step 2: Compute -f_reduced(X) = -Σ_i c_i · f_i(X) over the domain
@@ -334,17 +334,17 @@ pub fn derive_coeffs_from_challenge<EF: Field>(
 
     // Collect all powers at once, then reverse
     let all_powers: Vec<EF> = challenge.powers().collect_n(total);
-    let mut rev_powers_iter = all_powers.into_iter().rev();
+    let rev_powers_iter = &mut all_powers.into_iter().rev();
 
-    // Assign reversed powers to each width
+    // Assign reversed powers to each width, skipping padding gaps
     widths
         .iter()
         .map(|&width| {
-            rev_powers_iter
-                .by_ref()
-                .take(width.next_multiple_of(padding))
-                .take(width)
-                .collect()
+            let padded = width.next_multiple_of(padding);
+            // Take padded coefficients, then drop the padding
+            let mut coeffs: Vec<EF> = rev_powers_iter.take(padded).collect();
+            coeffs.truncate(width);
+            coeffs
         })
         .collect()
 }
@@ -367,6 +367,53 @@ pub fn reduce_evals<'a, F: Field, EF: ExtensionField<F>>(
             );
             zip(evals, coeffs).map(|(&e, &c)| c * e)
         })
+        .sum()
+}
+
+/// Evaluate the DEEP polynomial at a single domain point.
+///
+/// Computes the DEEP quotient value at `row_point`:
+/// ```text
+/// Σ_j (reduced_evals[j] - reduced_row) / (opening_points[j] - row_point)
+/// ```
+///
+/// The `reduced_row` is computed using Horner's method with padding alignment,
+/// matching the coefficient structure from [`derive_coeffs_from_challenge`].
+///
+/// # Parameters
+/// - `reduced_evals`: Pre-computed reduced evaluations at each opening point
+/// - `opening_points`: The evaluation points (z_1, z_2, ...)
+/// - `rows`: Iterator of row slices, one per matrix column set
+/// - `row_point`: The domain point X
+/// - `challenge`: The batching challenge
+/// - `padding`: Coefficient alignment width (must match [`derive_coeffs_from_challenge`])
+pub fn eval_deep<'a, F: Field, EF: ExtensionField<F>>(
+    reduced_evals: &[EF],
+    opening_points: &[EF],
+    rows: impl IntoIterator<Item = &'a [F]>,
+    row_point: F,
+    challenge: EF,
+    padding: usize,
+) -> EF {
+    // Compute reduced_row using Horner's method with padding alignment.
+    //
+    // For widths [w0, w1, ...] with padding p, derive_coeffs_from_challenge assigns:
+    //   Matrix 0: [c^(total-1), ..., c^(total-w0)], then skip (p0 - w0) padding
+    //   Matrix 1: [c^(total-p0-1), ..., c^(total-p0-w1)], then skip (p1 - w1) padding
+    // where p_i = w_i.next_multiple_of(p), total = sum of all padded widths.
+    //
+    // Horner naturally computes coefficients [c^(n-1), ..., c, 1]. After each slice,
+    // we skip (padded - width) positions by multiplying by c^(padded - width).
+    // The final coefficient is c^0 = 1, matching derive_coeffs_from_challenge.
+    let reduced_row = rows.into_iter().fold(EF::ZERO, |acc, slice| {
+        // Horner's method on this matrix's row
+        let acc = slice.iter().fold(acc, |a, &val| a * challenge + val);
+        // Skip padding gap to align with next matrix's coefficients
+        let gap = slice.len().next_multiple_of(padding) - slice.len();
+        acc * challenge.exp_u64(gap as u64)
+    });
+    zip(reduced_evals, opening_points)
+        .map(|(reduced_eval, point)| (*reduced_eval - reduced_row) / (*point - row_point))
         .sum()
 }
 
@@ -449,7 +496,7 @@ mod tests {
 
     use p3_baby_bear::BabyBear as F;
     use p3_field::extension::BinomialExtensionField;
-    use p3_field::{Field, PrimeCharacteristicRing};
+    use p3_field::PrimeCharacteristicRing;
     use p3_matrix::dense::RowMajorMatrix;
     use rand::distr::StandardUniform;
     use rand::prelude::SmallRng;
@@ -458,131 +505,106 @@ mod tests {
     use super::*;
     type EF = BinomialExtensionField<F, 4>;
 
-    // Evaluate polynomial with base-field coefficients at an extension-field point via Horner.
-    fn horner_ext<F: Field, EF: ExtensionField<F>>(coeffs: &[F], x: EF) -> EF {
-        coeffs
-            .iter()
-            .copied()
-            .rev()
-            .fold(EF::ZERO, |acc, c| acc * x + c)
-    }
+    /// Verify that `reduce_evals` with explicit coefficients matches Horner evaluation.
+    ///
+    /// This invariant is critical: `eval_deep` (uses Horner) must be consistent with
+    /// `derive_coeffs_from_challenge` + `reduce_evals` (used in `compute_deep_quotient`).
+    #[test]
+    fn reduce_evals_matches_horner() {
+        let c: EF = EF::from(F::from_u64(2));
+        let padding = 3;
+        let widths = [2usize, 3];
+        let rows: Vec<Vec<F>> = vec![
+            vec![F::from_u64(1), F::from_u64(2)],
+            vec![F::from_u64(3), F::from_u64(4), F::from_u64(5)],
+        ];
 
-    // Evaluate polynomial with base-field coefficients at a base-field point via Horner.
-    fn horner_base<F: Field>(coeffs: &[F], x: F) -> F {
-        coeffs
-            .iter()
-            .copied()
-            .rev()
-            .fold(F::ZERO, |acc, c| acc * x + c)
+        let coeffs = derive_coeffs_from_challenge(&widths, c, padding);
+
+        // Explicit coefficient sum using reduce_evals
+        let explicit: EF = reduce_evals(
+            rows.iter().map(|r| r.as_slice()),
+            coeffs.iter().map(|c| c.as_slice()),
+        );
+
+        // Horner with padding gaps (same method used in eval_deep)
+        let horner: EF = rows.iter().fold(EF::ZERO, |acc, slice| {
+            let acc = slice.iter().fold(acc, |a, &val| a * c + val);
+            let gap = slice.len().next_multiple_of(padding) - slice.len();
+            acc * c.exp_u64(gap as u64)
+        });
+
+        assert_eq!(explicit, horner);
     }
 
     #[test]
-    fn check_point_quotient() {
-        let rng = &mut SmallRng::seed_from_u64(1);
+    fn check_evals_match_interpolate() {
+        use p3_dft::{NaiveDft, TwoAdicSubgroupDft};
+        use p3_interpolation::interpolate_coset;
+        use p3_matrix::bitrev::BitReversibleMatrix;
 
-        let z: EF = rng.sample(StandardUniform);
-        let d: usize = 16;
-        let log_blowup: usize = 2;
-        let n = d << log_blowup;
-        let log_n = log2_strict_usize(n);
-
-        // Create a dummy matrix to call new()
-        let matrix = RowMajorMatrix::<F>::rand(rng, n, 1);
-        let pre = Precomputation::<F, EF>::new(z, &[vec![matrix]], log_blowup);
-
-        // Reconstruct gK in bit-reversed order
-        let gk = TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_n).unwrap();
-        let mut gk_points: Vec<F> = gk.iter().collect();
-        reverse_slice_index_bits(&mut gk_points);
-
-        // Verify point quotient q(X) = 1/(z - X) over gK
-        assert_eq!(gk_points.len(), pre.point_quotient.len());
-        for (x, &q) in gk_points.iter().zip(pre.point_quotient.iter()) {
-            let expected = (z - *x).inverse();
-            assert_eq!(q, expected, "q(x) mismatch at x={x:?}");
-        }
-    }
-
-    #[test]
-    fn check_evals_match_horner() {
         let rng = &mut SmallRng::seed_from_u64(2);
 
-        let d: usize = 64;
+        let log_d: usize = 6;
         let log_blowup: usize = 4;
-        let n = d << log_blowup;
-        let log_n = log2_strict_usize(n);
+        let d = 1 << log_d;
 
         let z: EF = rng.sample(StandardUniform);
-
-        // Build coset gK
-        let gk = TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_n).unwrap();
 
         // Test multiple degrees (log_scaling = 0, 1, 2 means degree d, d/2, d/4)
         let specs: Vec<(usize, usize)> = vec![(0, 3), (1, 2), (2, 1)]; // (log_scaling, width)
 
         // Generate polynomials and build matrices
-        let mut polys: Vec<Vec<Vec<F>>> = Vec::new(); // polys[m][col] = coefficients
+        let mut evals_std_order: Vec<RowMajorMatrix<F>> = Vec::new();
         let mut matrices: Vec<RowMajorMatrix<F>> = Vec::new();
 
+        let n = d << log_blowup;
         for &(log_scaling, width) in &specs {
             let degree = d >> log_scaling;
-            let lifted_coset = gk.exp_power_of_2(log_scaling).unwrap();
-            let mut lifted_points: Vec<F> = lifted_coset.iter().collect();
-            reverse_slice_index_bits(&mut lifted_points);
-            let height = lifted_points.len();
+            let height = n >> log_scaling;
+            // Coset shift for lifted domain: (gK)^{2^s} has shift g^{2^s}
+            let shift = F::GENERATOR.exp_power_of_2(log_scaling);
 
-            let mut matrix_polys = Vec::new();
-            let mut matrix_data = Vec::with_capacity(height * width);
+            // Random coefficients, LDE to blowup domain on coset
+            let coeffs = RowMajorMatrix::<F>::rand(rng, degree, width);
+            let evals_std = NaiveDft
+                .coset_lde_batch(coeffs, log_blowup, shift)
+                .to_row_major_matrix();
+            assert_eq!(evals_std.height(), height);
+            evals_std_order.push(evals_std.clone());
 
-            for _ in 0..width {
-                let poly: Vec<F> = rng.sample_iter(StandardUniform).take(degree).collect();
-                for &pt in &lifted_points {
-                    matrix_data.push(horner_base(&poly, pt));
-                }
-                matrix_polys.push(poly);
-            }
-
-            // RowMajorMatrix is row-major, so we need to interleave columns
-            let mut interleaved = Vec::with_capacity(height * width);
-            for row in 0..height {
-                for col in 0..width {
-                    interleaved.push(matrix_data[col * height + row]);
-                }
-            }
-
-            matrices.push(RowMajorMatrix::new(interleaved, width));
-            polys.push(matrix_polys);
+            // Bit-reverse for Precomputation
+            let evals_bitrev = evals_std.clone().bit_reverse_rows();
+            matrices.push(evals_bitrev.to_row_major_matrix());
         }
 
-        // Create precomputation
-        let pre = Precomputation::<F, EF>::new(z, &[matrices], log_blowup);
+        let matrices_ref = matrices.iter().collect();
+        let pre = Precomputation::<F, EF>::new(z, &[matrices_ref], log_blowup);
 
-        // Verify evals match Horner evaluation
-        for (m, (&(log_scaling, _), matrix_polys)) in specs.iter().zip(polys.iter()).enumerate() {
+        // Verify evals match interpolate_coset
+        for (m, &(log_scaling, _)) in specs.iter().enumerate() {
             let z_lifted = z.exp_power_of_2(log_scaling);
-            for (col, poly) in matrix_polys.iter().enumerate() {
-                let expected = horner_ext(poly, z_lifted);
+            let shift = F::GENERATOR.exp_power_of_2(log_scaling);
+            let expected = interpolate_coset(&evals_std_order[m], shift, z_lifted);
+
+            for (col, &exp) in expected.iter().enumerate() {
                 let actual = pre.evals_groups[0][m][col];
-                assert_eq!(actual, expected, "Mismatch at matrix {m}, col {col}");
+                assert_eq!(actual, exp, "Mismatch at matrix {m}, col {col}");
             }
         }
     }
 
     /// End-to-end test for DEEP quotient accumulation.
     ///
-    /// Creates 3 groups with [3, 3, 2] matrices of varying polynomial degrees,
-    /// uses two evaluation points, and verifies the accumulated DEEP quotient
-    /// matches the naive computation.
+    /// Creates 3 groups with matrices of varying heights (simulating different polynomial degrees),
+    /// uses two evaluation points, and verifies that compute_deep_quotient matches eval_deep.
     #[test]
     fn deep_quotient_end_to_end() {
         let rng = &mut SmallRng::seed_from_u64(42);
 
-        // Parameters: d_max = 64, blowup = 4, n = 256
-        let log_d_max = 10;
-        let d_max: usize = 1 << log_d_max;
         let log_blowup: usize = 2;
-        let n = d_max << log_blowup;
-        let log_n = log_d_max + log_blowup;
+        let log_n = 12;
+        let n = 1 << log_n;
         let padding = 3;
 
         // Two evaluation points
@@ -594,140 +616,85 @@ mod tests {
         let mut domain: Vec<F> = coset.iter().collect();
         reverse_slice_index_bits(&mut domain);
 
-        // Create 3 groups with [3, 3, 2] matrices
-        // specs: (log_scaling, width) where degree = d_max >> log_scaling
-        // Group 0: degrees 16, 32, 64 (log_scaling 2, 1, 0) with widths 2, 3, 4
-        // Group 1: degrees 16, 32, 64 with widths 1, 2, 3
-        // Group 2: degrees 32, 64 with widths 2, 3
+        // Create 3 groups with matrices of varying heights (must be ascending within each group)
+        // Heights are n >> log_scaling, so larger log_scaling = smaller height
+        // specs: (log_scaling, width)
         let group_specs: Vec<Vec<(usize, usize)>> = vec![
-            vec![(2, 2), (1, 3), (0, 4)],
-            vec![(2, 1), (1, 2), (0, 3)],
-            vec![(1, 2), (0, 3)],
+            vec![(2, 2), (1, 3), (0, 4)], // heights: n/4, n/2, n
+            vec![(2, 1), (1, 2), (0, 3)], // heights: n/4, n/2, n
+            vec![(1, 2), (0, 3)],         // heights: n/2, n
         ];
 
-        // Store polynomial coefficients for naive verification
-        struct PolyData {
-            coeffs: Vec<F>,
-        }
+        // Create random matrices with correct heights
+        let matrices_groups: Vec<Vec<RowMajorMatrix<F>>> = group_specs
+            .iter()
+            .map(|specs| {
+                specs
+                    .iter()
+                    .map(|&(log_scaling, width)| {
+                        let height = n >> log_scaling;
+                        RowMajorMatrix::rand(rng, height, width)
+                    })
+                    .collect()
+            })
+            .collect();
 
-        let mut matrices_groups: Vec<Vec<RowMajorMatrix<F>>> = Vec::new();
-        let mut polys_data: Vec<Vec<Vec<PolyData>>> = Vec::new();
+        let matrices_groups_ref: Vec<Vec<&RowMajorMatrix<F>>> =
+            matrices_groups.iter().map(|g| g.iter().collect()).collect();
 
-        for specs in &group_specs {
-            let mut group_matrices = Vec::new();
-            let mut group_polys = Vec::new();
-
-            for &(log_scaling, width) in specs {
-                let degree = d_max >> log_scaling;
-
-                // Get the lifted coset for evaluation
-                let lifted_coset = coset.exp_power_of_2(log_scaling).unwrap();
-                let mut lifted_points: Vec<F> = lifted_coset.iter().collect();
-                reverse_slice_index_bits(&mut lifted_points);
-                let height = lifted_points.len();
-
-                // Generate polynomials
-                let mut matrix_polys = Vec::new();
-                for _ in 0..width {
-                    let poly: Vec<F> = rng.sample_iter(StandardUniform).take(degree).collect();
-                    matrix_polys.push(PolyData { coeffs: poly });
-                }
-
-                // Build matrix in row-major order: for each domain point, evaluate all polynomials
-                let mut matrix_data = Vec::with_capacity(height * width);
-                for &pt in &lifted_points {
-                    for poly_data in &matrix_polys {
-                        matrix_data.push(horner_base(&poly_data.coeffs, pt));
-                    }
-                }
-
-                group_matrices.push(RowMajorMatrix::new(matrix_data, width));
-                group_polys.push(matrix_polys);
-            }
-
-            matrices_groups.push(group_matrices);
-            polys_data.push(group_polys);
-        }
-
-        // Create precomputations for both points (with matrix evaluations)
-        let pre1 = Precomputation::<F, EF>::new(z1, &matrices_groups, log_blowup);
-        let pre2 = Precomputation::<F, EF>::new(z2, &matrices_groups, log_blowup);
-
-        // Generate a random challenge and compute DEEP quotient using the new API
+        // Generate a random challenge and derive coefficients
         let challenge: EF = rng.sample(StandardUniform);
-        let acc = Precomputation::compute_deep_quotient(
-            &[pre1, pre2],
-            &matrices_groups,
-            challenge,
-            padding,
-        );
-
-        // Derive coefficients (no padding needed for scalar reduce_evals verification)
         let widths: Vec<usize> = matrices_groups
             .iter()
             .flat_map(|g| g.iter().map(|m| m.width()))
             .collect();
         let coeffs = derive_coeffs_from_challenge(&widths, challenge, padding);
 
-        // For naive verification, we need the evaluations at z1 and z2
-        // These are stored in pre1.evals_groups and pre2.evals_groups, but we can
-        // recompute them naively using Horner's method
-        let compute_evals = |z: EF| -> Vec<Vec<Vec<EF>>> {
-            group_specs
-                .iter()
-                .zip(polys_data.iter())
-                .map(|(specs, group_polys)| {
-                    specs
-                        .iter()
-                        .zip(group_polys.iter())
-                        .map(|(&(log_scaling, _), matrix_polys)| {
-                            let z_lifted = z.exp_power_of_2(log_scaling);
-                            matrix_polys
-                                .iter()
-                                .map(|poly_data| horner_ext(&poly_data.coeffs, z_lifted))
-                                .collect()
-                        })
-                        .collect()
-                })
-                .collect()
+        // Create precomputations for both points
+        let pre1 = Precomputation::<F, EF>::new(z1, &matrices_groups_ref, log_blowup);
+        let pre2 = Precomputation::<F, EF>::new(z2, &matrices_groups_ref, log_blowup);
+
+        // Compute reduced evals at each opening point
+        let compute_reduced_eval = |pre: &Precomputation<F, EF>| -> EF {
+            reduce_evals(
+                pre.evals().iter().flatten().map(|v| v.as_slice()),
+                coeffs.iter().map(|v| v.as_slice()),
+            )
         };
+        let reduced_evals = vec![compute_reduced_eval(&pre1), compute_reduced_eval(&pre2)];
+        let opening_points = vec![z1, z2];
 
-        let evals_groups_1 = compute_evals(z1);
-        let evals_groups_2 = compute_evals(z2);
+        // Compute DEEP quotient using the API
+        let acc = Precomputation::compute_deep_quotient(
+            &[pre1, pre2],
+            &matrices_groups_ref,
+            challenge,
+            padding,
+        );
 
-        // Naive verification at each domain point
+        // Verify using eval_deep at each domain point
         for i in 0..n {
-            let x = domain[i];
-            let mut expected = EF::ZERO;
+            // Collect rows: for matrix with height h, use row at i / (n/h) = i >> log_scaling
+            let rows: Vec<Vec<F>> = matrices_groups
+                .iter()
+                .zip(group_specs.iter())
+                .flat_map(|(group, specs)| {
+                    group.iter().zip(specs).map(|(matrix, &(log_scaling, _))| {
+                        matrix.row(i >> log_scaling).unwrap().into_iter().collect()
+                    })
+                })
+                .collect();
 
-            for (z, evals_groups) in [(z1, &evals_groups_1), (z2, &evals_groups_2)] {
-                let mut eval_at_z = EF::ZERO;
-                let mut eval_at_x = EF::ZERO;
+            let expected = eval_deep(
+                &reduced_evals,
+                &opening_points,
+                rows.iter().map(|v| v.as_slice()),
+                domain[i],
+                challenge,
+                padding,
+            );
 
-                let mut coeff_idx = 0;
-                for (g, specs) in group_specs.iter().enumerate() {
-                    for (m, &(log_scaling, _)) in specs.iter().enumerate() {
-                        let x_lifted: F = x.exp_u64(1u64 << log_scaling);
-
-                        for (col, poly_data) in polys_data[g][m].iter().enumerate() {
-                            let coeff = coeffs[coeff_idx][col];
-
-                            // Evaluation at z from naive Horner
-                            eval_at_z += coeff * evals_groups[g][m][col];
-
-                            // Evaluation at x (lifted)
-                            let f_x = horner_base(&poly_data.coeffs, x_lifted);
-                            eval_at_x += coeff * f_x;
-                        }
-                        coeff_idx += 1;
-                    }
-                }
-
-                // DEEP quotient: (f(z) - f(x)) / (z - x)
-                expected += (eval_at_z - eval_at_x) / (z - x);
-            }
-
-            assert_eq!(acc[i], expected, "Mismatch at domain point {}", i);
+            assert_eq!(acc[i], expected, "Mismatch at domain point {i}");
         }
     }
 }
