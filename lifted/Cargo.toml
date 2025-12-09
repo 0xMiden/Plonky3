@@ -1,0 +1,45 @@
+[package]
+name = "p3-lifted"
+description = "Lifted Matrix Commitment Scheme (LMCS) implementation for Plonky3."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+p3-commit.workspace = true
+p3-field.workspace = true
+p3-matrix.workspace = true
+p3-maybe-rayon.workspace = true
+p3-symmetric.workspace = true
+p3-util.workspace = true
+
+rand.workspace = true
+serde = { workspace = true, features = ["alloc"] }
+
+[dev-dependencies]
+p3-baby-bear.workspace = true
+p3-keccak.workspace = true
+p3-merkle-tree.workspace = true
+p3-sha256.workspace = true
+
+criterion.workspace = true
+rand.workspace = true
+
+[[bench]]
+name = "lifted"
+harness = false
+
+[[bench]]
+name = "lmcs_vs_mmcs"
+harness = false
+
+[[bench]]
+name = "lmcs_hashes"
+harness = false
+
+[lints]
+workspace = true
