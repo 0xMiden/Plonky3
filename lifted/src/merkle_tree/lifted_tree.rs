@@ -203,26 +203,6 @@ where
             .collect()
     }
 
-    /// Extract the rows for the given leaf index with padding applied.
-    ///
-    /// Like [`Self::rows`], but pads each row to a multiple of `padding_multiple` with
-    /// default field elements (zeros). This is useful for preparing rows for absorption
-    /// into a sponge that requires a specific padding width.
-    ///
-    /// - `index`: the leaf row index to extract across all committed matrices.
-    /// - `padding_multiple`: each row will be padded to the next multiple of this value.
-    pub fn rows_padded(&self, index: usize, padding_multiple: usize) -> Vec<Vec<F>>
-    where
-        F: Default,
-    {
-        let mut rows = self.rows(index);
-        for row in rows.iter_mut() {
-            let padded_width = row.len().next_multiple_of(padding_multiple);
-            row.resize(padded_width, F::default());
-        }
-        rows
-    }
-
     /// Extract the Merkle authentication path (sibling digests) for the given leaf index.
     ///
     /// Returns a vector of sibling digests, one per tree layer, ordered from leaf layer upward.

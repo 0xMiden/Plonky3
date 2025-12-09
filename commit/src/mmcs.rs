@@ -9,33 +9,14 @@ use serde::{Deserialize, Serialize};
 
 /// A "Mixed Matrix Commitment Scheme" (MMCS) is a generalization of a vector commitment scheme.
 ///
-/// It supports committing to matrices and then opening rows. It is also batch-oriented; one can
-/// commit to a batch of matrices at once even if their widths and heights differ.
+/// It supports committing to matrices and then opening rows. It is also batch-oriented; one can commit
+/// to a batch of matrices at once even if their widths and heights differ.
 ///
-/// Padding semantics:
-/// - Implementations may internally right‑pad each opened row to a multiple of
-///   `Self::ROW_PADDING` elements for hashing purposes. Callers must be prepared to handle
-///   opened rows whose length is `Dimensions.width.next_multiple_of(Self::ROW_PADDING)`.
-/// - By default, `ROW_PADDING = 1`, which implies no padding.
-/// - Schemes that pad (e.g., Merkle trees using a sponge with a fixed padding width) should
-///   override `ROW_PADDING` to make the padding contract explicit.
-///
-/// Opening index semantics:
-/// - When a row index is opened, it is interpreted directly as a row index for matrices with the
-///   largest height. For matrices with smaller heights, some bits of the row index are removed
-///   (from the least-significant side) to get the effective row index. These semantics are useful
-///   in FRI. See `open_batch` for details.
+/// When a particular row index is opened, it is interpreted directly as a row index for matrices
+/// with the largest height. For matrices with smaller heights, some bits of the row index are
+/// removed (from the least-significant side) to get the effective row index. These semantics are
+/// useful in the FRI protocol. See the documentation for `open_batch` for more details.
 pub trait Mmcs<T: Send + Sync + Clone>: Clone {
-    /// Row padding width (in elements) that this MMCS may apply when hashing rows.
-    ///
-    /// Semantics:
-    /// - When opening or verifying, implementations may return/expect rows whose length is
-    ///   `Dimensions.width.next_multiple_of(ROW_PADDING)`, i.e., rows can be right-padded with
-    ///   zeros (or absorbed-equivalent) to a multiple of `ROW_PADDING`.
-    /// - Implementations that do not apply any padding should leave this at the default of `1`.
-    /// - Callers that need to reason about padding (e.g., constructing random linear combinations
-    ///   across concatenated matrices) can query this constant to compute padded lane offsets.
-    const ROW_PADDING: usize = 1;
     type ProverData<M>;
     type Commitment: Clone + Serialize + DeserializeOwned;
     type Proof: Clone + Serialize + DeserializeOwned;
@@ -44,11 +25,6 @@ pub trait Mmcs<T: Send + Sync + Clone>: Clone {
     /// Commits to a batch of matrices at once and returns both the commitment and associated prover data.
     ///
     /// Each matrix in the batch may have different dimensions.
-    ///
-    /// Padding semantics:
-    /// - Implementations MAY store/operate on row representations that are right‑padded to a multiple
-    ///   of `Self::ROW_PADDING`. This does not change the conceptual matrix widths, which remain those
-    ///   reported by `Matrix::dimensions`.
     ///
     /// # Parameters
     /// - `inputs`: A vector of matrices to commit to.
@@ -93,11 +69,6 @@ pub trait Mmcs<T: Send + Sync + Clone>: Clone {
     /// This function is designed to support batch opening semantics where matrices may have different heights.
     /// The given index is interpreted relative to the maximum matrix height; smaller matrices apply a
     /// bit-shift to extract the corresponding row.
-    ///
-    /// Padding semantics:
-    /// - The opened row for a matrix with logical width `w` MAY be returned with length
-    ///   `w.next_multiple_of(Self::ROW_PADDING)` (right‑padded). Consumers should not assume that
-    ///   `opened_values[i].len() == dimensions[i].width`.
     ///
     /// # Parameters
     /// - `index`: The global row index (relative to max height).
@@ -163,11 +134,6 @@ pub trait Mmcs<T: Send + Sync + Clone>: Clone {
     /// - The global index used for opening (interpreted as in [`open_batch`]).
     /// - A [`BatchOpeningRef`] containing the claimed opened values and the proof.
     ///
-    /// Padding semantics:
-    /// - If `Self::ROW_PADDING > 1`, the expected row length for matrix `i` with logical width `w_i`
-    ///   is `w_i.next_multiple_of(Self::ROW_PADDING)`. Verifiers that enforce row lengths should
-    ///   validate against this padded width — not the raw `w_i`.
-    ///
     /// # Parameters
     /// - `commit`: The original commitment.
     /// - `dimensions`: Dimensions of the committed matrices, in order.
@@ -187,7 +153,7 @@ pub trait Mmcs<T: Send + Sync + Clone>: Clone {
 
 /// A Batched opening proof.
 ///
-/// Contains a collection of opened values and a proof for those openings.
+/// Contains a collection of opened values at a Merkle proof for those openings.
 ///
 /// Primarily used by the prover.
 #[derive(Serialize, Deserialize, Clone)]
@@ -197,8 +163,6 @@ pub trait Mmcs<T: Send + Sync + Clone>: Clone {
 pub struct BatchOpening<T: Send + Sync + Clone, InputMmcs: Mmcs<T>> {
     /// The opened row values from each matrix in the batch.
     /// Each inner vector corresponds to one matrix.
-    ///
-    /// Padding semantics: rows MAY be right‑padded to a multiple of `InputMmcs::ROW_PADDING`.
     pub opened_values: Vec<Vec<T>>,
     /// The proof showing the values are valid openings.
     pub opening_proof: InputMmcs::Proof,

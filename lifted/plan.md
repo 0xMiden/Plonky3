@@ -41,7 +41,7 @@ $$
 Finally we batch across matrices of the same height using `\alpha` by advancing powers proportional to widths (as in existing code).
 
 Padding‑aware offsets across matrices:
-- Let `pad = InputMmcs::ROW_PADDING` (defaults to 1; LMCS uses its hasher padding). For matrix `M_j` with width `w_j`, padded width is `w'_j = \lceil w_j / pad \rceil · pad`.
+- Let `pad = StatefulHasher::PADDING_WIDTH` (the hasher's absorption rate; e.g., `RATE` for `PaddingFreeSponge`). For matrix `M_j` with width `w_j`, padded width is `w'_j = \lceil w_j / pad \rceil · pad`.
 - Define intra‑matrix cache `p_j(X) = \sum_{i=0}^{w_j-1} \beta^{2i} p_{j,i}(X)`.
 - Define offset in padded lanes `U_j = \sum_{\ell<j} w'_{\ell}` and `\beta_j = \beta^{2\,U_j}`.
 - Global combination `p(X) = \sum_j \beta_j p_j(X)` ensures verifier can recover `p(x)` by a dot product over the LMCS‑opened, padded row using the same exponent schedule.

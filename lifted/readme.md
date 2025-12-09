@@ -78,7 +78,7 @@ Notes:
 - Choosing two points `(z^r, (g·z)^r)` per matrix mirrors existing DEEP constraints for current/next row and keeps the DEEP polynomial computation unchanged while simplifying openings.
 
 Intra‑ and inter‑matrix random linear combination with padding:
-- Let `pad = InputMmcs::ROW_PADDING` (defaults to 1; LMCS uses its hasher padding). For matrix `M_j` with width `w_j`, define `w'_j = ceil(w_j / pad) · pad`.
+- Let `pad = StatefulHasher::PADDING_WIDTH` (the hasher's absorption rate; e.g., `RATE` for `PaddingFreeSponge`). For matrix `M_j` with width `w_j`, define `w'_j = ceil(w_j / pad) · pad`.
 - Within a matrix, define the cached combination
   `p_j(X) = Σ_{i=0}^{w_j-1} β^{2i} · p_{j,i}(X)`, treating the padded lanes `i ∈ [w_j, w'_j)` as zeros.
 - Define the inter‑matrix offset in padded lanes `U_j = Σ_{ℓ<j} w'_ℓ`, and set `β_j = β^{2·U_j}`.

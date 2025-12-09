@@ -14,7 +14,7 @@
 
 use alloc::vec::Vec;
 
-use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, TwoAdicField};
+use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_maybe_rayon::prelude::IntoParallelRefIterator;
 

@@ -70,11 +70,6 @@ where
     [PD::Value; DIGEST_ELEMS]: Serialize + for<'de> Deserialize<'de>,
     StandardUniform: Distribution<PF::Value>,
 {
-    const ROW_PADDING: usize = <H as StatefulHasher<
-        PF::Value,
-        [PD::Value; WIDTH],
-        [PD::Value; DIGEST_ELEMS],
-    >>::PADDING_WIDTH;
     type ProverData<M> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST_ELEMS>;
     type Commitment = Hash<PF::Value, PD::Value, DIGEST_ELEMS>;
     /// Proof consists of the Merkle authentication path and the salt row.

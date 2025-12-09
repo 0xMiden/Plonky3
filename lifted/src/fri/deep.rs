@@ -226,6 +226,11 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
     /// where:
     /// - `f_reduced(X) = Σ_i c_i · f_i(X)` is the batched polynomial (computed once)
     /// - `q_j(X) = 1/(z_j - X)` is precomputed in each `Precomputation`
+    ///
+    /// # Parameters
+    /// - `padding`: The coefficient alignment width. Should match `StatefulHasher::PADDING_WIDTH`
+    ///   used when committing the matrices to ensure consistent coefficient indexing across
+    ///   batched matrices.
     pub fn compute_deep_quotient<M: Matrix<F>>(
         precomputations: &[Self],
         matrices_groups: &[Vec<M>],
@@ -241,15 +246,15 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
         let n = precomputations[0].point_quotient.len();
         let log_blowup = precomputations[0].log_blowup;
 
-        // Compute padded widths and group sizes for splitting coeffs later
+        // Compute widths and group sizes for splitting coeffs later
         let group_sizes: Vec<usize> = matrices_groups.iter().map(|g| g.len()).collect();
-        let padded_widths: Vec<usize> = matrices_groups
+        let widths: Vec<usize> = matrices_groups
             .iter()
-            .flat_map(|g| g.iter().map(|m| m.width().next_multiple_of(padding)))
+            .flat_map(|g| g.iter().map(|m| m.width()))
             .collect();
 
         // Step 1: Derive batching coefficients c_i = challenge^i (flat)
-        let coeffs: Vec<Vec<EF>> = derive_coeffs_from_challenge(&padded_widths, challenge);
+        let coeffs: Vec<Vec<EF>> = derive_coeffs_from_challenge(&widths, challenge, padding);
 
         // Step 2: Compute -f_reduced(X) = -Σ_i c_i · f_i(X) over the domain
         // We negate here so that the inner loop computes: f_reduced(z_j) + (-f_reduced(X))
@@ -313,23 +318,34 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> Precomputation<F, EF> {
 /// Returns coefficients in reverse order: `[..., c², c, 1]` for each width.
 /// This ordering enables efficient recursive verification.
 ///
-/// Takes padded widths directly. This accounts for matrices that were
-/// committed with zero-padded columns for alignment.
+/// # Parameters
+/// - `widths`: The actual widths of each matrix (not padded).
+/// - `challenge`: The random challenge used to derive batching coefficients.
+/// - `padding`: The coefficient alignment width. Should match `StatefulHasher::PADDING_WIDTH`
+///   used when committing the matrices. Each matrix's coefficient range is padded to a multiple
+///   of this value to ensure consistent indexing when matrices are batched together.
 pub fn derive_coeffs_from_challenge<EF: Field>(
-    padded_widths: &[usize],
+    widths: &[usize],
     challenge: EF,
+    padding: usize,
 ) -> Vec<Vec<EF>> {
     // Compute total number of coefficients needed
-    let total: usize = padded_widths.iter().sum();
+    let total: usize = widths.iter().map(|w| w.next_multiple_of(padding)).sum();
 
     // Collect all powers at once, then reverse
-    let all_powers: Vec<EF> = challenge.powers().take(total).collect();
+    let all_powers: Vec<EF> = challenge.powers().collect_n(total);
     let mut rev_powers_iter = all_powers.into_iter().rev();
 
     // Assign reversed powers to each width
-    padded_widths
+    widths
         .iter()
-        .map(|&width| rev_powers_iter.by_ref().take(width).collect())
+        .map(|&width| {
+            rev_powers_iter
+                .by_ref()
+                .take(width.next_multiple_of(padding))
+                .take(width)
+                .collect()
+        })
         .collect()
 }
 
@@ -567,6 +583,7 @@ mod tests {
         let log_blowup: usize = 2;
         let n = d_max << log_blowup;
         let log_n = log_d_max + log_blowup;
+        let padding = 3;
 
         // Two evaluation points
         let z1: EF = rng.sample(StandardUniform);
@@ -638,15 +655,19 @@ mod tests {
 
         // Generate a random challenge and compute DEEP quotient using the new API
         let challenge: EF = rng.sample(StandardUniform);
-        let acc =
-            Precomputation::compute_deep_quotient(&[pre1, pre2], &matrices_groups, challenge, 1);
+        let acc = Precomputation::compute_deep_quotient(
+            &[pre1, pre2],
+            &matrices_groups,
+            challenge,
+            padding,
+        );
 
         // Derive coefficients (no padding needed for scalar reduce_evals verification)
         let widths: Vec<usize> = matrices_groups
             .iter()
             .flat_map(|g| g.iter().map(|m| m.width()))
             .collect();
-        let coeffs = derive_coeffs_from_challenge(&widths, challenge);
+        let coeffs = derive_coeffs_from_challenge(&widths, challenge, padding);
 
         // For naive verification, we need the evaluations at z1 and z2
         // These are stored in pre1.evals_groups and pre2.evals_groups, but we can

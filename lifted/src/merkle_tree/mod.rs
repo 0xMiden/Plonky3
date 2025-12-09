@@ -181,10 +181,8 @@ impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize>
         }
 
         let mut state = [PD::Value::default(); WIDTH];
-        let pad = <H as StatefulHasher<PF::Value, _, _>>::PADDING_WIDTH;
         for (idx, (row, dimension)) in zip(rows, dimensions).enumerate() {
-            let expected_width = dimension.width.next_multiple_of(pad);
-            // Verify that each row is padded to a multiple of the hasher's padding width
+            let expected_width = dimension.width;
             if row.len() != expected_width {
                 return Err(LmcsError::WrongWidth {
                     matrix: idx,
@@ -229,11 +227,6 @@ where
         + Sync,
     [PD::Value; DIGEST_ELEMS]: Serialize + for<'de> Deserialize<'de>,
 {
-    const ROW_PADDING: usize = <H as StatefulHasher<
-        PF::Value,
-        [PD::Value; WIDTH],
-        [PD::Value; DIGEST_ELEMS],
-    >>::PADDING_WIDTH;
     type ProverData<M> = LiftedMerkleTree<PF::Value, PD::Value, M, DIGEST_ELEMS>;
     type Commitment = Hash<PF::Value, PD::Value, DIGEST_ELEMS>;
     type Proof = Vec<[PD::Value; DIGEST_ELEMS]>;
@@ -267,9 +260,7 @@ where
             "index {index} out of range {final_height}"
         );
 
-        // Pad each row to a multiple of the hasher's padding width with zeros.
-        let pad = <H as StatefulHasher<PF::Value, _, _>>::PADDING_WIDTH;
-        let opened_rows = tree.rows_padded(index, pad);
+        let opened_rows = tree.rows(index);
 
         let proof = tree.authentication_path(index);
 

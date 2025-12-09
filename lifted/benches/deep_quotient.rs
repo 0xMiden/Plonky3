@@ -58,6 +58,7 @@ fn bench_deep_quotient(c: &mut Criterion) {
     // Configurable max log degree
     let log_d_max: usize = 20;
     let log_blowup: usize = 3;
+    let padding: usize = 8;
 
     // Relative specs: (offset_from_max, width) where log_degree = log_d_max - offset
     let relative_specs: Vec<Vec<(usize, usize)>> = vec![
@@ -121,7 +122,7 @@ fn bench_deep_quotient(c: &mut Criterion) {
                 &precomputations,
                 &data.matrices_groups,
                 challenge,
-                1,
+                padding,
             ))
         })
     });
@@ -130,10 +131,6 @@ fn bench_deep_quotient(c: &mut Criterion) {
     group.bench_function("full", |b| {
         let mut rng = SmallRng::seed_from_u64(789);
         b.iter(|| {
-            let z1: EF = rng.sample(StandardUniform);
-            let z2: EF = rng.sample(StandardUniform);
-            let challenge: EF = rng.sample(StandardUniform);
-
             let pre1 = Precomputation::<F, EF>::new(z1, &data.matrices_groups, data.log_blowup);
             let pre2 = Precomputation::<F, EF>::new(z2, &data.matrices_groups, data.log_blowup);
 
@@ -141,7 +138,7 @@ fn bench_deep_quotient(c: &mut Criterion) {
                 &[pre1, pre2],
                 &data.matrices_groups,
                 challenge,
-                1,
+                padding,
             ))
         })
     });
