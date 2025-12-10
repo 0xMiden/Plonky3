@@ -7,6 +7,23 @@ Plonky3 is a toolkit which provides a set of primitives, such as polynomial comm
 
 For questions or discussions, please use the Telegram group, [t.me/plonky3](https://t.me/plonky3).
 
+## 0xMiden Fork
+
+This is the 0xMiden fork implementing **multi-phase (two-phase) proving** with auxiliary traces for permutation arguments and lookups.
+
+**Key additions:**
+- Two-phase proving: main trace → challenges → auxiliary trace → proof
+- `BaseAirWithAuxTrace` trait for AIRs requiring verifier randomness
+- Periodic column support
+- `miden-air` and `miden-prover` crates for Miden VM integration
+
+**For developers:** See [MIDEN_INTEGRATION_GUIDE.md](MIDEN_INTEGRATION_GUIDE.md) for:
+- API usage and examples
+- Future changes and migration strategy
+- Issue tracking for architectural updates
+
+**Upstream sync:** Diverged at `5132bc78` (Nov 2025). See [Issue #18](https://github.com/0xMiden/Plonky3/issues/18) for backport status.
+
 
 ## Status
 
