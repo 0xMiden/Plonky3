@@ -126,3 +126,27 @@ pub const fn create_benchmark_fri_params_zk<Mmcs>(mmcs: Mmcs) -> FriParameters<M
         log_folding_factor: 1,
     }
 }
+
+/// Creates a set of `FriParameters` suitable for miden proving.
+pub const fn create_miden_fri_params<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> {
+    FriParameters {
+        log_blowup: 4,
+        log_final_poly_len: 0,
+        num_queries: 100,
+        proof_of_work_bits: 16,
+        mmcs,
+        log_folding_factor: 1,
+    }
+}
+
+/// Creates a set of `FriParameters` suitable for miden VM constraints proving.
+pub const fn create_miden_vm_constraints_fri_params<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> {
+    FriParameters {
+        log_blowup: 3,
+        log_final_poly_len: 0,
+        num_queries: 100,
+        proof_of_work_bits: 16,
+        mmcs,
+        log_folding_factor: 1,
+    }
+}
