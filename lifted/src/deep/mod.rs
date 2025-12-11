@@ -28,9 +28,9 @@
 //! `fᵢ(zʳ)` for degree-d polynomials, but this equals `fᵢ'(z)` where `fᵢ'(X) = fᵢ(Xʳ)`
 //! is the lifted polynomial. This uniformity enables the `f_reduced` factorization.
 
-mod interpolate;
-mod prover;
-mod verifier;
+pub mod interpolate;
+pub mod prover;
+pub mod verifier;
 
 use alloc::vec::Vec;
 
@@ -157,10 +157,12 @@ mod tests {
         let q2 = SinglePointQuotient::<F, EF>::new(z2, &coset_points);
 
         let matrices_ref: Vec<&RowMajorMatrix<F>> = matrices.iter().collect();
-        let evals1 = q1.batch_eval_lifted(&[matrices_ref.clone()], &coset_points, log_blowup);
-        let evals2 = q2.batch_eval_lifted(&[matrices_ref], &coset_points, log_blowup);
+        let matrices_groups = [matrices_ref];
+        let evals1 = q1.batch_eval_lifted(&matrices_groups, &coset_points, log_blowup);
+        let evals2 = q2.batch_eval_lifted(&matrices_groups, &coset_points, log_blowup);
 
         // Step 3: Prover constructs DeepPoly
+        #[allow(clippy::type_complexity)]
         let openings_for_prover: Vec<(&SinglePointQuotient<F, EF>, Vec<MatrixGroupEvals<EF>>)> =
             vec![(&q1, evals1.clone()), (&q2, evals2.clone())];
         let deep_poly = DeepPoly::new(

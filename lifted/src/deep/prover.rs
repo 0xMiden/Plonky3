@@ -41,6 +41,7 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
     /// - `challenge_points`: Challenge `β` for batching opening points
     /// - `challenge_columns`: Challenge `α` for batching columns
     /// - `alignment`: Width for coefficient alignment (must match commitment)
+    #[allow(clippy::type_complexity)]
     pub fn new(
         c: &Commit,
         openings: &[(&SinglePointQuotient<F, EF>, Vec<MatrixGroupEvals<EF>>)],

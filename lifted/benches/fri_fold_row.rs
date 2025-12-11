@@ -4,7 +4,7 @@ use std::time::Duration;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use p3_baby_bear::BabyBear;
 use p3_field::extension::BinomialExtensionField;
-use p3_field::{ExtensionField, PrimeCharacteristicRing, TwoAdicField};
+use p3_field::{ExtensionField, TwoAdicField};
 use p3_goldilocks::Goldilocks;
 use p3_lifted::fri::fold::{FriFold, TwoAdicFriFold};
 use p3_matrix::Matrix;
