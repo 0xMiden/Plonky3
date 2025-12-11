@@ -1,20 +1,25 @@
-//! See `prover.rs` for an overview of the protocol and a more detailed soundness analysis.
+//! See [`crate::prover`] for an overview of the protocol and a more detailed soundness analysis.
 
-use alloc::vec;
+use alloc::string::String;
 use alloc::vec::Vec;
+use alloc::{format, vec};
 
 use itertools::Itertools;
-use p3_air::{Air, BaseAirWithAuxTrace};
+use p3_air::Air;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing};
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::VerticalPair;
 use p3_util::zip_eq::zip_eq;
-use tracing::{debug_span, instrument};
+use thiserror::Error;
+use tracing::instrument;
 
-use crate::symbolic_builder::{SymbolicAirBuilder, get_log_quotient_degree};
-use crate::{Domain, PcsError, Proof, StarkGenericConfig, Val, VerifierConstraintFolder};
+use crate::symbolic_builder::{SymbolicAirBuilder, get_log_num_quotient_chunks};
+use crate::{
+    Domain, PcsError, PreprocessedVerifierKey, Proof, StarkGenericConfig, Val,
+    VerifierConstraintFolder,
+};
 
 /// Recomposes the quotient polynomial from its chunks evaluated at a point.
 ///
@@ -64,7 +69,7 @@ where
 
 /// Verifies that the folded constraints match the quotient polynomial at zeta.
 ///
-/// This evaluates the AIR constraints at the out-of-domain point and checks
+/// This evaluates the [`Air`] constraints at the out-of-domain point and checks
 /// that constraints(zeta) / Z_H(zeta) = quotient(zeta).
 #[allow(clippy::too_many_arguments)]
 pub fn verify_constraints<SC, A, PcsErr>(
@@ -73,9 +78,6 @@ pub fn verify_constraints<SC, A, PcsErr>(
     trace_next: &[SC::Challenge],
     preprocessed_local: Option<&[SC::Challenge]>,
     preprocessed_next: Option<&[SC::Challenge]>,
-    aux_local: Option<&[SC::Challenge]>,
-    aux_next: Option<&[SC::Challenge]>,
-    randomness: &[SC::Challenge],
     public_values: &[Val<SC>],
     trace_domain: Domain<SC>,
     zeta: SC::Challenge,
@@ -85,6 +87,7 @@ pub fn verify_constraints<SC, A, PcsErr>(
 where
     SC: StarkGenericConfig,
     A: for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+    PcsErr: core::fmt::Debug,
 {
     let sels = trace_domain.selectors_at_point(zeta);
 
@@ -101,34 +104,8 @@ where
         _ => None,
     };
 
-    // Aux trace is committed as flattened base limbs. Recompose into EF values.
-    let aux_local_ext;
-    let aux_next_ext;
-    let aux = match (aux_local, aux_next) {
-        (Some(local), Some(next)) => {
-            aux_local_ext =
-                verifier_row_to_ext::<SC>(local).ok_or(VerificationError::InvalidProofShape)?;
-            aux_next_ext =
-                verifier_row_to_ext::<SC>(next).ok_or(VerificationError::InvalidProofShape)?;
-
-            VerticalPair::new(
-                RowMajorMatrixView::new_row(&aux_local_ext),
-                RowMajorMatrixView::new_row(&aux_next_ext),
-            )
-        }
-        _ => {
-            // Create an empty ViewPair with zero width
-            let empty: &[SC::Challenge] = &[];
-            VerticalPair::new(
-                RowMajorMatrixView::new_row(empty),
-                RowMajorMatrixView::new_row(empty),
-            )
-        }
-    };
     let mut folder = VerifierConstraintFolder {
         main,
-        aux,
-        randomness,
         preprocessed,
         public_values,
         is_first_row: sels.is_first_row,
@@ -148,36 +125,14 @@ where
     Ok(())
 }
 
-// Helper: convert a flattened base-field row into EF elements.
-fn verifier_row_to_ext<SC: StarkGenericConfig>(
-    row: &[SC::Challenge],
-) -> Option<Vec<SC::Challenge>> {
-    let dim = <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION;
-    if !row.len().is_multiple_of(dim) {
-        return None;
-    }
-
-    let mut out = Vec::with_capacity(row.len() / dim);
-    for chunk in row.chunks(dim) {
-        let mut acc = SC::Challenge::ZERO;
-        for (i, limb) in chunk.iter().enumerate() {
-            let basis = SC::Challenge::ith_basis_element(i).unwrap();
-            acc += basis * *limb;
-        }
-        out.push(acc);
-    }
-    Some(out)
-}
-
 /// Validates and commits the preprocessed trace if present.
 /// Returns the preprocessed width and its commitment hash (available iff width > 0).
 #[allow(clippy::type_complexity)]
 fn process_preprocessed_trace<SC, A>(
     air: &A,
     opened_values: &crate::proof::OpenedValues<SC::Challenge>,
-    pcs: &SC::Pcs,
-    trace_domain: <SC::Pcs as Pcs<SC::Challenge, SC::Challenger>>::Domain,
     is_zk: usize,
+    preprocessed_vk: Option<&PreprocessedVerifierKey<SC>>,
 ) -> Result<
     (
         usize,
@@ -189,9 +144,15 @@ where
     SC: StarkGenericConfig,
     A: for<'a> Air<VerifierConstraintFolder<'a, SC>>,
 {
-    // If verifier asked for preprocessed trace, then proof should have it
-    let preprocessed = air.preprocessed_trace();
-    let preprocessed_width = preprocessed.as_ref().map(|m| m.width).unwrap_or(0);
+    // Determine expected preprocessed width.
+    // - If a verifier key is provided, trust its width.
+    // - Otherwise, derive width from the AIR's preprocessed trace (if any).
+    let preprocessed_width = preprocessed_vk
+        .map(|vk| vk.width)
+        .or_else(|| air.preprocessed_trace().as_ref().map(|m| m.width))
+        .unwrap_or(0);
+
+    // Check that the proof's opened preprocessed values match the expected width.
     let preprocessed_local_len = opened_values
         .preprocessed_local
         .as_ref()
@@ -205,19 +166,27 @@ where
         return Err(VerificationError::InvalidProofShape);
     }
 
-    if preprocessed_width > 0 {
-        assert_eq!(is_zk, 0); // TODO: preprocessed columns not supported in zk mode
-        let height = preprocessed.as_ref().unwrap().values.len() / preprocessed_width;
-        assert_eq!(
-            height,
-            trace_domain.size(),
-            "Verifier's preprocessed trace height must be equal to trace domain size"
-        );
-        let (preprocessed_commit, _) = debug_span!("process preprocessed trace")
-            .in_scope(|| pcs.commit([(trace_domain, preprocessed.unwrap())]));
-        Ok((preprocessed_width, Some(preprocessed_commit)))
-    } else {
-        Ok((preprocessed_width, None))
+    // Validate consistency between width, verifier key, and zk settings.
+    match (preprocessed_width, preprocessed_vk) {
+        // Case: No preprocessed columns.
+        //
+        // Valid only if no verifier key is provided.
+        (0, None) => Ok((0, None)),
+
+        // Case: Preprocessed columns exist.
+        //
+        // Valid only if VK exists, widths match, and we are NOT in zk mode.
+        (w, Some(vk)) if w == vk.width => {
+            // Preprocessed columns are currently only supported in non-zk mode.
+            assert_eq!(is_zk, 0, "preprocessed columns not supported in zk mode");
+            Ok((w, Some(vk.commitment.clone())))
+        }
+
+        // Catch-all for invalid states, such as:
+        // - Width is 0 but VK is provided.
+        // - Width > 0 but VK is missing.
+        // - Width > 0 but VK width mismatches the expected width.
+        _ => Err(VerificationError::InvalidProofShape),
     }
 }
 
@@ -230,9 +199,22 @@ pub fn verify<SC, A>(
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
     SC: StarkGenericConfig,
-    A: Air<SymbolicAirBuilder<Val<SC>>>
-        + BaseAirWithAuxTrace<Val<SC>, SC::Challenge>
-        + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+{
+    verify_with_preprocessed(config, air, proof, public_values, None)
+}
+
+#[instrument(skip_all)]
+pub fn verify_with_preprocessed<SC, A>(
+    config: &SC,
+    air: &A,
+    proof: &Proof<SC>,
+    public_values: &[Val<SC>],
+    preprocessed_vk: Option<&PreprocessedVerifierKey<SC>>,
+) -> Result<(), VerificationError<PcsError<SC>>>
+where
+    SC: StarkGenericConfig,
+    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
 {
     let Proof {
         commitments,
@@ -243,29 +225,32 @@ where
 
     let pcs = config.pcs();
     let degree = 1 << degree_bits;
-    let aux_width = air.aux_width();
-    let num_randomness = air.num_randomness();
-
     let trace_domain = pcs.natural_domain_for_degree(degree);
     // TODO: allow moving preprocessed commitment to preprocess time, if known in advance
     let (preprocessed_width, preprocessed_commit) =
-        process_preprocessed_trace::<SC, A>(air, opened_values, pcs, trace_domain, config.is_zk())?;
+        process_preprocessed_trace::<SC, A>(air, opened_values, config.is_zk(), preprocessed_vk)?;
 
-    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, A>(
+    // Ensure the preprocessed trace and main trace have the same height.
+    if let Some(vk) = preprocessed_vk
+        && preprocessed_width > 0
+        && vk.degree_bits != *degree_bits
+    {
+        return Err(VerificationError::InvalidProofShape);
+    }
+
+    let log_num_quotient_chunks = get_log_num_quotient_chunks::<Val<SC>, A>(
         air,
         preprocessed_width,
         public_values.len(),
         config.is_zk(),
-        aux_width,
-        num_randomness,
     );
-    let quotient_degree = 1 << (log_quotient_degree + config.is_zk());
+    let num_quotient_chunks = 1 << (log_num_quotient_chunks + config.is_zk());
     let mut challenger = config.initialise_challenger();
     let init_trace_domain = pcs.natural_domain_for_degree(degree >> (config.is_zk()));
 
     let quotient_domain =
-        trace_domain.create_disjoint_domain(1 << (degree_bits + log_quotient_degree));
-    let quotient_chunks_domains = quotient_domain.split_domains(quotient_degree);
+        trace_domain.create_disjoint_domain(1 << (degree_bits + log_num_quotient_chunks));
+    let quotient_chunks_domains = quotient_domain.split_domains(num_quotient_chunks);
 
     let randomized_quotient_chunks_domains = quotient_chunks_domains
         .iter()
@@ -280,6 +265,20 @@ where
         return Err(VerificationError::RandomizationError);
     }
 
+    let air_width = A::width(air);
+    let valid_shape = opened_values.trace_local.len() == air_width
+        && opened_values.trace_next.len() == air_width
+        && opened_values.quotient_chunks.len() == num_quotient_chunks
+        && opened_values
+            .quotient_chunks
+            .iter()
+            .all(|qc| qc.len() == SC::Challenge::DIMENSION)
+        // We've already checked that opened_values.random is present if and only if ZK is enabled.
+        && opened_values.random.as_ref().is_none_or(|r_comm| r_comm.len() == SC::Challenge::DIMENSION);
+    if !valid_shape {
+        return Err(VerificationError::InvalidProofShape);
+    }
+
     // Observe the instance.
     challenger.observe(Val::<SC>::from_usize(proof.degree_bits));
     challenger.observe(Val::<SC>::from_usize(proof.degree_bits - config.is_zk()));
@@ -289,64 +288,17 @@ where
     // Practically speaking though, the only related known attack is from failing to include public
     // values. It's not clear if failing to include other instance data could enable a transcript
     // collision, since most such changes would completely change the set of satisfying witnesses.
-
     challenger.observe(commitments.trace.clone());
     if preprocessed_width > 0 {
         challenger.observe(preprocessed_commit.as_ref().unwrap().clone());
     }
     challenger.observe_slice(public_values);
 
-    // begin processing aux trace (optional)
-    let num_randomness = air.num_randomness();
-
-    let air_width = A::width(air);
-    let valid_shape = opened_values.trace_local.len() == air_width
-        && opened_values.trace_next.len() == air_width
-        && opened_values.quotient_chunks.len() == quotient_degree
-        && opened_values
-            .quotient_chunks
-            .iter()
-            .all(|qc| qc.len() == SC::Challenge::DIMENSION)
-        // We've already checked that opened_values.random is present if and only if ZK is enabled.
-        && opened_values.random.as_ref().is_none_or(|r_comm| r_comm.len() == SC::Challenge::DIMENSION)
-        // Check aux trace shape
-        && if num_randomness > 0 {
-            let aux_width_base = aux_width * SC::Challenge::DIMENSION;
-            match (&opened_values.aux_trace_local, &opened_values.aux_trace_next) {
-                (Some(l), Some(n)) => l.len() == aux_width_base && n.len() == aux_width_base,
-                _ => false,
-            }
-        } else {
-            opened_values.aux_trace_local.is_none() && opened_values.aux_trace_next.is_none()
-        };
-    if !valid_shape {
-        return Err(VerificationError::InvalidProofShape);
-    }
-    let randomness = if num_randomness != 0 {
-        let randomness: Vec<SC::Challenge> = (0..num_randomness)
-            .map(|_| challenger.sample_algebra_element())
-            .collect();
-
-        if let Some(aux_commit) = &commitments.aux {
-            challenger.observe(aux_commit.clone());
-        } else {
-            return Err(VerificationError::InvalidProofShape);
-        }
-        randomness
-    } else {
-        // No aux trace expected
-        if commitments.aux.is_some() {
-            return Err(VerificationError::InvalidProofShape);
-        }
-        vec![]
-    };
-
     // Get the first Fiat Shamir challenge which will be used to combine all constraint polynomials
     // into a single polynomial.
     //
     // Soundness Error: n/|EF| where n is the number of constraints.
     let alpha = challenger.sample_algebra_element();
-
     challenger.observe(commitments.quotient_chunks.clone());
 
     // We've already checked that commitments.random is present if and only if ZK is enabled.
@@ -400,43 +352,15 @@ where
         ),
     ]);
 
-    // Add aux trace verification if present
-    if let Some(aux_commit) = &commitments.aux {
-        let aux_local = opened_values
-            .aux_trace_local
-            .as_ref()
-            .ok_or(VerificationError::InvalidProofShape)?;
-        let aux_next = opened_values
-            .aux_trace_next
-            .as_ref()
-            .ok_or(VerificationError::InvalidProofShape)?;
-        coms_to_verify.push((
-            aux_commit.clone(),
-            vec![(
-                trace_domain,
-                vec![(zeta, aux_local.clone()), (zeta_next, aux_next.clone())],
-            )],
-        ));
-    }
-
     // Add preprocessed commitment verification if present
     if preprocessed_width > 0 {
-        let preprocessed_local = opened_values
-            .preprocessed_local
-            .as_ref()
-            .ok_or(VerificationError::InvalidProofShape)?;
-        let preprocessed_next = opened_values
-            .preprocessed_next
-            .as_ref()
-            .ok_or(VerificationError::InvalidProofShape)?;
-
         coms_to_verify.push((
             preprocessed_commit.unwrap(),
             vec![(
                 trace_domain,
                 vec![
-                    (zeta, preprocessed_local.clone()),
-                    (zeta_next, preprocessed_next.clone()),
+                    (zeta, opened_values.preprocessed_local.clone().unwrap()),
+                    (zeta_next, opened_values.preprocessed_next.clone().unwrap()),
                 ],
             )],
         ));
@@ -457,9 +381,6 @@ where
         &opened_values.trace_next,
         opened_values.preprocessed_local.as_deref(),
         opened_values.preprocessed_next.as_deref(),
-        opened_values.aux_trace_local.as_deref(),
-        opened_values.aux_trace_next.as_deref(),
-        &randomness,
         public_values,
         init_trace_domain,
         zeta,
@@ -470,18 +391,36 @@ where
     Ok(())
 }
 
+/// Defines errors that can occur during lookup verification.
 #[derive(Debug)]
-pub enum VerificationError<PcsErr> {
+pub enum LookupError {
+    /// Error indicating that the global cumulative sum is incorrect.
+    GlobalCumulativeMismatch(Option<String>),
+}
+
+#[derive(Debug, Error)]
+pub enum VerificationError<PcsErr>
+where
+    PcsErr: core::fmt::Debug,
+{
+    #[error("invalid proof shape")]
     InvalidProofShape,
     /// An error occurred while verifying the claimed openings.
+    #[error("invalid opening argument: {0:?}")]
     InvalidOpeningArgument(PcsErr),
     /// Out-of-domain evaluation mismatch, i.e. `constraints(zeta)` did not match
     /// `quotient(zeta) Z_H(zeta)`.
-    OodEvaluationMismatch {
-        index: Option<usize>,
-    },
+    #[error("out-of-domain evaluation mismatch{}", .index.map(|i| format!(" at index {}", i)).unwrap_or_default())]
+    OodEvaluationMismatch { index: Option<usize> },
     /// The FRI batch randomization does not correspond to the ZK setting.
+    #[error("randomization error: FRI batch randomization does not match ZK setting")]
     RandomizationError,
     /// The domain does not support computing the next point algebraically.
+    #[error(
+        "next point unavailable: domain does not support computing the next point algebraically"
+    )]
     NextPointUnavailable,
+    /// Lookup related error
+    #[error("lookup error: {0:?}")]
+    LookupError(LookupError),
 }

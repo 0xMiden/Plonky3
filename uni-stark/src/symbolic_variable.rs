@@ -9,10 +9,10 @@ use crate::symbolic_expression::SymbolicExpression;
 pub enum Entry {
     Preprocessed { offset: usize },
     Main { offset: usize },
-    Aux { offset: usize },
     Permutation { offset: usize },
-    Public,
+    Aux { offset: usize },
     Periodic,
+    Public,
     Challenge,
 }
 
@@ -35,16 +35,12 @@ impl<F> SymbolicVariable<F> {
 
     pub const fn degree_multiple(&self) -> usize {
         match self.entry {
-            Entry::Preprocessed { .. } | Entry::Main { .. } | Entry::Permutation { .. } => 1,
-            Entry::Aux { .. } => 1,
+            Entry::Preprocessed { .. }
+            | Entry::Main { .. }
+            | Entry::Permutation { .. }
+            | Entry::Aux { .. } => 1,
             Entry::Public | Entry::Periodic | Entry::Challenge => 0,
         }
-    }
-}
-
-impl<F: Field> From<SymbolicVariable<F>> for SymbolicExpression<F> {
-    fn from(value: SymbolicVariable<F>) -> Self {
-        Self::Variable(value)
     }
 }
 

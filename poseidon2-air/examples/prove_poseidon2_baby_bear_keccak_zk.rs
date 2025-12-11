@@ -104,7 +104,7 @@ fn main() -> Result<(), impl Debug> {
     type MyConfig = StarkConfig<Pcs, Challenge, Challenger>;
     let config = MyConfig::new(pcs, challenger);
 
-    let proof = prove(&config, &air, &trace, &[]);
+    let proof = prove(&config, &air, trace, &[]);
 
     verify(&config, &air, &proof, &[])
 }

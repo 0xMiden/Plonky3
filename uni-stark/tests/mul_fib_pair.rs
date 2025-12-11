@@ -1,20 +1,20 @@
 use core::borrow::Borrow;
 
-use p3_air::{
-    Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, BaseAirWithAuxTrace, PairBuilder,
-};
+use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, PairBuilder};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
-use p3_field::{ExtensionField, Field, PrimeField64};
+use p3_field::{Field, PrimeField64};
 use p3_fri::{TwoAdicFriPcs, create_test_fri_params};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-use p3_uni_stark::{StarkConfig, prove, verify};
+use p3_uni_stark::{
+    StarkConfig, prove_with_preprocessed, setup_preprocessed, verify_with_preprocessed,
+};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
@@ -51,8 +51,6 @@ impl<F: PrimeField64> BaseAir<F> for MulFibPAir {
         ))
     }
 }
-
-impl<F: PrimeField64, EF: ExtensionField<F>> BaseAirWithAuxTrace<F, EF> for MulFibPAir {}
 
 impl<AB: AirBuilderWithPublicValues + PairBuilder> Air<AB> for MulFibPAir
 where
@@ -201,8 +199,16 @@ fn test_mul_fib_pair() {
     let num_rows = 1024;
     let config = setup_test_config();
     let trace = generate_trace_rows::<Val>(1, 1, num_rows);
-    let proof = prove(&config, &MulFibPAir::new(num_rows), &trace, &[]);
-    verify(&config, &MulFibPAir::new(num_rows), &proof, &[]).expect("verification failed");
+
+    let air = MulFibPAir::new(num_rows);
+    let degree_bits = 10; // log2(1024)
+    let (preprocessed_prover_data, preprocessed_vk) =
+        setup_preprocessed::<MyConfig, _>(&config, &air, degree_bits).unwrap();
+
+    let proof = prove_with_preprocessed(&config, &air, trace, &[], Some(&preprocessed_prover_data));
+
+    verify_with_preprocessed(&config, &air, &proof, &[], Some(&preprocessed_vk))
+        .expect("verification failed");
 }
 
 #[test]
@@ -210,13 +216,26 @@ fn test_tampered_preprocessed_fails() {
     let num_rows = 1024;
     let config = setup_test_config();
     let trace = generate_trace_rows::<Val>(1, 1, num_rows);
-    let proof = prove(&config, &MulFibPAir::new(num_rows), &trace, &[]);
+    let air = MulFibPAir::new(num_rows);
+    let degree_bits = 10; // log2(1024)
 
-    let result = verify(
+    // Prover uses the correct AIR for preprocessed setup.
+    let (preprocessed_prover_data, _) =
+        setup_preprocessed::<MyConfig, _>(&config, &air, degree_bits).unwrap();
+    let proof = prove_with_preprocessed(&config, &air, trace, &[], Some(&preprocessed_prover_data));
+
+    // Verifier uses a *tampered* AIR to derive the preprocessed commitment, which should
+    // not match the one used in the proof.
+    let tampered_air = MulFibPAir::with_tampered_preprocessed(num_rows, 3);
+    let (_, tampered_preprocessed_vk) =
+        setup_preprocessed::<MyConfig, _>(&config, &tampered_air, degree_bits).unwrap();
+
+    let result = verify_with_preprocessed(
         &config,
-        &MulFibPAir::with_tampered_preprocessed(num_rows, 3),
+        &tampered_air,
         &proof,
         &[],
+        Some(&tampered_preprocessed_vk),
     );
 
     assert!(

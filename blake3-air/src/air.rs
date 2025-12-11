@@ -3,7 +3,7 @@ use core::borrow::Borrow;
 
 use itertools::izip;
 use p3_air::utils::{add2, add3, pack_bits_le, xor_32_shift};
-use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithAuxTrace};
+use p3_air::{Air, AirBuilder, BaseAir};
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -229,8 +229,6 @@ impl<F> BaseAir<F> for Blake3Air {
         NUM_BLAKE3_COLS
     }
 }
-
-impl<F, EF> BaseAirWithAuxTrace<F, EF> for Blake3Air {}
 
 impl<AB: AirBuilder> Air<AB> for Blake3Air {
     #[inline]

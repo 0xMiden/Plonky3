@@ -9,19 +9,30 @@ use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::Dimensions;
 use p3_util::zip_eq::zip_eq;
 use p3_util::{log2_strict_usize, reverse_bits_len};
+use thiserror::Error;
 
 use crate::{
     CommitPhaseProofStep, CommitmentWithOpeningPoints, FriFoldingStrategy, FriParameters, FriProof,
     QueryProof,
 };
 
-#[derive(Debug)]
-pub enum FriError<CommitMmcsErr, InputError> {
+#[derive(Debug, Error)]
+pub enum FriError<CommitMmcsErr, InputError>
+where
+    CommitMmcsErr: core::fmt::Debug,
+    InputError: core::fmt::Debug,
+{
+    #[error("invalid proof shape")]
     InvalidProofShape,
+    #[error("commit phase MMCS error: {0:?}")]
     CommitPhaseMmcsError(CommitMmcsErr),
+    #[error("input error: {0:?}")]
     InputError(InputError),
+    #[error("final polynomial mismatch: evaluation does not match expected value")]
     FinalPolyMismatch,
+    #[error("invalid proof-of-work witness")]
     InvalidPowWitness,
+    #[error("missing input: required input is not present")]
     MissingInput,
 }
 
@@ -97,10 +108,7 @@ where
     }
 
     // Observe all coefficients of the final polynomial.
-    proof
-        .final_poly
-        .iter()
-        .for_each(|x| challenger.observe_algebra_element(*x));
+    challenger.observe_algebra_slice(&proof.final_poly);
 
     // Ensure that we have the expected number of FRI query proofs.
     if proof.query_proofs.len() != params.num_queries {

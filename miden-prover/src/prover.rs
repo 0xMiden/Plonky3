@@ -1,3 +1,6 @@
+use alloc::vec;
+use alloc::vec::Vec;
+
 use itertools::Itertools;
 use miden_air::MidenAir;
 use p3_challenger::{CanObserve, FieldChallenger};

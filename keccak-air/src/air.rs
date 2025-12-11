@@ -1,7 +1,7 @@
 use core::array;
 use core::borrow::Borrow;
 
-use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithAuxTrace};
+use p3_air::{Air, AirBuilder, BaseAir};
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -34,8 +34,6 @@ impl<F> BaseAir<F> for KeccakAir {
         NUM_KECCAK_COLS
     }
 }
-
-impl<F, EF> BaseAirWithAuxTrace<F, EF> for KeccakAir {}
 
 impl<AB: AirBuilder> Air<AB> for KeccakAir {
     #[inline]

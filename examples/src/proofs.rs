@@ -104,7 +104,7 @@ where
 
     let config = KeccakStarkConfig::new(pcs, challenger);
 
-    let proof = prove(&config, proof_goal, &trace, &[]);
+    let proof = prove(&config, proof_goal, trace, &[]);
     report_proof_size(&proof);
 
     verify(&config, proof_goal, &proof, &[])
@@ -146,7 +146,7 @@ where
 
     let config = Poseidon2StarkConfig::new(pcs, challenger);
 
-    let proof = prove(&config, proof_goal, &trace, &[]);
+    let proof = prove(&config, proof_goal, trace, &[]);
     report_proof_size(&proof);
 
     verify(&config, proof_goal, &proof, &[])
@@ -182,7 +182,7 @@ pub fn prove_m31_keccak<
 
     let config = KeccakCircleStarkConfig::new(pcs, challenger);
 
-    let proof = prove(&config, proof_goal, &trace, &[]);
+    let proof = prove(&config, proof_goal, trace, &[]);
     report_proof_size(&proof);
 
     verify(&config, proof_goal, &proof, &[])
@@ -222,7 +222,7 @@ where
 
     let config = Poseidon2CircleStarkConfig::new(pcs, challenger);
 
-    let proof = prove(&config, proof_goal, &trace, &[]);
+    let proof = prove(&config, proof_goal, trace, &[]);
     report_proof_size(&proof);
 
     verify(&config, proof_goal, &proof, &[])

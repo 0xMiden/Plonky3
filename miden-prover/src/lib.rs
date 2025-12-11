@@ -1,3 +1,7 @@
+#![no_std]
+
+extern crate alloc;
+
 #[cfg(debug_assertions)]
 mod check_constraints;
 mod config;

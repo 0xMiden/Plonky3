@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use miden_air::{MidenAir, MidenAirBuilder};
 use p3_field::{BasedVectorSpace, ExtensionField, Field};
 use p3_matrix::Matrix;
@@ -243,6 +245,8 @@ where
 
 #[cfg(test)]
 mod tests {
+
+    use alloc::vec;
 
     use p3_field::PrimeCharacteristicRing;
     use p3_field::extension::BinomialExtensionField;

@@ -17,6 +17,7 @@ use p3_maybe_rayon::prelude::*;
 use p3_util::log2_strict_usize;
 use p3_util::zip_eq::zip_eq;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tracing::info_span;
 
 use crate::deep_quotient::{deep_quotient_reduce_row, extract_lambda};
@@ -57,10 +58,17 @@ pub struct CircleInputProof<
     first_layer_proof: FriMmcs::Proof,
 }
 
-#[derive(Debug)]
-pub enum InputError<InputMmcsError, FriMmcsError> {
+#[derive(Debug, Error)]
+pub enum InputError<InputMmcsError, FriMmcsError>
+where
+    InputMmcsError: core::fmt::Debug,
+    FriMmcsError: core::fmt::Debug,
+{
+    #[error("input MMCS error: {0:?}")]
     InputMmcsError(InputMmcsError),
+    #[error("first layer MMCS error: {0:?}")]
     FirstLayerMmcsError(FriMmcsError),
+    #[error("input shape error: mismatched dimensions")]
     InputShapeError,
 }
 
@@ -187,9 +195,7 @@ where
                                 let ps_at_zeta =
                                     info_span!("compute opened values with Lagrange interpolation")
                                         .in_scope(|| evals.evaluate_at_point(zeta));
-                                ps_at_zeta
-                                    .iter()
-                                    .for_each(|&p| challenger.observe_algebra_element(p));
+                                challenger.observe_algebra_slice(&ps_at_zeta);
                                 ps_at_zeta
                             })
                             .collect()
@@ -368,9 +374,7 @@ where
         for (_, round) in &rounds {
             for (_, mat) in round {
                 for (_, point) in mat {
-                    point
-                        .iter()
-                        .for_each(|&opening| challenger.observe_algebra_element(opening));
+                    challenger.observe_algebra_slice(point);
                 }
             }
         }

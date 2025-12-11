@@ -2,7 +2,7 @@ use core::fmt::Debug;
 use core::marker::PhantomData;
 
 use itertools::Itertools;
-use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithAuxTrace};
+use p3_air::{Air, AirBuilder, BaseAir};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_challenger::{DuplexChallenger, HashChallenger, SerializingChallenger32};
 use p3_circle::CirclePcs;
@@ -32,6 +32,7 @@ const TRACE_WIDTH: usize = REPETITIONS * 3;
 /*
 In its basic form, asserts a^(self.degree-1) * b = c
 (so that the total constraint degree is self.degree)
+
 
 If `uses_transition_constraints`, checks that on transition rows, the first a = row number
 */
@@ -87,8 +88,6 @@ impl<F> BaseAir<F> for MulAir {
     }
 }
 
-impl<F, EF> BaseAirWithAuxTrace<F, EF> for MulAir {}
-
 impl<AB: AirBuilder> Air<AB> for MulAir {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
@@ -128,7 +127,7 @@ where
 {
     let trace = air.random_valid_trace(log_height, true);
 
-    let proof = prove(&config, &air, &trace, &[]);
+    let proof = prove(&config, &air, trace, &[]);
 
     let serialized_proof = postcard::to_allocvec(&proof).expect("unable to serialize proof");
     tracing::debug!("serialized_proof len: {} bytes", serialized_proof.len());
