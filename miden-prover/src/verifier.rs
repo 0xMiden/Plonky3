@@ -1,4 +1,6 @@
 //! See `prover.rs` for an overview of the protocol and a more detailed soundness analysis.
+use alloc::vec;
+use alloc::vec::Vec;
 
 use itertools::Itertools;
 use miden_air::MidenAir;

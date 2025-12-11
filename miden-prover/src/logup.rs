@@ -2,6 +2,8 @@
 //!
 //! It is hardcoded that the last two columns of the main trace is a permutation
 //! and the logup argument will prove this permutation.
+use alloc::vec;
+use alloc::vec::Vec;
 
 use p3_field::{ExtensionField, Field, batch_multiplicative_inverse};
 use p3_matrix::Matrix;
