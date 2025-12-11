@@ -95,6 +95,7 @@ tracing-subscriber = { version = "0.3.17", default-features = false, features = 
     "alloc",
 ] }
 transpose = "0.2.3"
+winter-utils = { version = "0.13", default-features = false }
 
 # Local dependencies
 p3-air = { path = "air", version = "0.3.0" }

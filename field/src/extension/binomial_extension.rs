@@ -35,11 +35,21 @@ pub struct BinomialExtensionField<F, const D: usize, A = F> {
 }
 
 impl<F, A, const D: usize> BinomialExtensionField<F, D, A> {
-    pub(crate) const fn new(value: [A; D]) -> Self {
+    pub const fn new(value: [A; D]) -> Self {
         Self {
             value,
             _phantom: PhantomData,
         }
+    }
+}
+
+impl<F, const D: usize> BinomialExtensionField<F, D>
+where
+    Self: Field,
+{
+    /// Compute the inverse of the field element. Return 0 if the input is 0
+    pub fn inverse_unwrap_zero(&self) -> Self {
+        self.try_inverse().map_or(Self::ZERO, |p| p)
     }
 }
 

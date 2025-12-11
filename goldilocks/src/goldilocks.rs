@@ -1,5 +1,6 @@
-use alloc::vec;
+use alloc::string::String;
 use alloc::vec::Vec;
+use alloc::{format, vec};
 use core::fmt::{Debug, Display, Formatter};
 use core::hash::{Hash, Hasher};
 use core::iter::{Product, Sum};
@@ -21,6 +22,9 @@ use p3_util::{assume, branch_hint, flatten_to_base, gcd_inner};
 use rand::Rng;
 use rand::distr::{Distribution, StandardUniform};
 use serde::{Deserialize, Serialize};
+use winter_utils::{
+    ByteReader, ByteWriter, Deserializable, DeserializationError, Randomizable, Serializable,
+};
 
 /// The Goldilocks prime
 pub(crate) const P: u64 = 0xFFFF_FFFF_0000_0001;
@@ -37,8 +41,25 @@ pub struct Goldilocks {
 }
 
 impl Goldilocks {
+    /// Create a new element from u64;
     pub const fn new(value: u64) -> Self {
-        Self { value }
+        Self {
+            value: if value >= P { value - P } else { value },
+        }
+    }
+
+    /// Expose the inner value; does not guarantee the uniqueness of data
+    pub const fn inner(&self) -> u64 {
+        self.value
+    }
+
+    /// Expose the inner value; does guarantee the uniqueness of data
+    pub const fn as_int(&self) -> u64 {
+        if self.value >= P {
+            self.value - P
+        } else {
+            self.value
+        }
     }
 
     /// Convert a constant u64 array into a constant Goldilocks array.
@@ -117,6 +138,67 @@ impl Goldilocks {
         }
         powers_of_two
     };
+}
+
+impl From<Goldilocks> for u64 {
+    fn from(value: Goldilocks) -> Self {
+        value.as_int()
+    }
+}
+
+impl Deserializable for Goldilocks {
+    fn read_from<R: ByteReader>(source: &mut R) -> Result<Self, DeserializationError> {
+        let inner = u64::read_from(source)?;
+        Ok(Self { value: inner })
+    }
+}
+
+impl Serializable for Goldilocks {
+    fn write_into<W: ByteWriter>(&self, target: &mut W) {
+        self.value.write_into(target);
+    }
+
+    fn get_size_hint(&self) -> usize {
+        8
+    }
+}
+
+impl Randomizable for Goldilocks {
+    const VALUE_SIZE: usize = 8;
+
+    fn from_random_bytes(source: &[u8]) -> Option<Self> {
+        let value = u64::from_random_bytes(source)?;
+
+        if value >= P {
+            None
+        } else {
+            Some(Self { value })
+        }
+    }
+}
+
+impl From<u8> for Goldilocks {
+    fn from(value: u8) -> Self {
+        Self {
+            value: value as u64,
+        }
+    }
+}
+
+impl From<u16> for Goldilocks {
+    fn from(value: u16) -> Self {
+        Self {
+            value: value as u64,
+        }
+    }
+}
+
+impl From<u32> for Goldilocks {
+    fn from(value: u32) -> Self {
+        Self {
+            value: value as u64,
+        }
+    }
 }
 
 impl PartialEq for Goldilocks {
@@ -432,6 +514,20 @@ impl QuotientMap<i64> for Goldilocks {
     #[inline(always)]
     unsafe fn from_canonical_unchecked(int: i64) -> Self {
         Self::from_int(int)
+    }
+}
+
+impl TryFrom<u64> for Goldilocks {
+    type Error = String;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        if value >= P {
+            Err(format!(
+                "invalid field element: value {value} is greater than or equal to the field modulus"
+            ))
+        } else {
+            Ok(Self::new(value))
+        }
     }
 }
 
