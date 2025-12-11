@@ -1,13 +1,12 @@
-use p3_air::{AirBuilder, AirBuilderWithPublicValues, PairBuilder};
-use p3_field::Field;
-use p3_matrix::stack::ViewPair;
-
 #[cfg(debug_assertions)]
 use p3_air::Air;
+use p3_air::{AirBuilder, AirBuilderWithPublicValues, PairBuilder};
+use p3_field::Field;
 #[cfg(debug_assertions)]
 use p3_matrix::Matrix;
 #[cfg(debug_assertions)]
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
+use p3_matrix::stack::ViewPair;
 #[cfg(debug_assertions)]
 use tracing::instrument;
 

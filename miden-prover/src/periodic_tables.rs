@@ -47,8 +47,9 @@
 //! - [`evaluate_periodic_at_point`]: Evaluates periodic columns at a single challenge point.
 //!   Called by the verifier to check constraint satisfaction.
 
+use alloc::collections::btree_map::BTreeMap;
+use alloc::vec;
 use alloc::vec::Vec;
-use alloc::{collections::btree_map::BTreeMap, vec};
 
 use p3_commit::PolynomialSpace;
 use p3_field::{ExtensionField, TwoAdicField, batch_multiplicative_inverse};
