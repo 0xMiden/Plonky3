@@ -53,7 +53,7 @@ pub trait ExampleHashAir<F: Field, SC: StarkGenericConfig>:
     BaseAir<F>
     + BaseAirWithAuxTrace<F, SC::Challenge>
     + Air<SymbolicAirBuilder<F>>
-    + for<'a> Air<DebugConstraintBuilder<'a, F, SC::Challenge>>
+    + for<'a> Air<DebugConstraintBuilder<'a, F>>
     + for<'a> Air<ProverConstraintFolder<'a, SC>>
     + for<'a> Air<VerifierConstraintFolder<'a, SC>>
 where

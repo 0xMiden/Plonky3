@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use p3_field::{BasedVectorSpace, ExtensionField, Field};
 
 /// Helper: convert a flattened base-field row (slice of `F`) into a Vec<EF>
