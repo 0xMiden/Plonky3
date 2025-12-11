@@ -17,7 +17,7 @@ pub use duplex_challenger::*;
 pub use grinding_challenger::*;
 pub use hash_challenger::*;
 pub use multi_field_challenger::*;
-use p3_field::{BasedVectorSpace, Field};
+use p3_field::{Algebra, BasedVectorSpace, Field};
 pub use serializing_challenger::*;
 
 /// A generic trait for absorbing elements into the transcript.
@@ -77,15 +77,47 @@ pub trait FieldChallenger<F: Field>:
     /// Absorb an element from a vector space over the base field.
     ///
     /// Decomposes the element into its basis coefficients and absorbs each.
+    #[inline(always)]
     fn observe_algebra_element<A: BasedVectorSpace<F>>(&mut self, alg_elem: A) {
         self.observe_slice(alg_elem.as_basis_coefficients_slice());
+    }
+
+    /// Absorb a slice of elements from a vector space over the base field.
+    ///
+    /// Decomposes each element into its basis coefficients and absorbs them.
+    #[inline(always)]
+    fn observe_algebra_slice<A: BasedVectorSpace<F> + Clone>(&mut self, alg_elems: &[A]) {
+        for alg_elem in alg_elems {
+            self.observe_algebra_element(alg_elem.clone());
+        }
     }
 
     /// Sample an element of a vector space over the base field.
     ///
     /// Constructs the element by sampling basis coefficients.
+    #[inline(always)]
     fn sample_algebra_element<A: BasedVectorSpace<F>>(&mut self) -> A {
         A::from_basis_coefficients_fn(|_| self.sample())
+    }
+
+    /// Observe base field elements as extension field elements for recursion-friendly transcripts.
+    ///
+    /// This simplifies recursive verifier circuits by using a uniform extension field challenger.
+    /// Instead of observing a mix of base and extension field elements, we convert all base field
+    /// observations (metadata, public values) to extension field elements before passing to the challenger.
+    ///
+    /// # Recursion Benefits
+    ///
+    /// In recursive proof systems, the verifier circuit needs to verify the inner proof. Since STARK
+    /// verification operates entirely in the extension field (challenges, opened values, constraint
+    /// evaluation), having a challenger that only observes extension field elements significantly
+    /// simplifies the recursive circuit implementation.
+    #[inline(always)]
+    fn observe_base_as_algebra_element<EF>(&mut self, val: F)
+    where
+        EF: Algebra<F> + BasedVectorSpace<F>,
+    {
+        self.observe_algebra_element(EF::from(val));
     }
 }
 
@@ -137,17 +169,4 @@ where
     }
 }
 
-impl<C, F: Field> FieldChallenger<F> for &mut C
-where
-    C: FieldChallenger<F>,
-{
-    #[inline(always)]
-    fn observe_algebra_element<EF: BasedVectorSpace<F>>(&mut self, ext: EF) {
-        (*self).observe_algebra_element(ext);
-    }
-
-    #[inline(always)]
-    fn sample_algebra_element<EF: BasedVectorSpace<F>>(&mut self) -> EF {
-        (*self).sample_algebra_element()
-    }
-}
+impl<C, F: Field> FieldChallenger<F> for &mut C where C: FieldChallenger<F> {}

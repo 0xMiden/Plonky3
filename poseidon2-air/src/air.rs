@@ -1,7 +1,7 @@
 use core::borrow::Borrow;
 use core::marker::PhantomData;
 
-use p3_air::{Air, AirBuilder, BaseAir, };
+use p3_air::{Air, AirBuilder, BaseAir};
 use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -103,28 +103,6 @@ impl<
     fn width(&self) -> usize {
         num_cols::<WIDTH, SBOX_DEGREE, SBOX_REGISTERS, HALF_FULL_ROUNDS, PARTIAL_ROUNDS>()
     }
-}
-
-impl<
-    F: PrimeCharacteristicRing + Sync + Field,
-    EF: ExtensionField<F>,
-    LinearLayers: Sync,
-    const WIDTH: usize,
-    const SBOX_DEGREE: u64,
-    const SBOX_REGISTERS: usize,
-    const HALF_FULL_ROUNDS: usize,
-    const PARTIAL_ROUNDS: usize,
-> BaseAirWithAuxTrace<F, EF>
-    for Poseidon2Air<
-        F,
-        LinearLayers,
-        WIDTH,
-        SBOX_DEGREE,
-        SBOX_REGISTERS,
-        HALF_FULL_ROUNDS,
-        PARTIAL_ROUNDS,
-    >
-{
 }
 
 pub(crate) fn eval<
