@@ -1,8 +1,14 @@
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, PairBuilder};
+use p3_air::{AirBuilder, AirBuilderWithPublicValues, PairBuilder};
 use p3_field::Field;
-use p3_matrix::Matrix;
-use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
 use p3_matrix::stack::ViewPair;
+
+#[cfg(debug_assertions)]
+use p3_air::Air;
+#[cfg(debug_assertions)]
+use p3_matrix::Matrix;
+#[cfg(debug_assertions)]
+use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
+#[cfg(debug_assertions)]
 use tracing::instrument;
 
 /// Runs constraint checks using a given [`Air`] implementation and trace matrix.
@@ -16,6 +22,7 @@ use tracing::instrument;
 /// - `main`: The [`RowMajorMatrix`] containing witness rows.
 /// - `public_values`: Public values provided to the builder.
 #[instrument(skip_all)]
+#[cfg(debug_assertions)]
 pub(crate) fn check_constraints<F, A>(air: &A, main: &RowMajorMatrix<F>, public_values: &[F])
 where
     F: Field,
@@ -152,6 +159,7 @@ impl<'a, F: Field> PairBuilder for DebugConstraintBuilder<'a, F> {
 }
 
 #[cfg(test)]
+#[cfg(debug_assertions)]
 mod tests {
     use alloc::vec;
 
