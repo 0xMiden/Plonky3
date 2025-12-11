@@ -1,6 +1,6 @@
 use core::borrow::{Borrow, BorrowMut};
 
-use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithAuxTrace};
+use p3_air::{Air, AirBuilder, BaseAir, };
 use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
