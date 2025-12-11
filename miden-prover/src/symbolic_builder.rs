@@ -96,7 +96,7 @@ where
 pub struct SymbolicAirBuilder<F: Field> {
     preprocessed: RowMajorMatrix<SymbolicVariable<F>>,
     main: RowMajorMatrix<SymbolicVariable<F>>,
-    aux: Option<RowMajorMatrix<SymbolicVariable<F>>>,
+    aux: RowMajorMatrix<SymbolicVariable<F>>,
     aux_randomness: Vec<SymbolicVariable<F>>,
     public_values: Vec<SymbolicVariable<F>>,
     periodic_values: Vec<SymbolicVariable<F>>,
@@ -142,18 +142,13 @@ impl<F: Field> SymbolicAirBuilder<F> {
                 (0..width).map(move |index| SymbolicVariable::new(Entry::Main { offset }, index))
             })
             .collect();
-        let aux = if aux_width > 0 {
-            let aux_values = [0, 1] // Aux trace also use consecutive rows for LogUp based permutation check
-                .into_iter()
-                .flat_map(|offset| {
-                    (0..aux_width)
-                        .map(move |index| SymbolicVariable::new(Entry::Aux { offset }, index))
-                })
-                .collect();
-            Some(RowMajorMatrix::new(aux_values, aux_width))
-        } else {
-            None
-        };
+        let aux_values = [0, 1] // Aux trace also use consecutive rows for LogUp based permutation check
+            .into_iter()
+            .flat_map(|offset| {
+                (0..aux_width).map(move |index| SymbolicVariable::new(Entry::Aux { offset }, index))
+            })
+            .collect();
+        let aux = RowMajorMatrix::new(aux_values, aux_width);
         let randomness = Self::sample_randomness(num_randomness);
         let public_values = (0..num_public_values)
             .map(move |index| SymbolicVariable::new(Entry::Public, index))
@@ -225,7 +220,7 @@ impl<F: Field> MidenAirBuilder for SymbolicAirBuilder<F> {
     }
 
     fn permutation(&self) -> Self::MP {
-        self.aux.clone().expect("permutation called but aux trace is None - AIR should check num_randomness > 0 before using permutation columns")
+        self.aux.clone()
     }
 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
