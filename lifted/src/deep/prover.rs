@@ -7,6 +7,7 @@ use p3_field::{
     ExtensionField, Field, PackedFieldExtension, PackedValue, TwoAdicField, dot_product,
 };
 use p3_matrix::Matrix;
+use p3_matrix::dense::RowMajorMatrixView;
 use p3_maybe_rayon::prelude::*;
 
 use super::MatrixGroupEvals;
@@ -130,6 +131,19 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
             deep_poly,
             _marker: PhantomData,
         }
+    }
+
+    pub fn commit<LdeMmcs: Mmcs<EF>>(
+        &self,
+        c: &LdeMmcs,
+        arity: usize,
+    ) -> (
+        LdeMmcs::Commitment,
+        LdeMmcs::ProverData<RowMajorMatrixView<'_, EF>>,
+    ) {
+        assert!(arity.is_power_of_two());
+        let folded_matrix = RowMajorMatrixView::new(&self.deep_poly, arity);
+        c.commit_matrix(folded_matrix)
     }
 
     pub fn open(&self, c: &Commit, index: usize) -> (EF, Vec<BatchOpening<F, Commit>>) {

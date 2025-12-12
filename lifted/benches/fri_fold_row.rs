@@ -16,36 +16,56 @@ use rand::{Rng, SeedableRng};
 /// Target number of rows after all folding rounds.
 const TARGET: usize = 8;
 
-fn bench_fold_matrix_impl<F, EF, const ARITY: usize>(
+const PARALLEL_STR: &str = if cfg!(feature = "parallel") {
+    "parallel"
+} else {
+    "single"
+};
+
+fn bench_fold_impl<F, EF, const ARITY: usize>(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    label: &str,
-    n_rows: usize,
+    field_name: &str,
+    packed: bool,
+    n_elems: usize,
 ) where
     F: TwoAdicField,
     EF: ExtensionField<F>,
-    TwoAdicFriFold: FriFold<F, ARITY>,
+    TwoAdicFriFold: FriFold<ARITY>,
     StandardUniform: Distribution<F> + Distribution<EF>,
 {
     let rng = &mut SmallRng::seed_from_u64(2025);
 
+    let n_rows = n_elems / ARITY;
     let s_invs: Vec<F> = rng.sample_iter(StandardUniform).take(n_rows).collect();
-    let beta: EF = rng.sample(StandardUniform);
 
-    let values: Vec<EF> = rng.sample_iter(StandardUniform).take(n_rows).collect();
+    let values: Vec<EF> = rng.sample_iter(StandardUniform).take(n_elems).collect();
     let input = RowMajorMatrix::new(values, ARITY);
 
-    group.throughput(Throughput::Elements(n_rows as u64));
-    group.bench_with_input(BenchmarkId::new(label, n_rows), &n_rows, |b, &_n| {
+    let packed_str = if packed { "packed" } else { "scalar" };
+
+    // Use BenchmarkId::from_parameter for better comparison charts
+    let id = BenchmarkId::from_parameter(format!("{}/{}/{}", field_name, ARITY, packed_str));
+
+    group.bench_with_input(id, &n_elems, |b, &_n| {
         b.iter(|| {
             let mut current = input.clone();
 
-            while current.values.len() > TARGET {
+            while current.height() > TARGET {
                 let rows = current.height();
-                current = TwoAdicFriFold::fold_matrix(
-                    black_box(current.as_view()),
-                    black_box(&s_invs[..rows]),
-                    black_box(beta),
-                );
+                let beta: EF = rng.sample(StandardUniform);
+                current = if packed {
+                    TwoAdicFriFold::fold_matrix_packed::<F, EF>(
+                        black_box(current.as_view()),
+                        black_box(&s_invs[..rows]),
+                        black_box(beta),
+                    )
+                } else {
+                    TwoAdicFriFold::fold_matrix::<F, EF>(
+                        black_box(current.as_view()),
+                        black_box(&s_invs[..rows]),
+                        black_box(beta),
+                    )
+                };
             }
             black_box(current)
         });
@@ -53,40 +73,50 @@ fn bench_fold_matrix_impl<F, EF, const ARITY: usize>(
 }
 
 fn bench_fold_matrix(c: &mut Criterion) {
-    let mut group = c.benchmark_group("FRI_FoldMatrix");
+    for &n_elems in &[1 << 16, 1 << 18, 1 << 20] {
+        let group_name = format!("FRI_Fold/{}/{}", PARALLEL_STR, n_elems);
+        let mut group = c.benchmark_group(&group_name);
 
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(12));
-    group.warm_up_time(Duration::from_secs(3));
+        group.sample_size(10);
+        group.measurement_time(Duration::from_secs(12));
+        group.warm_up_time(Duration::from_secs(3));
+        group.throughput(Throughput::Elements(n_elems as u64));
 
-    for &n_rows in &[1 << 10, 1 << 14, 1 << 17] {
-        bench_fold_matrix_impl::<BabyBear, BinomialExtensionField<BabyBear, 4>, 2>(
-            &mut group,
-            "babybear-d4/arity2",
-            n_rows,
-        );
-        bench_fold_matrix_impl::<BabyBear, BinomialExtensionField<BabyBear, 4>, 4>(
-            &mut group,
-            "babybear-d4/arity4",
-            n_rows,
-        );
-        bench_fold_matrix_impl::<Goldilocks, BinomialExtensionField<Goldilocks, 2>, 2>(
-            &mut group,
-            "goldilocks-d2/arity2",
-            n_rows,
-        );
-        bench_fold_matrix_impl::<Goldilocks, BinomialExtensionField<Goldilocks, 2>, 4>(
-            &mut group,
-            "goldilocks-d2/arity4",
-            n_rows,
-        );
+        // BabyBear with degree-4 extension
+        for &arity in &[2, 4] {
+            for packed in [false, true] {
+                if arity == 2 {
+                    bench_fold_impl::<BabyBear, BinomialExtensionField<BabyBear, 4>, 2>(
+                        &mut group, "babybear", packed, n_elems,
+                    );
+                } else {
+                    bench_fold_impl::<BabyBear, BinomialExtensionField<BabyBear, 4>, 4>(
+                        &mut group, "babybear", packed, n_elems,
+                    );
+                }
+            }
+        }
+        // Goldilocks with degree-2 extension
+        for &arity in &[2, 4] {
+            for packed in [false, true] {
+                if arity == 2 {
+                    bench_fold_impl::<Goldilocks, BinomialExtensionField<Goldilocks, 2>, 2>(
+                        &mut group, "goldilocks", packed, n_elems,
+                    );
+                } else {
+                    bench_fold_impl::<Goldilocks, BinomialExtensionField<Goldilocks, 2>, 4>(
+                        &mut group, "goldilocks", packed, n_elems,
+                    );
+                }
+            }
+        }
+
+        group.finish();
     }
-
-    group.finish();
 }
 
 fn setup_criterion() -> Criterion {
-    Criterion::default().without_plots()
+    Criterion::default()
 }
 
 criterion_group! {

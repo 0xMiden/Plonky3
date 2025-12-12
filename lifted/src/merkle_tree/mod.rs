@@ -13,7 +13,6 @@ mod hiding_lmcs;
 mod lifted_tree;
 #[cfg(test)]
 mod test_helpers;
-mod utils;
 
 pub use hiding_lmcs::MerkleTreeHidingLmcs;
 pub use lifted_tree::{LiftedMerkleTree, build_leaf_states_cyclic, build_leaf_states_upsampled};

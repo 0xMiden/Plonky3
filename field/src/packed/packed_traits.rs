@@ -165,6 +165,47 @@ pub unsafe trait PackedValue: 'static + Copy + Send + Sync {
         let n = buf.len() * Self::WIDTH;
         unsafe { slice::from_raw_parts(buf_ptr, n) }
     }
+
+    /// Pack columns from `WIDTH` rows of scalar values.
+    ///
+    /// Given `WIDTH` rows of `N` scalar values, extract each column and pack it
+    /// into a single packed value. This performs a transpose operation.
+    ///
+    /// ## Inputs
+    /// - `rows`: A slice of `WIDTH` arrays, each containing `N` scalar values.
+    ///
+    /// ## Output
+    /// - An array of `N` packed values, where `output[i]` contains
+    ///   `rows[0][i], rows[1][i], ..., rows[WIDTH-1][i]` packed together.
+    ///
+    /// ## Panics
+    /// Panics if `rows.len() != WIDTH`.
+    #[inline]
+    #[must_use]
+    fn pack_columns<const N: usize>(rows: &[[Self::Value; N]]) -> [Self; N] {
+        assert_eq!(rows.len(), Self::WIDTH);
+        array::from_fn(|col| Self::from_fn(|lane| rows[lane][col]))
+    }
+
+    /// Unpack an array of packed values into `WIDTH` rows of scalar values.
+    ///
+    /// Given `N` packed values, extract each lane into a separate row of `N` scalars.
+    /// This performs a transpose operation, the inverse of [`Self::pack_columns`].
+    ///
+    /// ## Inputs
+    /// - `packed`: An array of `N` packed values.
+    /// - `rows`: A mutable slice of exactly `WIDTH` arrays to write the unpacked values.
+    ///
+    /// ## Output
+    /// Writes to `rows[lane][col]` the value from `packed[col]` at SIMD lane `lane`.
+    #[inline]
+    fn unpack_columns<const N: usize>(packed: &[Self; N], rows: &mut [[Self::Value; N]]) {
+        assert_eq!(rows.len(), Self::WIDTH);
+        #[allow(clippy::needless_range_loop)]
+        for lane in 0..Self::WIDTH {
+            rows[lane] = array::from_fn(|col| packed[col].as_slice()[lane]);
+        }
+    }
 }
 
 unsafe impl<T: Packable, const WIDTH: usize> PackedValue for [T; WIDTH] {
@@ -319,6 +360,24 @@ pub trait PackedFieldExtension<
     #[must_use]
     fn from_ext_slice(ext_slice: &[ExtField]) -> Self;
 
+    /// Pack columns from `WIDTH` rows of extension field elements.
+    ///
+    /// Given `WIDTH` rows of `N` extension field elements, extract each column
+    /// and pack it into a single packed extension field element.
+    ///
+    /// ## Inputs
+    /// - `rows`: A slice of `WIDTH` arrays, each containing `N` extension field elements.
+    ///   The slice length must equal `BaseField::Packing::WIDTH`.
+    ///
+    /// ## Output
+    /// - An array of `N` packed extension field elements, where output `[i]` contains
+    ///   `rows[0][i], rows[1][i], ..., rows[WIDTH-1][i]` packed together.
+    ///
+    /// ## Panics
+    /// Panics if `rows.len() != BaseField::Packing::WIDTH`.
+    #[must_use]
+    fn pack_ext_columns<const N: usize>(rows: &[[ExtField; N]]) -> [Self; N];
+
     /// Unpack this packed extension field element into a slice of extension field elements.
     ///
     /// The output slice `out` must have length at least `BaseField::Packing::WIDTH`.
@@ -327,6 +386,7 @@ pub trait PackedFieldExtension<
     #[inline]
     fn to_ext_slice(&self, out: &mut [ExtField]) {
         let packed_coeffs = self.as_basis_coefficients_slice();
+        #[allow(clippy::needless_range_loop)]
         for i in 0..BaseField::Packing::WIDTH {
             out[i] = ExtField::from_basis_coefficients_fn(|j| packed_coeffs[j].as_slice()[i]);
         }
@@ -417,6 +477,13 @@ impl<F: Field> PackedFieldExtension<F, F> for F::Packing {
     #[inline]
     fn from_ext_slice(ext_slice: &[F]) -> Self {
         *F::Packing::from_slice(ext_slice)
+    }
+
+    #[inline]
+    fn pack_ext_columns<const N: usize>(rows: &[[F; N]]) -> [Self; N] {
+        let width = F::Packing::WIDTH;
+        assert_eq!(rows.len(), width);
+        array::from_fn(|i| F::Packing::from_fn(|j| rows[j][i]))
     }
 
     #[inline]

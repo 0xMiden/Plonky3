@@ -163,8 +163,10 @@ mod tests {
 
         // Step 3: Prover constructs DeepPoly
         #[allow(clippy::type_complexity)]
-        let openings_for_prover: Vec<(&SinglePointQuotient<F, EF>, Vec<MatrixGroupEvals<EF>>)> =
-            vec![(&q1, evals1.clone()), (&q2, evals2.clone())];
+        let openings_for_prover: Vec<(
+            &SinglePointQuotient<F, EF>,
+            Vec<MatrixGroupEvals<EF>>,
+        )> = vec![(&q1, evals1.clone()), (&q2, evals2.clone())];
         let deep_poly = DeepPoly::new(
             &lmcs,
             &openings_for_prover,
