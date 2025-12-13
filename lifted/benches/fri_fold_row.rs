@@ -53,7 +53,7 @@ fn bench_fold_impl<F, EF, const ARITY: usize>(
             while current.height() > TARGET {
                 let rows = current.height();
                 let beta: EF = rng.sample(StandardUniform);
-                current = if packed {
+                let evals = if packed {
                     TwoAdicFriFold::fold_matrix_packed::<F, EF>(
                         black_box(current.as_view()),
                         black_box(&s_invs[..rows]),
@@ -66,6 +66,7 @@ fn bench_fold_impl<F, EF, const ARITY: usize>(
                         black_box(beta),
                     )
                 };
+                current = RowMajorMatrix::new(evals, ARITY);
             }
             black_box(current)
         });
@@ -101,11 +102,17 @@ fn bench_fold_matrix(c: &mut Criterion) {
             for packed in [false, true] {
                 if arity == 2 {
                     bench_fold_impl::<Goldilocks, BinomialExtensionField<Goldilocks, 2>, 2>(
-                        &mut group, "goldilocks", packed, n_elems,
+                        &mut group,
+                        "goldilocks",
+                        packed,
+                        n_elems,
                     );
                 } else {
                     bench_fold_impl::<Goldilocks, BinomialExtensionField<Goldilocks, 2>, 4>(
-                        &mut group, "goldilocks", packed, n_elems,
+                        &mut group,
+                        "goldilocks",
+                        packed,
+                        n_elems,
                     );
                 }
             }

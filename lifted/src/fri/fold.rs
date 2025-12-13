@@ -17,7 +17,7 @@ use alloc::vec::Vec;
 use p3_field::{
     Algebra, ExtensionField, PackedField, PackedFieldExtension, PackedValue, TwoAdicField,
 };
-use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
+use p3_matrix::dense::RowMajorMatrixView;
 use p3_maybe_rayon::prelude::*;
 
 // ============================================================================
@@ -47,26 +47,25 @@ pub trait FriFold<const ARITY: usize> {
         input: RowMajorMatrixView<'_, EF>,
         s_invs: &[F],
         beta: EF,
-    ) -> RowMajorMatrix<EF> {
+    ) -> Vec<EF> {
         assert_eq!(input.width, ARITY);
         let (evals, _) = input.values.as_chunks::<ARITY>();
 
-        let new_evals: Vec<EF> = evals
+        evals
             .par_iter()
             .zip(s_invs.par_iter())
             .map(|(evals, s_inv)| {
                 // Scalar mode: PF=F, EF=EF, PEF=EF
                 Self::fold_evals::<F, EF, EF>(*evals, *s_inv, beta)
             })
-            .collect();
-        RowMajorMatrix::new(new_evals, ARITY)
+            .collect()
     }
 
     fn fold_matrix_packed<F: TwoAdicField, EF: ExtensionField<F>>(
         input: RowMajorMatrixView<'_, EF>,
         s_invs: &[F],
         beta: EF,
-    ) -> RowMajorMatrix<EF> {
+    ) -> Vec<EF> {
         assert_eq!(input.width, ARITY);
         let (evals, _) = input.values.as_chunks::<ARITY>();
         let width = F::Packing::WIDTH;
@@ -92,7 +91,7 @@ pub trait FriFold<const ARITY: usize> {
                 );
                 new_evals_packed.to_ext_slice(new_evals_chunk);
             });
-        RowMajorMatrix::new(new_evals, ARITY)
+        new_evals
     }
 }
 
@@ -470,7 +469,7 @@ mod tests {
             TwoAdicFriFold::fold_matrix_packed::<F, EF>(input.as_view(), &s_invs, beta);
 
         // They should be identical
-        assert_eq!(result_scalar.values, result_packed.values);
+        assert_eq!(result_scalar, result_packed);
     }
 
     #[test]

@@ -132,6 +132,11 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
             _marker: PhantomData,
         }
     }
+    
+    pub fn folded(&self, arity: usize) -> RowMajorMatrixView<'_, EF> {
+        assert!(arity.is_power_of_two());
+        RowMajorMatrixView::new(&self.deep_poly, arity)
+    }
 
     pub fn commit<LdeMmcs: Mmcs<EF>>(
         &self,

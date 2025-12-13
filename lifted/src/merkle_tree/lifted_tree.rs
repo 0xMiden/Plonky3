@@ -1,6 +1,6 @@
 use alloc::vec;
 use alloc::vec::Vec;
-use core::array;
+use core::{array, mem};
 
 use p3_field::PackedValue;
 use p3_matrix::Matrix;
@@ -299,7 +299,7 @@ where
                 .for_each(|(chunk, state)| chunk.fill(*state));
 
             // Copy upsampled states back to canonical buffer
-            states[..height].copy_from_slice(&scratch_states[..height]);
+            mem::swap(&mut scratch_states, &mut states);
         }
 
         // Absorb the rows of the matrix into the extended state vector
@@ -394,11 +394,11 @@ fn absorb_matrix<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
     let height = matrix.height();
     assert_eq!(height, states.len());
 
-    if height < PF::WIDTH {
+    if height < PF::WIDTH || PF::WIDTH == 1 {
         // Scalar path: walk every final leaf state and absorb the wrapped row for this matrix.
         states
-            .iter_mut()
-            .zip(matrix.rows())
+            .par_iter_mut()
+            .zip(matrix.par_rows())
             .for_each(|(state, row)| {
                 sponge.absorb_into(state, row);
             });
@@ -446,10 +446,14 @@ fn compress_uniform<
     let mut next_digests = vec![default_digest; next_len];
 
     // Use scalar path when output is too small for packing
-    if next_len < P::WIDTH {
-        for (i, next_digest) in next_digests.iter_mut().enumerate() {
-            *next_digest = c.compress([prev_layer[2 * i], prev_layer[2 * i + 1]]);
-        }
+    if next_len < P::WIDTH || P::WIDTH == 1 {
+        let (prev_layer_pairs, _) = prev_layer.as_chunks::<2>();
+        next_digests
+            .par_iter_mut()
+            .zip(prev_layer_pairs.par_iter())
+            .for_each(|(next_digest, prev_layer_pair)| {
+                *next_digest = c.compress(*prev_layer_pair);
+            });
     } else {
         // Packed path: since next_len and P::WIDTH are both powers of 2,
         // next_len is a multiple of P::WIDTH, so no remainder handling needed.
