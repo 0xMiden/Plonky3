@@ -14,9 +14,11 @@
 //! 2. **Verification (Verifier)**: Given commitments, evaluation points, and a proof,
 //!    verifies the DEEP quotient and FRI queries to confirm the claimed evaluations.
 
+mod config;
 mod proof;
 
 use alloc::vec::Vec;
+use core::iter::zip;
 
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::Mmcs;
@@ -24,11 +26,12 @@ use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::{Dimensions, Matrix};
 use p3_util::log2_strict_usize;
 
+pub use self::config::PcsConfig;
 pub use self::proof::{PcsError, Proof, QueryProof};
 use crate::deep::prover::DeepPoly;
 use crate::deep::verifier::DeepOracle;
 use crate::deep::{MatrixGroupEvals, OpeningClaim, QuotientOpening, SinglePointQuotient};
-use crate::fri::{CommitPhaseData, FriError, FriParams};
+use crate::fri::{CommitPhaseData, FriError};
 use crate::utils::bit_reversed_coset_points;
 
 /// Open committed matrices at multiple evaluation points.
@@ -40,28 +43,24 @@ use crate::utils::bit_reversed_coset_points;
 /// - `FriMmcs`: MMCS used for FRI round commitments (typically `ExtensionMmcs<F, EF, _>`)
 /// - `M`: Matrix type for input matrices
 /// - `Challenger`: Fiat-Shamir challenger
-/// - `NUM_POINTS`: Number of evaluation points (const generic)
 ///
 /// # Arguments
 /// - `input_mmcs`: The MMCS instance used for initial commitment
 /// - `prover_data`: Prover data from the commitment phase (one per committed group)
-/// - `eval_points`: Array of out-of-domain evaluation points
+/// - `eval_points`: Slice of out-of-domain evaluation points
 /// - `challenger`: Mutable reference to the Fiat-Shamir challenger
-/// - `params`: FRI/PCS parameters (includes num_queries)
+/// - `config`: PCS configuration (FRI params + alignment)
 /// - `fri_mmcs`: MMCS instance for FRI round commitments
-/// - `alignment`: Column alignment for batching (typically hasher's rate)
 ///
 /// # Returns
 /// A `Proof` containing evaluations and all opening proofs
-#[allow(clippy::too_many_arguments)]
-pub fn open<F, EF, InputMmcs, FriMmcs, M, Challenger, const NUM_POINTS: usize>(
+pub fn open<F, EF, InputMmcs, FriMmcs, M, Challenger>(
     input_mmcs: &InputMmcs,
     prover_data: Vec<&InputMmcs::ProverData<M>>,
-    eval_points: &[EF; NUM_POINTS],
+    eval_points: &[EF],
     challenger: &mut Challenger,
-    params: &FriParams,
+    config: &PcsConfig,
     fri_mmcs: &FriMmcs,
-    alignment: usize,
 ) -> Proof<F, EF, InputMmcs, FriMmcs>
 where
     F: TwoAdicField,
@@ -91,13 +90,14 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     // 2. Compute evaluations at each opening point
     // ─────────────────────────────────────────────────────────────────────────
-    let mut quotients: Vec<SinglePointQuotient<F, EF>> = Vec::with_capacity(NUM_POINTS);
-    let mut evals: Vec<Vec<MatrixGroupEvals<EF>>> = Vec::with_capacity(NUM_POINTS);
+    let num_points = eval_points.len();
+    let mut quotients: Vec<SinglePointQuotient<F, EF>> = Vec::with_capacity(num_points);
+    let mut evals: Vec<Vec<MatrixGroupEvals<EF>>> = Vec::with_capacity(num_points);
 
     for &z in eval_points {
         let quotient = SinglePointQuotient::<F, EF>::new(z, &coset_points);
         let point_evals =
-            quotient.batch_eval_lifted(&matrices_groups, &coset_points, params.log_blowup);
+            quotient.batch_eval_lifted(&matrices_groups, &coset_points, config.fri.log_blowup);
         quotients.push(quotient);
         evals.push(point_evals);
     }
@@ -114,9 +114,7 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     // 3. Construct DEEP quotient
     // ─────────────────────────────────────────────────────────────────────────
-    let openings_for_deep: Vec<QuotientOpening<'_, F, EF>> = quotients
-        .iter()
-        .zip(&evals)
+    let openings_for_deep: Vec<QuotientOpening<'_, F, EF>> = zip(&quotients, &evals)
         .map(|(q, e)| QuotientOpening::new(q, e.clone()))
         .collect();
 
@@ -125,7 +123,7 @@ where
         &openings_for_deep,
         prover_data,
         challenger,
-        alignment,
+        config.alignment,
     );
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -136,12 +134,12 @@ where
     let deep_evals = deep_poly.evals().to_vec();
 
     let (fri_commit_data, fri_commit_proof) =
-        CommitPhaseData::<F, EF, _>::new(fri_mmcs, params, deep_evals, challenger);
+        CommitPhaseData::<F, EF, _>::new(fri_mmcs, &config.fri, deep_evals, challenger);
 
     // ─────────────────────────────────────────────────────────────────────────
     // 5. Sample query indices
     // ─────────────────────────────────────────────────────────────────────────
-    let query_indices: Vec<usize> = (0..params.num_queries)
+    let query_indices: Vec<usize> = (0..config.fri.num_queries)
         .map(|_| challenger.sample_bits(log_n))
         .collect();
 
@@ -155,7 +153,7 @@ where
             let deep_query = deep_poly.open(input_mmcs, index);
 
             // Open FRI rounds at this index
-            let fri_round_openings = fri_commit_data.open_query(fri_mmcs, params, index);
+            let fri_round_openings = fri_commit_data.open_query(fri_mmcs, &config.fri, index);
 
             QueryProof::new(deep_query, fri_round_openings)
         })
@@ -179,26 +177,24 @@ where
 /// # Arguments
 /// - `input_mmcs`: The MMCS instance used for initial commitment
 /// - `commitments`: The commitments to verify against (with dimensions)
-/// - `eval_points`: Array of out-of-domain evaluation points
+/// - `eval_points`: Slice of out-of-domain evaluation points
 /// - `proof`: The proof to verify
 /// - `challenger`: Mutable reference to the Fiat-Shamir challenger
-/// - `params`: FRI/PCS parameters
+/// - `config`: PCS configuration (must match prover's)
 /// - `fri_mmcs`: MMCS instance for FRI round commitments
-/// - `alignment`: Column alignment (must match prover's)
 ///
 /// # Returns
 /// `Ok(evals)` where `evals[point_idx][commit_idx]` contains the verified evaluations,
 /// or `Err` if verification fails.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn verify<F, EF, InputMmcs, FriMmcs, Challenger, const NUM_POINTS: usize>(
+#[allow(clippy::type_complexity)]
+pub fn verify<F, EF, InputMmcs, FriMmcs, Challenger>(
     input_mmcs: &InputMmcs,
     commitments: &[(InputMmcs::Commitment, Vec<Dimensions>)],
-    eval_points: &[EF; NUM_POINTS],
+    eval_points: &[EF],
     proof: &Proof<F, EF, InputMmcs, FriMmcs>,
     challenger: &mut Challenger,
-    params: &FriParams,
+    config: &PcsConfig,
     fri_mmcs: &FriMmcs,
-    alignment: usize,
 ) -> Result<Vec<Vec<MatrixGroupEvals<EF>>>, PcsError<InputMmcs::Error, FriMmcs::Error>>
 where
     F: TwoAdicField,
@@ -212,9 +208,9 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     // 1. Validate proof structure
     // ─────────────────────────────────────────────────────────────────────────
-    if proof.query_proofs.len() != params.num_queries {
+    if proof.query_proofs.len() != config.fri.num_queries {
         return Err(PcsError::WrongNumQueries {
-            expected: params.num_queries,
+            expected: config.fri.num_queries,
             actual: proof.query_proofs.len(),
         });
     }
@@ -226,7 +222,7 @@ where
         .max()
         .expect("at least one matrix required");
     let log_n = log2_strict_usize(max_height);
-    let log_max_degree = log_n - params.log_blowup;
+    let log_max_degree = log_n - config.fri.log_blowup;
 
     // ─────────────────────────────────────────────────────────────────────────
     // 2. Observe claimed evaluations
@@ -243,9 +239,7 @@ where
     // 3. Construct verifier's DEEP oracle
     // ─────────────────────────────────────────────────────────────────────────
     // Build openings for oracle: pair each eval_point with its evaluations
-    let openings_for_oracle: Vec<OpeningClaim<EF>> = eval_points
-        .iter()
-        .zip(proof.evals.iter())
+    let openings_for_oracle: Vec<OpeningClaim<EF>> = zip(eval_points, &proof.evals)
         .map(|(&z, evals)| OpeningClaim::new(z, evals.clone()))
         .collect();
 
@@ -253,7 +247,7 @@ where
         &openings_for_oracle,
         commitments.to_vec(),
         challenger,
-        alignment,
+        config.alignment,
     )?;
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -264,14 +258,14 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     // 5. Sample query indices (must match prover)
     // ─────────────────────────────────────────────────────────────────────────
-    let query_indices: Vec<usize> = (0..params.num_queries)
+    let query_indices: Vec<usize> = (0..config.fri.num_queries)
         .map(|_| challenger.sample_bits(log_n))
         .collect();
 
     // ─────────────────────────────────────────────────────────────────────────
     // 6. Verify each query
     // ─────────────────────────────────────────────────────────────────────────
-    for (index, query_proof) in query_indices.into_iter().zip(proof.query_proofs.iter()) {
+    for (index, query_proof) in zip(query_indices, &proof.query_proofs) {
         // 7a. Verify input matrix openings and compute expected DeepPoly value
         let deep_eval = deep_oracle
             .query(input_mmcs, index, &query_proof.input_openings)
@@ -282,7 +276,7 @@ where
             .fri_commit_proof
             .verify_query::<F>(
                 fri_mmcs,
-                params,
+                &config.fri,
                 index,
                 log_max_degree,
                 deep_eval,
@@ -335,7 +329,6 @@ mod tests {
     use rand::{Rng, SeedableRng};
 
     use super::*;
-    use crate::fri::FriParams;
     use crate::merkle_tree::{Lifting, MerkleTreeLmcs};
 
     type F = BabyBear;
@@ -422,14 +415,15 @@ mod tests {
         let rng = &mut SmallRng::seed_from_u64(42);
         let (perm, base_lmcs, fri_mmcs) = test_components();
 
-        let log_blowup = 2;
-        let params = FriParams {
-            log_blowup,
-            log_folding_factor: 1,
-            log_final_degree: 2,
-            num_queries: 5,
-        };
-        let alignment = RATE;
+        let config = PcsConfig::new(
+            crate::fri::FriParams {
+                log_blowup: 2,
+                log_folding_factor: 1,
+                log_final_degree: 2,
+                num_queries: 5,
+            },
+            RATE,
+        );
 
         // Create a matrix of LDE evaluations.
         // Each column is a random polynomial of degree < 2^log_poly_degree,
@@ -439,7 +433,7 @@ mod tests {
         // at most 2^log_poly_degree - 1, satisfying FRI's low-degree requirement.
         let log_poly_degree = 6; // polynomial degree = 64
         let num_columns = 3;
-        let matrix = generate_lde_matrix(rng, log_poly_degree, log_blowup, num_columns);
+        let matrix = generate_lde_matrix(rng, log_poly_degree, config.fri.log_blowup, num_columns);
         let matrices: Vec<RowMajorMatrix<F>> = vec![matrix];
 
         // Commit matrices
@@ -455,29 +449,27 @@ mod tests {
         let mut prover_challenger = Challenger::new(perm.clone());
         prover_challenger.observe(commitment);
 
-        let proof = open::<F, EF, _, _, _, _, 2>(
+        let proof = open::<F, EF, _, _, _, _>(
             &base_lmcs,
             vec![&prover_data],
             &eval_points,
             &mut prover_challenger,
-            &params,
+            &config,
             &fri_mmcs,
-            alignment,
         );
 
         // Verifier
         let mut verifier_challenger = Challenger::new(perm);
         verifier_challenger.observe(commitment);
 
-        let result = verify::<F, EF, _, _, _, 2>(
+        let result = verify::<F, EF, _, _, _>(
             &base_lmcs,
             &[(commitment, dims)],
             &eval_points,
             &proof,
             &mut verifier_challenger,
-            &params,
+            &config,
             &fri_mmcs,
-            alignment,
         );
 
         assert!(result.is_ok(), "Verification should succeed");

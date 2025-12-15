@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+use core::iter::zip;
 use core::marker::PhantomData;
 
 use p3_challenger::FieldChallenger;
@@ -127,8 +128,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
                     actual: claim.evals.len(),
                 });
             }
-            for (group_idx, (evals, (_, dims))) in claim.evals.iter().zip(&commitments).enumerate()
-            {
+            for (group_idx, (evals, (_, dims))) in zip(&claim.evals, &commitments).enumerate() {
                 if evals.0.len() != dims.len() {
                     return Err(DeepError::MatrixCountMismatch {
                         opening: opening_idx,
@@ -137,9 +137,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
                         actual: evals.0.len(),
                     });
                 }
-                for (matrix_idx, (matrix_evals, matrix_dims)) in
-                    evals.0.iter().zip(dims).enumerate()
-                {
+                for (matrix_idx, (matrix_evals, matrix_dims)) in zip(&evals.0, dims).enumerate() {
                     if matrix_evals.len() != matrix_dims.width {
                         return Err(DeepError::ColumnCountMismatch {
                             opening: opening_idx,
@@ -186,7 +184,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
         index: usize,
         proof: &DeepQuery<F, Commit>,
     ) -> Result<EF, Commit::Error> {
-        for ((commit, dims), opening) in self.commitments.iter().zip(&proof.openings) {
+        for ((commit, dims), opening) in zip(&self.commitments, &proof.openings) {
             c.verify_batch(commit, dims, index, opening.into())?;
         }
 
@@ -212,10 +210,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
 
         let reduced_row = reduce_with_powers(rows_iter, self.challenge_columns, self.alignment);
 
-        let eval = self
-            .reduced_openings
-            .iter()
-            .zip(self.challenge_points.powers())
+        let eval = zip(&self.reduced_openings, self.challenge_points.powers())
             .map(|((point, reduced_eval), coeff_point)| {
                 coeff_point * (*reduced_eval - reduced_row) / (*point - row_point)
             })
