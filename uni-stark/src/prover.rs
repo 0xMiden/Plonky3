@@ -412,6 +412,7 @@ where
         preprocessed_next,
         quotient_chunks,
         random,
+        aux_finals: None,
     };
     Proof {
         commitments,

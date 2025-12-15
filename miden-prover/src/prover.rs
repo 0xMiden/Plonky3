@@ -12,6 +12,7 @@ use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
 use crate::periodic_tables::compute_periodic_on_quotient_eval_domain;
+use crate::util::prover_row_to_ext;
 use crate::{
     Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
     StarkGenericConfig, Val, get_log_quotient_degree, get_symbolic_constraints,
@@ -170,34 +171,47 @@ where
     // begin aux trace generation (optional)
     let num_randomness = air.num_randomness();
 
-    let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness) =
-        if num_randomness > 0 {
-            let randomness: Vec<SC::Challenge> = (0..num_randomness)
-                .map(|_| challenger.sample_algebra_element())
-                .collect();
+    let (
+        aux_trace_commit_opt,
+        _aux_trace_opt,
+        aux_trace_data_opt,
+        randomness,
+        aux_bus_boundary_values,
+    ) = if num_randomness > 0 {
+        let randomness: Vec<SC::Challenge> = (0..num_randomness)
+            .map(|_| challenger.sample_algebra_element())
+            .collect();
 
-            // Ask config (VM) to build the aux trace if available.
-            let aux_trace_opt = air.build_aux_trace(trace, &randomness);
+        // Ask config (VM) to build the aux trace if available.
+        let aux_trace_opt = air.build_aux_trace(trace, &randomness);
 
-            // At the moment, it panics if the aux trace is not available.
-            // In a future PR, we will introduce LogUp based permutation as a fall back if aux trace is not available.
-            let aux_trace = aux_trace_opt
-                .expect("aux_challenges > 0 but no aux trace was provided or generated");
+        // At the moment, it panics if the aux trace is not available.
+        // In a future PR, we will introduce LogUp based permutation as a fall back if aux trace is not available.
+        let aux_trace =
+            aux_trace_opt.expect("aux_challenges > 0 but no aux trace was provided or generated");
 
-            let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
-                .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
+        let aux_bus_boundary_values_base = aux_trace
+            .last_row()
+            .expect("aux_challenges > 0 but aux trace was empty")
+            .into_iter()
+            .collect_vec();
+        let aux_bus_boundary_values = prover_row_to_ext(&aux_bus_boundary_values_base);
 
-            challenger.observe(aux_trace_commit.clone());
+        let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
+            .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
 
-            (
-                Some(aux_trace_commit),
-                Some(aux_trace),
-                Some(aux_trace_data),
-                randomness,
-            )
-        } else {
-            (None, None, None, vec![])
-        };
+        challenger.observe(aux_trace_commit.clone());
+
+        (
+            Some(aux_trace_commit),
+            Some(aux_trace),
+            Some(aux_trace_data),
+            randomness,
+            aux_bus_boundary_values,
+        )
+    } else {
+        (None, None, None, vec![], vec![])
+    };
 
     #[cfg(debug_assertions)]
     crate::check_constraints::<Val<SC>, SC::Challenge, _>(
@@ -262,6 +276,7 @@ where
         &trace_on_quotient_domain,
         aux_trace_on_quotient_domain.as_ref(),
         &randomness,
+        &aux_bus_boundary_values,
         preprocessed_on_quotient_domain.as_ref(),
         alpha,
         constraint_count,
@@ -396,6 +411,12 @@ where
     } else {
         (None, None)
     };
+    let aux_finals = if aux_trace_data_opt.is_some() {
+        Some(aux_bus_boundary_values)
+    } else {
+        None
+    };
+
     let opened_values = OpenedValues {
         trace_local,
         trace_next,
@@ -405,6 +426,7 @@ where
         preprocessed_next,
         quotient_chunks,
         random,
+        aux_finals,
     };
     Proof {
         commitments,
@@ -425,6 +447,7 @@ pub fn quotient_values<SC, A, Mat>(
     trace_on_quotient_domain: &Mat,
     aux_trace_on_quotient_domain: Option<&Mat>,
     randomness: &[SC::Challenge],
+    aux_bus_boundary_values: &[SC::Challenge],
     preprocessed_on_quotient_domain: Option<&Mat>,
     alpha: SC::Challenge,
     constraint_count: usize,
@@ -547,6 +570,13 @@ where
             let packed_randomness: Vec<PackedChallenge<SC>> =
                 randomness.iter().copied().map(Into::into).collect();
 
+            // Pack aux bus boundary values
+            let packed_aux_bus_boundary_values: Vec<PackedChallenge<SC>> = aux_bus_boundary_values
+                .iter()
+                .copied()
+                .map(Into::into)
+                .collect();
+
             // Grab precomputed periodic evaluations for this packed chunk.
             let periodic_values: Vec<PackedChallenge<SC>> = periodic_on_quotient
                 .as_ref()
@@ -575,6 +605,7 @@ where
                 accumulator,
                 constraint_index: 0,
                 packed_randomness,
+                aux_bus_boundary_values: &packed_aux_bus_boundary_values,
             };
             air.eval(&mut folder);
 

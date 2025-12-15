@@ -18,6 +18,8 @@ pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
     /// The randomness used to compute the aux trace; can be zero width.
     /// Cached EF randomness packed from base randomness to avoid temporary leaks
     pub packed_randomness: Vec<PackedChallenge<SC>>,
+    /// Aux trace bus boundary values packed from base field to extension field
+    pub aux_bus_boundary_values: &'a [PackedChallenge<SC>],
     /// The preprocessed columns (if any)
     pub preprocessed: Option<RowMajorMatrixView<'a, PackedVal<SC>>>,
     /// Public inputs to the AIR
@@ -117,7 +119,7 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for ProverConstraintFolder<'a, 
     }
 
     fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {
-        unimplemented!()
+        self.aux_bus_boundary_values
     }
 
     fn periodic_evals(&self) -> &[Self::PeriodicVal] {
@@ -137,6 +139,8 @@ pub struct VerifierConstraintFolder<'a, SC: StarkGenericConfig> {
     pub aux: ViewPair<'a, SC::Challenge>,
     /// The randomness used to compute the aux tract; can be zero width.
     pub randomness: &'a [SC::Challenge],
+    /// Aux trace bus boundary values; can be zero width.
+    pub aux_bus_boundary_values: &'a [SC::Challenge],
     /// The preprocessed columns (if any)
     pub preprocessed: Option<ViewPair<'a, SC::Challenge>>,
     /// Public values that are inputs to the computation
@@ -227,7 +231,7 @@ impl<'a, SC: StarkGenericConfig> MidenAirBuilder for VerifierConstraintFolder<'a
     }
 
     fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {
-        unimplemented!()
+        self.aux_bus_boundary_values
     }
 
     fn periodic_evals(&self) -> &[Self::PeriodicVal] {

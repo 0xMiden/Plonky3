@@ -1,7 +1,7 @@
 //! See `prover.rs` for an overview of the protocol and a more detailed soundness analysis.
 
 use itertools::Itertools;
-use miden_air::MidenAir;
+use miden_air::{BusType, MidenAir};
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing, TwoAdicField};
@@ -75,6 +75,7 @@ pub fn verify_constraints<SC, A, PcsErr>(
     aux_local: Option<&[SC::Challenge]>,
     aux_next: Option<&[SC::Challenge]>,
     randomness: &[SC::Challenge],
+    aux_bus_boundary_values: &[SC::Challenge],
     public_values: &[Val<SC>],
     trace_domain: Domain<SC>,
     zeta: SC::Challenge,
@@ -147,6 +148,7 @@ where
         main,
         aux,
         randomness,
+        aux_bus_boundary_values,
         preprocessed,
         public_values,
         periodic_values: &periodic_values,
@@ -298,6 +300,7 @@ where
     let num_randomness = air.num_randomness();
 
     let air_width = A::width(air);
+    let bus_types = A::bus_types(air);
     let valid_shape = opened_values.trace_local.len() == air_width
         && opened_values.trace_next.len() == air_width
         && opened_values.quotient_chunks.len() == quotient_degree
@@ -310,12 +313,12 @@ where
         // Check aux trace shape
         && if num_randomness > 0 {
             let aux_width_base = aux_width * SC::Challenge::DIMENSION;
-            match (&opened_values.aux_trace_local, &opened_values.aux_trace_next) {
-                (Some(l), Some(n)) => l.len() == aux_width_base && n.len() == aux_width_base,
+            match (&opened_values.aux_trace_local, &opened_values.aux_trace_next, &opened_values.aux_finals) {
+                (Some(l), Some(n), Some(f)) => l.len() == aux_width_base && n.len() == aux_width_base && f.len() == aux_width && bus_types.len() == aux_width,
                 _ => false,
             }
         } else {
-            opened_values.aux_trace_local.is_none() && opened_values.aux_trace_next.is_none()
+            opened_values.aux_trace_local.is_none() && opened_values.aux_trace_next.is_none() && opened_values.aux_finals.is_none()
         };
     if !valid_shape {
         return Err(VerificationError::InvalidProofShape);
@@ -449,6 +452,21 @@ where
         zeta,
     );
 
+    for (bus_type, aux_final) in bus_types
+        .iter()
+        .zip(opened_values.aux_finals.as_ref().unwrap_or(&vec![]))
+    {
+        // For now, we expect the buses to be empty
+        // We should compute the expected final value based on variable-length public inputs in the future
+        let expected_final = match bus_type {
+            BusType::Multiset => SC::Challenge::ONE,
+            BusType::Logup => SC::Challenge::ZERO,
+        };
+        if *aux_final != expected_final {
+            return Err(VerificationError::InvalidBusBoundaryValues);
+        }
+    }
+
     verify_constraints::<SC, A, PcsError<SC>>(
         air,
         &opened_values.trace_local,
@@ -458,6 +476,7 @@ where
         opened_values.aux_trace_local.as_deref(),
         opened_values.aux_trace_next.as_deref(),
         &randomness,
+        opened_values.aux_finals.as_ref().unwrap_or(&vec![]),
         public_values,
         init_trace_domain,
         zeta,
@@ -482,4 +501,6 @@ pub enum VerificationError<PcsErr> {
     RandomizationError,
     /// The domain does not support computing the next point algebraically.
     NextPointUnavailable,
+    /// The expected bus boundary final values do not match the opened values.
+    InvalidBusBoundaryValues,
 }

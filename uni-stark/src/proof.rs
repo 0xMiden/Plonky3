@@ -41,4 +41,5 @@ pub struct OpenedValues<Challenge> {
     pub preprocessed_next: Option<Vec<Challenge>>, // may not always be necessary
     pub quotient_chunks: Vec<Vec<Challenge>>,
     pub random: Option<Vec<Challenge>>,
+    pub aux_finals: Option<Vec<Challenge>>,
 }
