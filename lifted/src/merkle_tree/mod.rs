@@ -119,6 +119,13 @@ pub struct MerkleTreeLmcs<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: 
 impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize>
     MerkleTreeLmcs<PF, PD, H, C, WIDTH, DIGEST_ELEMS>
 {
+    /// Create a new lifted Merkle tree commitment scheme.
+    ///
+    /// # Arguments
+    ///
+    /// - `sponge`: Stateful sponge for hashing matrix rows into leaf digests.
+    /// - `compress`: 2-to-1 compression function for building internal tree nodes.
+    /// - `lifting`: Strategy for aligning matrices of different heights (see [`Lifting`]).
     pub const fn new(sponge: H, compress: C, lifting: Lifting) -> Self {
         Self {
             sponge,
@@ -291,48 +298,80 @@ where
     }
 }
 
-/// Errors that can arise while verifying LMCS openings.
+/// Errors that can arise while building or verifying lifted Merkle commitments.
 #[derive(Debug)]
 pub enum LmcsError {
+    /// Number of opened rows doesn't match number of committed matrices.
     WrongBatchSize,
+    /// Opened row width doesn't match the committed matrix width.
     WrongWidth {
+        /// Index of the matrix with mismatched width.
         matrix: usize,
+        /// Expected width from commitment dimensions.
         expected: usize,
+        /// Actual width of the opened row.
         actual: usize,
     },
+    /// Salt row length doesn't match expected width.
     WrongSalt {
+        /// Expected salt width.
         expected: usize,
+        /// Actual salt width provided.
         actual: usize,
     },
+    /// Matrix height doesn't match expected height.
     WrongHeight {
+        /// Expected height.
         expected: usize,
+        /// Actual height.
         actual: usize,
     },
+    /// Authentication path length doesn't match tree height.
     WrongProofLen {
+        /// Expected proof length (log₂ of tree height).
         expected: usize,
+        /// Actual proof length provided.
         actual: usize,
     },
+    /// Query index exceeds tree height.
     IndexOutOfBounds {
+        /// Maximum valid index (tree height).
         max_height: usize,
+        /// Requested index.
         index: usize,
     },
+    /// Recomputed root doesn't match the commitment.
     RootMismatch,
+    /// No matrices provided for commitment.
     EmptyBatch,
+    /// Matrix height is not a power of two (required for lifting).
     NonPowerOfTwoHeight {
+        /// Index of the invalid matrix.
         matrix: usize,
+        /// The non-power-of-two height.
         height: usize,
     },
+    /// Matrix height doesn't divide the final tree height.
     HeightNotDivisor {
+        /// Index of the invalid matrix.
         matrix: usize,
+        /// Height of the matrix.
         height: usize,
+        /// Final tree height (must be divisible by matrix height).
         final_height: usize,
     },
+    /// Matrix has zero height.
     ZeroHeightMatrix {
+        /// Index of the zero-height matrix.
         matrix: usize,
     },
+    /// Matrices are not sorted by non-decreasing height.
     UnsortedByHeight,
+    /// Salt matrix height doesn't match tree height.
     SaltHeightMismatch {
+        /// Expected salt height (equal to tree height).
         expected: usize,
+        /// Actual salt matrix height.
         actual: usize,
     },
 }

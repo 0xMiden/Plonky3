@@ -1,3 +1,9 @@
+use alloc::vec::Vec;
+
+use p3_field::TwoAdicField;
+use p3_field::coset::TwoAdicMultiplicativeCoset;
+use p3_util::reverse_slice_index_bits;
+
 use crate::LmcsError;
 
 /// Validate a sequence of matrix heights for LMCS.
@@ -38,4 +44,18 @@ pub fn validate_heights(heights: impl IntoIterator<Item = usize>) -> Result<usiz
         return Err(LmcsError::EmptyBatch);
     }
     Ok(active_height)
+}
+
+/// Coset points `gK` in bit-reversed order.
+///
+/// Bit-reversal gives two properties essential for lifting:
+/// - **Adjacent negation**: `gK[2i+1] = -gK[2i]`, so both square to the same value
+/// - **Prefix nesting**: `gK[0..n/r]` equals the r-th power coset `(gK)ʳ`
+///
+/// Together these enable iterative weight folding in barycentric evaluation.
+pub fn bit_reversed_coset_points<F: TwoAdicField>(log_n: usize) -> Vec<F> {
+    let coset = TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_n).unwrap();
+    let mut pts: Vec<F> = coset.iter().collect();
+    reverse_slice_index_bits(&mut pts);
+    pts
 }

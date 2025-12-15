@@ -21,7 +21,7 @@ use crate::{Lifting, LmcsError};
 /// Unlike the standard `MerkleTree`, this uniform variant requires:
 /// - **All matrix heights must be powers of two**
 /// - **Matrices must be sorted by height** (shortest to tallest)
-/// - Uses incremental hashing via [`StatefulSponge`] instead of one-shot hashing
+/// - Uses incremental hashing via [`StatefulHasher`] instead of one-shot hashing
 ///
 /// The per-leaf row composition follows the chosen [`Lifting`]: each matrix `M_i` is virtually
 /// extended to height `H` (width unchanged) via the index map described in [`Lifting`]. For leaf
@@ -38,7 +38,7 @@ use crate::{Lifting, LmcsError};
 /// constructions are indistinguishable: verification absorbs the same padded row segments in the
 /// same order and checks the same Merkle path.
 ///
-/// Since [`StatefulSponge`] operates on a single field type, this tree uses the same type `F`
+/// Since [`StatefulHasher`] operates on a single field type, this tree uses the same type `F`
 /// for both matrix elements and digest words, unlike `MerkleTree` which can hash `F → W`.
 ///
 /// Use [`root`](Self::root) to fetch the final digest once the tree is built.
@@ -189,6 +189,20 @@ where
         self.leaves.last().unwrap().height()
     }
 
+    /// Extract the opened rows for a given leaf index.
+    ///
+    /// Returns the row from each committed matrix that corresponds to the given
+    /// leaf index after applying the tree's [`Lifting`] strategy. For matrices
+    /// shorter than the tree height, the lifted row index is computed via
+    /// [`Lifting::map_index`].
+    ///
+    /// # Arguments
+    ///
+    /// - `index`: Leaf index in the tree (must be less than tree height).
+    ///
+    /// # Returns
+    ///
+    /// A vector of rows, one per committed matrix, in commitment order.
     pub fn rows(&self, index: usize) -> Vec<Vec<F>> {
         let max_height = self.height();
 

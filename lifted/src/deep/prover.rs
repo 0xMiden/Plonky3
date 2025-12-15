@@ -2,16 +2,16 @@ use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
 
-use p3_commit::{BatchOpening, Mmcs};
+use p3_challenger::FieldChallenger;
+use p3_commit::Mmcs;
 use p3_field::{
     ExtensionField, Field, PackedFieldExtension, PackedValue, TwoAdicField, dot_product,
 };
 use p3_matrix::Matrix;
-use p3_matrix::dense::RowMajorMatrixView;
 use p3_maybe_rayon::prelude::*;
 
-use super::MatrixGroupEvals;
 use super::interpolate::SinglePointQuotient;
+use super::{DeepQuery, MatrixGroupEvals};
 
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
 ///
@@ -43,12 +43,11 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
     /// - `challenge_columns`: Challenge `α` for batching columns
     /// - `alignment`: Width for coefficient alignment (must match commitment)
     #[allow(clippy::type_complexity)]
-    pub fn new(
+    pub fn new<Challenger: FieldChallenger<F>>(
         c: &Commit,
         openings: &[(&SinglePointQuotient<F, EF>, Vec<MatrixGroupEvals<EF>>)],
         prover_data: Vec<&'a Commit::ProverData<M>>,
-        challenge_points: EF,
-        challenge_columns: EF,
+        challenger: &mut Challenger,
         alignment: usize,
     ) -> Self {
         assert!(!openings.is_empty(), "openings must not be empty");
@@ -57,6 +56,9 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
             .iter()
             .map(|data| c.get_matrices(*data))
             .collect();
+
+        let challenge_columns: EF = challenger.sample_algebra_element();
+        let challenge_points: EF = challenger.sample_algebra_element();
 
         let w = F::Packing::WIDTH;
         let n = openings[0].0.point_quotient().len();
@@ -132,33 +134,25 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
             _marker: PhantomData,
         }
     }
-    
-    pub fn folded(&self, arity: usize) -> RowMajorMatrixView<'_, EF> {
-        assert!(arity.is_power_of_two());
-        RowMajorMatrixView::new(&self.deep_poly, arity)
+
+    /// Returns the DEEP quotient evaluations over the LDE domain.
+    ///
+    /// These are `Q(X)` values at each domain point in bit-reversed order.
+    pub fn evals(&self) -> &[EF] {
+        &self.deep_poly
     }
 
-    pub fn commit<LdeMmcs: Mmcs<EF>>(
-        &self,
-        c: &LdeMmcs,
-        arity: usize,
-    ) -> (
-        LdeMmcs::Commitment,
-        LdeMmcs::ProverData<RowMajorMatrixView<'_, EF>>,
-    ) {
-        assert!(arity.is_power_of_two());
-        let folded_matrix = RowMajorMatrixView::new(&self.deep_poly, arity);
-        c.commit_matrix(folded_matrix)
-    }
-
-    pub fn open(&self, c: &Commit, index: usize) -> (EF, Vec<BatchOpening<F, Commit>>) {
+    /// Open the committed matrices at a query index.
+    ///
+    /// Returns a [`DeepQuery`] containing the Merkle openings needed by the verifier
+    /// to reconstruct `f_reduced(X)` at the queried domain point.
+    pub fn open(&self, c: &Commit, index: usize) -> DeepQuery<F, Commit> {
         let openings = self
             .matrices
             .iter()
             .map(|m| c.open_batch(index, m))
             .collect();
-        let eval = self.deep_poly[index];
-        (eval, openings)
+        DeepQuery { openings }
     }
 }
 

@@ -1,12 +1,13 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use p3_commit::{BatchOpening, BatchOpeningRef, Mmcs};
+use p3_challenger::FieldChallenger;
+use p3_commit::{BatchOpeningRef, Mmcs};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::Dimensions;
 use p3_util::{log2_strict_usize, reverse_bits_len};
 
-use super::MatrixGroupEvals;
+use super::{DeepQuery, MatrixGroupEvals};
 
 /// Verifier's view of the DEEP quotient as a point-query oracle.
 ///
@@ -61,11 +62,10 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
     /// We reduce each opening's evaluations to `f_reduced(zⱼ) = Σᵢ αⁱ · fᵢ(zⱼʳ)` eagerly.
     /// This optimization is possible because all columns share the same opening points—
     /// at query time, we only compute one Horner reduction per query, not per-column.
-    pub fn new(
+    pub fn new<Challenger: FieldChallenger<F>>(
         openings: &[(EF, Vec<MatrixGroupEvals<EF>>)],
         commitments: Vec<(Commit::Commitment, Vec<Dimensions>)>,
-        challenge_columns: EF,
-        challenge_points: EF,
+        challenger: &mut Challenger,
         alignment: usize,
     ) -> Self {
         assert!(!openings.is_empty(), "must have at least one opening");
@@ -94,6 +94,9 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
             }
         }
 
+        let challenge_columns: EF = challenger.sample_algebra_element();
+        let challenge_points: EF = challenger.sample_algebra_element();
+
         // Reduce each opening's evaluations via Horner: (z_j, f_reduced(z_j))
         let reduced_openings: Vec<(EF, EF)> = openings
             .iter()
@@ -118,17 +121,18 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
     ///
     /// Reduces opened row values via Horner to get `f_reduced(X)`, then computes
     /// `Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) / (zⱼ - X)`.
-    pub fn eval(
+    pub fn query(
         &self,
         c: &Commit,
         index: usize,
-        openings: &[BatchOpening<F, Commit>],
+        proof: &DeepQuery<F, Commit>,
     ) -> Result<EF, Commit::Error> {
-        for ((commit, dims), opening) in self.commitments.iter().zip(openings) {
+        for ((commit, dims), opening) in self.commitments.iter().zip(&proof.openings) {
             c.verify_batch(commit, dims, index, opening.into())?;
         }
 
-        let rows_iter = openings
+        let rows_iter = proof
+            .openings
             .iter()
             .flat_map(|opening| BatchOpeningRef::from(opening).opened_values)
             .map(Vec::as_slice);

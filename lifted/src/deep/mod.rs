@@ -34,9 +34,18 @@ pub mod verifier;
 
 use alloc::vec::Vec;
 
-use p3_field::TwoAdicField;
-use p3_field::coset::TwoAdicMultiplicativeCoset;
-use p3_util::reverse_slice_index_bits;
+use p3_commit::{BatchOpening, Mmcs};
+use p3_field::Field;
+
+pub use crate::utils::bit_reversed_coset_points;
+
+/// Query proof containing Merkle openings for DEEP quotient verification.
+///
+/// Holds the batch openings from the input commitment that the verifier
+/// needs to reconstruct `f_reduced(X)` at the queried point.
+pub struct DeepQuery<F: Field, Commit: Mmcs<F>> {
+    openings: Vec<BatchOpening<F, Commit>>,
+}
 
 /// Evaluations of polynomial columns at an out-of-domain point, organized by matrix.
 ///
@@ -49,31 +58,26 @@ use p3_util::reverse_slice_index_bits;
 pub struct MatrixGroupEvals<T>(pub(crate) Vec<Vec<T>>);
 
 impl<T> MatrixGroupEvals<T> {
+    /// Create a new `MatrixGroupEvals` from nested vectors.
+    ///
+    /// Structure: `evals[matrix_idx][column_idx]` for each matrix in a commitment group.
     pub const fn new(evals: Vec<Vec<T>>) -> Self {
         Self(evals)
     }
 
+    /// Iterate over matrix evaluations as slices.
+    ///
+    /// Each yielded slice contains the column evaluations for one matrix.
     pub fn iter(&self) -> impl Iterator<Item = &[T]> {
         self.0.iter().map(|v| v.as_slice())
     }
 
+    /// Flatten all evaluations into a single iterator.
+    ///
+    /// Yields column evaluations in order: all columns of matrix 0, then matrix 1, etc.
     pub fn flatten(&self) -> impl Iterator<Item = &T> {
         self.0.iter().flatten()
     }
-}
-
-/// Coset points `gK` in bit-reversed order.
-///
-/// Bit-reversal gives two properties essential for lifting:
-/// - **Adjacent negation**: `gK[2i+1] = -gK[2i]`, so both square to the same value
-/// - **Prefix nesting**: `gK[0..n/r]` equals the r-th power coset `(gK)ʳ`
-///
-/// Together these enable iterative weight folding in barycentric evaluation.
-pub fn bit_reversed_coset_points<F: TwoAdicField>(log_n: usize) -> Vec<F> {
-    let coset = TwoAdicMultiplicativeCoset::new(F::GENERATOR, log_n).unwrap();
-    let mut pts: Vec<F> = coset.iter().collect();
-    reverse_slice_index_bits(&mut pts);
-    pts
 }
 #[cfg(test)]
 mod tests {
@@ -81,6 +85,7 @@ mod tests {
     use alloc::vec::Vec;
 
     use p3_baby_bear::{BabyBear as F, Poseidon2BabyBear};
+    use p3_challenger::{CanObserve, DuplexChallenger};
     use p3_commit::Mmcs;
     use p3_field::Field;
     use p3_field::extension::BinomialExtensionField;
@@ -91,11 +96,12 @@ mod tests {
     use rand::prelude::SmallRng;
     use rand::{Rng, SeedableRng};
 
+    use super::MatrixGroupEvals;
     use super::interpolate::SinglePointQuotient;
     use super::prover::DeepPoly;
     use super::verifier::DeepOracle;
-    use super::{MatrixGroupEvals, bit_reversed_coset_points};
     use crate::merkle_tree::{Lifting, MerkleTreeLmcs};
+    use crate::utils::bit_reversed_coset_points;
 
     type EF = BinomialExtensionField<F, 4>;
     type P = <F as Field>::Packing;
@@ -104,23 +110,26 @@ mod tests {
     const RATE: usize = 8;
     const DIGEST: usize = 8;
 
-    type Sponge = PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>;
-    type Compressor = TruncatedPermutation<Poseidon2BabyBear<WIDTH>, 2, DIGEST, WIDTH>;
+    type Perm = Poseidon2BabyBear<WIDTH>;
+    type Sponge = PaddingFreeSponge<Perm, WIDTH, RATE, DIGEST>;
+    type Compressor = TruncatedPermutation<Perm, 2, DIGEST, WIDTH>;
     type Lmcs = MerkleTreeLmcs<P, P, Sponge, Compressor, WIDTH, DIGEST>;
+    type Challenger = DuplexChallenger<F, Perm, WIDTH, RATE>;
 
-    fn make_lmcs() -> Lmcs {
+    fn test_components() -> (Perm, Lmcs) {
         let mut rng = SmallRng::seed_from_u64(123);
-        let perm = Poseidon2BabyBear::<WIDTH>::new_from_rng_128(&mut rng);
+        let perm = Perm::new_from_rng_128(&mut rng);
         let sponge = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(perm.clone());
-        let compress = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(perm);
-        MerkleTreeLmcs::new(sponge, compress, Lifting::Upsample)
+        let compress = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(perm.clone());
+        let lmcs = MerkleTreeLmcs::new(sponge, compress, Lifting::Upsample);
+        (perm, lmcs)
     }
 
-    /// End-to-end: prover's `DeepPoly.open()` must match verifier's `DeepOracle.eval()`.
+    /// End-to-end: prover's `DeepPoly.open()` must match verifier's `DeepOracle.query()`.
     #[test]
     fn deep_quotient_end_to_end() {
         let rng = &mut SmallRng::seed_from_u64(42);
-        let lmcs = make_lmcs();
+        let (perm, lmcs) = test_components();
 
         // Parameters
         let log_blowup: usize = 2;
@@ -128,11 +137,9 @@ mod tests {
         let n = 1 << log_n;
         let alignment = RATE; // Use sponge rate for coefficient alignment
 
-        // Two random opening points and challenges
+        // Two random opening points
         let z1: EF = rng.sample(StandardUniform);
         let z2: EF = rng.sample(StandardUniform);
-        let alpha: EF = rng.sample(StandardUniform); // Column batching challenge
-        let beta: EF = rng.sample(StandardUniform); // Point batching challenge
 
         // Coset points in bit-reversed order
         let coset_points = bit_reversed_coset_points::<F>(log_n);
@@ -161,7 +168,11 @@ mod tests {
         let evals1 = q1.batch_eval_lifted(&matrices_groups, &coset_points, log_blowup);
         let evals2 = q2.batch_eval_lifted(&matrices_groups, &coset_points, log_blowup);
 
-        // Step 3: Prover constructs DeepPoly
+        // Step 3: Prover constructs DeepPoly with challenger
+        // The challenger samples alpha (column batching) and beta (point batching) internally
+        let mut prover_challenger = Challenger::new(perm.clone());
+        prover_challenger.observe(commitment);
+
         #[allow(clippy::type_complexity)]
         let openings_for_prover: Vec<(
             &SinglePointQuotient<F, EF>,
@@ -171,19 +182,21 @@ mod tests {
             &lmcs,
             &openings_for_prover,
             vec![&prover_data],
-            beta,  // challenge_points
-            alpha, // challenge_columns
+            &mut prover_challenger,
             alignment,
         );
 
-        // Step 4: Verifier constructs DeepOracle from claimed openings
+        // Step 4: Verifier constructs DeepOracle with separate challenger (same initial state)
+        // Verifier's challenger must start in the same state as prover's was before DeepPoly::new
+        let mut verifier_challenger = Challenger::new(perm);
+        verifier_challenger.observe(commitment);
+
         let openings_for_verifier: Vec<(EF, Vec<MatrixGroupEvals<EF>>)> =
             vec![(z1, evals1), (z2, evals2)];
         let deep_oracle = DeepOracle::new(
             &openings_for_verifier,
             vec![(commitment, dims)],
-            alpha, // challenge_columns
-            beta,  // challenge_points
+            &mut verifier_challenger,
             alignment,
         );
 
@@ -191,13 +204,14 @@ mod tests {
         let sample_indices = [0, 1, n / 4, n / 2, n - 1];
         for &index in &sample_indices {
             // Prover opens at index
-            let (prover_eval, batch_openings) = deep_poly.open(&lmcs, index);
+            let deep_query = deep_poly.open(&lmcs, index);
 
             // Verifier evaluates at index (also verifies Merkle proofs)
             let verifier_eval = deep_oracle
-                .eval(&lmcs, index, &batch_openings)
+                .query(&lmcs, index, &deep_query)
                 .expect("Merkle verification should pass");
 
+            let prover_eval = deep_poly.evals()[index];
             assert_eq!(
                 prover_eval, verifier_eval,
                 "Prover and verifier disagree at index {index}"

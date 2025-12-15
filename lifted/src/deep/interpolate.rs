@@ -124,7 +124,10 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> SinglePointQuotient<F, EF> {
         }
     }
 
-    /// Get the precomputed point quotient `1/(z-X)` over `gK`.
+    /// Returns the precomputed point quotients `1/(z - xᵢ)` for each domain point.
+    ///
+    /// Used both for barycentric interpolation weights and DEEP quotient construction.
+    /// The domain points `xᵢ` are the coset `gK` in bit-reversed order.
     pub fn point_quotient(&self) -> &[EF] {
         &self.point_quotient
     }
@@ -221,7 +224,7 @@ mod tests {
     use rand::{Rng, SeedableRng};
 
     use super::SinglePointQuotient;
-    use crate::deep::bit_reversed_coset_points;
+    use crate::utils::bit_reversed_coset_points;
 
     type EF = BinomialExtensionField<F, 4>;
 

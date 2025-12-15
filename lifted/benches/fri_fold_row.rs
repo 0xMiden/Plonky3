@@ -6,7 +6,7 @@ use p3_baby_bear::BabyBear;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_goldilocks::Goldilocks;
-use p3_lifted::fri::fold::{FriFold, TwoAdicFriFold};
+use p3_lifted::fri::fold::{FriFold, FriFold2, FriFold4};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use rand::distr::{Distribution, StandardUniform};
@@ -22,7 +22,7 @@ const PARALLEL_STR: &str = if cfg!(feature = "parallel") {
     "single"
 };
 
-fn bench_fold_impl<F, EF, const ARITY: usize>(
+fn bench_fold_impl<F, EF, FF: FriFold<ARITY>, const ARITY: usize>(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     field_name: &str,
     packed: bool,
@@ -30,7 +30,6 @@ fn bench_fold_impl<F, EF, const ARITY: usize>(
 ) where
     F: TwoAdicField,
     EF: ExtensionField<F>,
-    TwoAdicFriFold: FriFold<ARITY>,
     StandardUniform: Distribution<F> + Distribution<EF>,
 {
     let rng = &mut SmallRng::seed_from_u64(2025);
@@ -54,13 +53,13 @@ fn bench_fold_impl<F, EF, const ARITY: usize>(
                 let rows = current.height();
                 let beta: EF = rng.sample(StandardUniform);
                 let evals = if packed {
-                    TwoAdicFriFold::fold_matrix_packed::<F, EF>(
+                    FF::fold_matrix_packed::<F, EF>(
                         black_box(current.as_view()),
                         black_box(&s_invs[..rows]),
                         black_box(beta),
                     )
                 } else {
-                    TwoAdicFriFold::fold_matrix::<F, EF>(
+                    FF::fold_matrix::<F, EF>(
                         black_box(current.as_view()),
                         black_box(&s_invs[..rows]),
                         black_box(beta),
@@ -87,11 +86,11 @@ fn bench_fold_matrix(c: &mut Criterion) {
         for &arity in &[2, 4] {
             for packed in [false, true] {
                 if arity == 2 {
-                    bench_fold_impl::<BabyBear, BinomialExtensionField<BabyBear, 4>, 2>(
+                    bench_fold_impl::<BabyBear, BinomialExtensionField<BabyBear, 4>, FriFold2, 2>(
                         &mut group, "babybear", packed, n_elems,
                     );
                 } else {
-                    bench_fold_impl::<BabyBear, BinomialExtensionField<BabyBear, 4>, 4>(
+                    bench_fold_impl::<BabyBear, BinomialExtensionField<BabyBear, 4>, FriFold4, 4>(
                         &mut group, "babybear", packed, n_elems,
                     );
                 }
@@ -101,14 +100,14 @@ fn bench_fold_matrix(c: &mut Criterion) {
         for &arity in &[2, 4] {
             for packed in [false, true] {
                 if arity == 2 {
-                    bench_fold_impl::<Goldilocks, BinomialExtensionField<Goldilocks, 2>, 2>(
+                    bench_fold_impl::<Goldilocks, BinomialExtensionField<Goldilocks, 2>, FriFold2, 2>(
                         &mut group,
                         "goldilocks",
                         packed,
                         n_elems,
                     );
                 } else {
-                    bench_fold_impl::<Goldilocks, BinomialExtensionField<Goldilocks, 2>, 4>(
+                    bench_fold_impl::<Goldilocks, BinomialExtensionField<Goldilocks, 2>, FriFold4, 4>(
                         &mut group,
                         "goldilocks",
                         packed,

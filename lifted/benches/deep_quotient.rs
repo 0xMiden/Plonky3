@@ -2,6 +2,7 @@ use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
+use p3_challenger::DuplexChallenger;
 use p3_commit::Mmcs;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{ExtensionField, Field, TwoAdicField};
@@ -12,7 +13,7 @@ use p3_lifted::deep::{MatrixGroupEvals, bit_reversed_coset_points};
 use p3_lifted::{Lifting, MerkleTreeLmcs};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
+use p3_symmetric::{CryptographicPermutation, PaddingFreeSponge, TruncatedPermutation};
 use rand::distr::StandardUniform;
 use rand::prelude::Distribution;
 use rand::rngs::SmallRng;
@@ -68,10 +69,10 @@ fn bench_babybear(c: &mut Criterion) {
 
     let perm = Perm::new_from_rng_128(&mut SmallRng::seed_from_u64(123));
     let sponge = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(perm.clone());
-    let compress = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(perm);
+    let compress = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(perm.clone());
     let lmcs: Lmcs = MerkleTreeLmcs::new(sponge, compress, Lifting::Upsample);
 
-    run_benchmarks::<F, EF, Lmcs>(c, "babybear", lmcs);
+    run_benchmarks::<F, EF, Perm, Lmcs>(c, "babybear", lmcs, perm);
 }
 
 /// Run benchmarks for Goldilocks field.
@@ -86,18 +87,19 @@ fn bench_goldilocks(c: &mut Criterion) {
 
     let perm = Perm::new_from_rng_128(&mut SmallRng::seed_from_u64(123));
     let sponge = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(perm.clone());
-    let compress = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(perm);
+    let compress = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(perm.clone());
     let lmcs: Lmcs = MerkleTreeLmcs::new(sponge, compress, Lifting::Upsample);
 
-    run_benchmarks::<F, EF, Lmcs>(c, "goldilocks", lmcs);
+    run_benchmarks::<F, EF, Perm, Lmcs>(c, "goldilocks", lmcs, perm);
 }
 
 /// Run the actual benchmarks for a given field configuration.
 #[allow(clippy::needless_pass_by_value)]
-fn run_benchmarks<F, EF, Lmcs>(c: &mut Criterion, field_name: &str, lmcs: Lmcs)
+fn run_benchmarks<F, EF, Perm, Lmcs>(c: &mut Criterion, field_name: &str, lmcs: Lmcs, perm: Perm)
 where
-    F: TwoAdicField,
+    F: TwoAdicField + p3_field::PrimeField64,
     EF: ExtensionField<F> + TwoAdicField,
+    Perm: CryptographicPermutation<[F; WIDTH]> + Clone,
     Lmcs: Mmcs<F>,
     StandardUniform: Distribution<F> + Distribution<EF>,
 {
@@ -156,16 +158,20 @@ where
     let mut rng = SmallRng::seed_from_u64(123);
     let z1: EF = rng.sample(StandardUniform);
     let z2: EF = rng.sample(StandardUniform);
-    let alpha: EF = rng.sample(StandardUniform);
-    let beta: EF = rng.sample(StandardUniform);
 
     let q1 = SinglePointQuotient::<F, EF>::new(z1, &coset_points);
     let q2 = SinglePointQuotient::<F, EF>::new(z2, &coset_points);
     let evals1 = q1.batch_eval_lifted(&matrices_groups, &coset_points, log_blowup);
     let evals2 = q2.batch_eval_lifted(&matrices_groups, &coset_points, log_blowup);
 
+    // Create a base challenger state (outside the benchmark loop)
+    let base_challenger = DuplexChallenger::<F, Perm, WIDTH, RATE>::new(perm);
+
     group.bench_function(format!("{field_name}/deep_poly_new"), |b| {
         b.iter(|| {
+            // Clone challenger for each iteration to ensure consistent state
+            let mut challenger = base_challenger.clone();
+
             #[allow(clippy::type_complexity)]
             let openings: Vec<(
                 &SinglePointQuotient<F, EF>,
@@ -175,8 +181,7 @@ where
                 &lmcs,
                 &openings,
                 prover_data.clone(),
-                beta,
-                alpha,
+                &mut challenger,
                 alignment,
             ));
         });
