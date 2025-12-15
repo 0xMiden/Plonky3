@@ -11,48 +11,6 @@ use thiserror::Error;
 
 use super::{DeepQuery, OpeningClaim};
 
-// ============================================================================
-// Error Types
-// ============================================================================
-
-/// Errors that can occur during DEEP verifier construction.
-#[derive(Debug, Error)]
-pub enum DeepError {
-    /// No openings provided.
-    #[error("no openings provided")]
-    EmptyOpenings,
-    /// Number of evaluation groups doesn't match number of commitments.
-    #[error(
-        "evaluation group count mismatch at opening {opening}: expected {expected}, got {actual}"
-    )]
-    EvalGroupCountMismatch {
-        opening: usize,
-        expected: usize,
-        actual: usize,
-    },
-    /// Number of matrices in evaluation group doesn't match commitment dimensions.
-    #[error(
-        "matrix count mismatch at opening {opening}, group {group}: expected {expected}, got {actual}"
-    )]
-    MatrixCountMismatch {
-        opening: usize,
-        group: usize,
-        expected: usize,
-        actual: usize,
-    },
-    /// Number of columns in matrix evaluation doesn't match committed width.
-    #[error(
-        "column count mismatch at opening {opening}, group {group}, matrix {matrix}: expected {expected}, got {actual}"
-    )]
-    ColumnCountMismatch {
-        opening: usize,
-        group: usize,
-        matrix: usize,
-        expected: usize,
-        actual: usize,
-    },
-}
-
 /// Verifier's view of the DEEP quotient as a point-query oracle.
 ///
 /// Stores commitments and the prover's reduced claims `(zⱼ, f_reduced(zⱼ))`.
@@ -217,6 +175,48 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
             .sum();
         Ok(eval)
     }
+}
+
+// ============================================================================
+// Error Types
+// ============================================================================
+
+/// Errors that can occur during DEEP verifier construction.
+#[derive(Debug, Error)]
+pub enum DeepError {
+    /// No openings provided.
+    #[error("no openings provided")]
+    EmptyOpenings,
+    /// Number of evaluation groups doesn't match number of commitments.
+    #[error(
+        "evaluation group count mismatch at opening {opening}: expected {expected}, got {actual}"
+    )]
+    EvalGroupCountMismatch {
+        opening: usize,
+        expected: usize,
+        actual: usize,
+    },
+    /// Number of matrices in evaluation group doesn't match commitment dimensions.
+    #[error(
+        "matrix count mismatch at opening {opening}, group {group}: expected {expected}, got {actual}"
+    )]
+    MatrixCountMismatch {
+        opening: usize,
+        group: usize,
+        expected: usize,
+        actual: usize,
+    },
+    /// Number of columns in matrix evaluation doesn't match committed width.
+    #[error(
+        "column count mismatch at opening {opening}, group {group}, matrix {matrix}: expected {expected}, got {actual}"
+    )]
+    ColumnCountMismatch {
+        opening: usize,
+        group: usize,
+        matrix: usize,
+        expected: usize,
+        actual: usize,
+    },
 }
 
 /// Horner reduction: computes `Σᵢ αⁿ⁻¹⁻ⁱ · vᵢ` via left-to-right accumulation.

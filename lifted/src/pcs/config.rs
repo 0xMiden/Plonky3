@@ -16,10 +16,3 @@ pub struct PcsConfig {
     /// Ensures coefficients are aligned for efficient hashing.
     pub alignment: usize,
 }
-
-impl PcsConfig {
-    /// Create a new PCS configuration.
-    pub const fn new(fri: FriParams, alignment: usize) -> Self {
-        Self { fri, alignment }
-    }
-}

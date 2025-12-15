@@ -329,6 +329,7 @@ mod tests {
     use rand::{Rng, SeedableRng};
 
     use super::*;
+    use crate::fri::FriParams;
     use crate::merkle_tree::{Lifting, MerkleTreeLmcs};
 
     type F = BabyBear;
@@ -415,15 +416,15 @@ mod tests {
         let rng = &mut SmallRng::seed_from_u64(42);
         let (perm, base_lmcs, fri_mmcs) = test_components();
 
-        let config = PcsConfig::new(
-            crate::fri::FriParams {
+        let config = PcsConfig {
+            fri: FriParams {
                 log_blowup: 2,
                 log_folding_factor: 1,
                 log_final_degree: 2,
                 num_queries: 5,
             },
-            RATE,
-        );
+            alignment: RATE,
+        };
 
         // Create a matrix of LDE evaluations.
         // Each column is a random polynomial of degree < 2^log_poly_degree,

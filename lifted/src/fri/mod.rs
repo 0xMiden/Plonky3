@@ -8,7 +8,8 @@ pub mod prover;
 pub mod verifier;
 
 pub use prover::CommitPhaseData;
-pub use verifier::{CommitPhaseProof, FriError};
+use thiserror::Error;
+pub use verifier::CommitPhaseProof;
 
 /// FRI protocol parameters.
 ///
@@ -74,6 +75,36 @@ impl FriParams {
         // degree = domain_size / blowup = 2^(log_final_size - log_blowup)
         1 << log_final_size.saturating_sub(self.log_blowup)
     }
+}
+
+// ============================================================================
+// Error Types
+// ============================================================================
+
+/// Errors that can occur during FRI verification.
+#[derive(Debug, Error)]
+pub enum FriError<MmcsError> {
+    /// Merkle verification failed.
+    #[error("Merkle verification failed at round {1}: {0:?}")]
+    MmcsError(MmcsError, usize),
+    /// Wrong number of commitments in proof.
+    #[error("wrong number of commitments: expected {expected}, got {actual}")]
+    WrongCommitmentCount { expected: usize, actual: usize },
+    /// Wrong number of folding challenges.
+    #[error("wrong number of betas: expected {expected}, got {actual}")]
+    WrongBetaCount { expected: usize, actual: usize },
+    /// Wrong number of Merkle openings.
+    #[error("wrong number of openings: expected {expected}, got {actual}")]
+    WrongOpeningCount { expected: usize, actual: usize },
+    /// Final polynomial has wrong length.
+    #[error("wrong final polynomial length: expected {expected}, got {actual}")]
+    WrongFinalPolyLen { expected: usize, actual: usize },
+    /// Evaluation mismatch during folding.
+    #[error("evaluation mismatch at row {row_index}, position {position}")]
+    EvaluationMismatch { row_index: usize, position: usize },
+    /// Final polynomial evaluation doesn't match folded value.
+    #[error("final polynomial mismatch")]
+    FinalPolyMismatch,
 }
 
 // ============================================================================

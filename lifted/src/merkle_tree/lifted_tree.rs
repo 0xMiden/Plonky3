@@ -9,8 +9,7 @@ use p3_maybe_rayon::prelude::*;
 use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulHasher};
 use serde::{Deserialize, Serialize};
 
-use crate::utils::validate_heights;
-use crate::{Lifting, LmcsError};
+use crate::merkle_tree::{Lifting, LmcsError};
 
 /// A uniform binary Merkle tree whose leaves are constructed from matrices with power-of-two heights.
 ///
@@ -485,6 +484,46 @@ fn compress_uniform<
             });
     }
     next_digests
+}
+
+/// Validate a sequence of matrix heights for LMCS.
+///
+/// Requirements enforced:
+/// - Non-empty sequence (at least one matrix).
+/// - Every height is a power of two and non-zero.
+/// - Heights are in non-decreasing order (sorted by height), so the last height is the maximum
+///   `H` used by lifting.
+///
+/// Returns `Ok(max_height)` with the maximum height if all checks pass; otherwise returns a
+/// specific [`LmcsError`]:
+/// - [`LmcsError::ZeroHeightMatrix`]
+/// - [`LmcsError::NonPowerOfTwoHeight`]
+/// - [`LmcsError::UnsortedByHeight`]
+/// - [`LmcsError::EmptyBatch`]
+///
+/// The `matrix` index in the errors refers to the position within the provided iterator.
+fn validate_heights(heights: impl IntoIterator<Item = usize>) -> Result<usize, LmcsError> {
+    let mut active_height = 0;
+
+    for (matrix, height) in heights.into_iter().enumerate() {
+        if height == 0 {
+            return Err(LmcsError::ZeroHeightMatrix { matrix });
+        }
+
+        if !height.is_power_of_two() {
+            return Err(LmcsError::NonPowerOfTwoHeight { matrix, height });
+        }
+
+        if height < active_height {
+            return Err(LmcsError::UnsortedByHeight);
+        }
+        active_height = height;
+    }
+
+    if active_height == 0 {
+        return Err(LmcsError::EmptyBatch);
+    }
+    Ok(active_height)
 }
 
 #[cfg(test)]

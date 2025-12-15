@@ -55,6 +55,4 @@ pub mod merkle_tree;
 /// Complete PCS interface combining DEEP and FRI.
 pub mod pcs;
 
-mod utils;
-
-pub use merkle_tree::*;
+pub mod utils;

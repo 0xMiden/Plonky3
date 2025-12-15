@@ -7,40 +7,9 @@ use p3_commit::{BatchOpening, Mmcs};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::Dimensions;
 use p3_util::reverse_bits_len;
-use thiserror::Error;
 
-use crate::fri::FriParams;
 use crate::fri::fold::{FriFold, FriFold2, FriFold4};
-
-// ============================================================================
-// Error Types
-// ============================================================================
-
-/// Errors that can occur during FRI verification.
-#[derive(Debug, Error)]
-pub enum FriError<MmcsError> {
-    /// Merkle verification failed.
-    #[error("Merkle verification failed at round {1}: {0:?}")]
-    MmcsError(MmcsError, usize),
-    /// Wrong number of commitments in proof.
-    #[error("wrong number of commitments: expected {expected}, got {actual}")]
-    WrongCommitmentCount { expected: usize, actual: usize },
-    /// Wrong number of folding challenges.
-    #[error("wrong number of betas: expected {expected}, got {actual}")]
-    WrongBetaCount { expected: usize, actual: usize },
-    /// Wrong number of Merkle openings.
-    #[error("wrong number of openings: expected {expected}, got {actual}")]
-    WrongOpeningCount { expected: usize, actual: usize },
-    /// Final polynomial has wrong length.
-    #[error("wrong final polynomial length: expected {expected}, got {actual}")]
-    WrongFinalPolyLen { expected: usize, actual: usize },
-    /// Evaluation mismatch during folding.
-    #[error("evaluation mismatch at row {row_index}, position {position}")]
-    EvaluationMismatch { row_index: usize, position: usize },
-    /// Final polynomial evaluation doesn't match folded value.
-    #[error("final polynomial mismatch")]
-    FinalPolyMismatch,
-}
+use crate::fri::{FriError, FriParams};
 
 // ============================================================================
 // Proof Data Structure
@@ -51,9 +20,9 @@ pub enum FriError<MmcsError> {
 /// Contains commitments to each folding round and the final low-degree polynomial.
 pub struct CommitPhaseProof<EF: Field, FriMmcs: Mmcs<EF>> {
     /// Merkle commitments to folded evaluations at each round.
-    pub commitments: Vec<FriMmcs::Commitment>,
+    pub(crate) commitments: Vec<FriMmcs::Commitment>,
     /// Coefficients of the final low-degree polynomial (sent in clear).
-    pub final_poly: Vec<EF>,
+    pub(crate) final_poly: Vec<EF>,
 }
 
 // ============================================================================

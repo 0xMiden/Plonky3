@@ -20,7 +20,7 @@ use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_commit::Mmcs;
 use p3_field::Field;
 use p3_keccak::KeccakF;
-use p3_lifted::{Lifting, MerkleTreeLmcs};
+use p3_lifted::merkle_tree::{Lifting, MerkleTreeLmcs};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_symmetric::{ChainingHasher, PaddingFreeSponge, TruncatedPermutation};
 use rand::SeedableRng;

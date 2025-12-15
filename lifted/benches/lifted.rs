@@ -5,7 +5,9 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_commit::Mmcs;
 use p3_field::Field;
-use p3_lifted::{Lifting, MerkleTreeLmcs, build_leaf_states_cyclic, build_leaf_states_upsampled};
+use p3_lifted::merkle_tree::{
+    Lifting, MerkleTreeLmcs, build_leaf_states_cyclic, build_leaf_states_upsampled,
+};
 use p3_matrix::Matrix;
 use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::RowMajorMatrix;

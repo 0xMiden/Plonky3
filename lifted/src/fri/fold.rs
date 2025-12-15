@@ -17,6 +17,7 @@ use alloc::vec::Vec;
 use p3_field::{
     Algebra, ExtensionField, PackedField, PackedFieldExtension, PackedValue, TwoAdicField,
 };
+use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_maybe_rayon::prelude::*;
 
@@ -43,11 +44,24 @@ pub trait FriFold<const ARITY: usize> {
         EF: ExtensionField<PF::Scalar>,
         PEF: Algebra<PF> + Algebra<EF>;
 
+    fn fold_matrix<F: TwoAdicField, EF: ExtensionField<F>>(
+        input: RowMajorMatrixView<'_, EF>,
+        s_invs: &[F],
+        beta: EF,
+    ) -> Vec<EF> {
+        let width = F::Packing::WIDTH;
+        if input.height() < width || width == 1 {
+            Self::fold_matrix_scalar(input, s_invs, beta)
+        } else {
+            Self::fold_matrix_packed(input, s_invs, beta)
+        }
+    }
+
     /// Fold a matrix of coset evaluations using the challenge `beta`.
     ///
     /// Each row contains evaluations on a coset `s·⟨ω⟩`. Returns folded
     /// evaluations, one per row, maintaining bit-reversed order.
-    fn fold_matrix<F: TwoAdicField, EF: ExtensionField<F>>(
+    fn fold_matrix_scalar<F: TwoAdicField, EF: ExtensionField<F>>(
         input: RowMajorMatrixView<'_, EF>,
         s_invs: &[F],
         beta: EF,
@@ -68,7 +82,7 @@ pub trait FriFold<const ARITY: usize> {
     /// SIMD-optimized matrix folding using packed field operations.
     ///
     /// Processes multiple rows in parallel using horizontal SIMD packing.
-    /// Equivalent to [`Self::fold_matrix`] but faster for large matrices.
+    /// Equivalent to [`Self::fold_matrix_scalar`] but faster for large matrices.
     fn fold_matrix_packed<F: TwoAdicField, EF: ExtensionField<F>>(
         input: RowMajorMatrixView<'_, EF>,
         s_invs: &[F],
@@ -77,10 +91,6 @@ pub trait FriFold<const ARITY: usize> {
         assert_eq!(input.width, ARITY);
         let (evals, _) = input.values.as_chunks::<ARITY>();
         let width = F::Packing::WIDTH;
-        if evals.len() < width || width == 1 {
-            return Self::fold_matrix(input, s_invs, beta);
-        }
-
         assert!(evals.len().is_multiple_of(width));
 
         let mut new_evals = EF::zero_vec(evals.len());
@@ -477,7 +487,7 @@ mod tests {
         let beta: EF = rng.sample(StandardUniform);
 
         // Call both implementations
-        let result_scalar = FF::fold_matrix::<F, EF>(input.as_view(), &s_invs, beta);
+        let result_scalar = FF::fold_matrix_scalar::<F, EF>(input.as_view(), &s_invs, beta);
         let result_packed = FF::fold_matrix_packed::<F, EF>(input.as_view(), &s_invs, beta);
 
         // They should be identical
@@ -528,7 +538,7 @@ mod tests {
         reverse_slice_index_bits(&mut s_invs);
 
         let matrix = RowMajorMatrix::new(evals.clone(), arity);
-        let my_folded = FriFold2::fold_matrix::<F, EF>(matrix.as_view(), &s_invs, beta);
+        let my_folded = FriFold2::fold_matrix_scalar::<F, EF>(matrix.as_view(), &s_invs, beta);
 
         // Reference implementation from two_adic_pcs.rs
         let ref_g_inv = F::two_adic_generator(log_num_cosets + 1).inverse();
@@ -593,7 +603,7 @@ mod tests {
         // Fold with random beta
         let beta: EF = rng.sample(StandardUniform);
         let matrix = RowMajorMatrix::new(evals, arity);
-        let folded = FriFold2::fold_matrix::<F, EF>(matrix.as_view(), &s_invs, beta);
+        let folded = FriFold2::fold_matrix_scalar::<F, EF>(matrix.as_view(), &s_invs, beta);
 
         // IDFT the result to get coefficients
         let mut folded_for_idft = folded;

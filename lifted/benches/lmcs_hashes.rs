@@ -5,7 +5,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear, default_babybear_poseidon2_24};
 use p3_field::Field;
 use p3_keccak::KeccakF;
-use p3_lifted::build_leaf_states_upsampled;
+use p3_lifted::merkle_tree::build_leaf_states_upsampled;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_sha256::Sha256;
 use p3_symmetric::{ChainingHasher, PaddingFreeSponge};

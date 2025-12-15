@@ -20,7 +20,7 @@ use crate::fri::verifier::CommitPhaseProof;
 /// Prover data from the FRI commit phase, needed to answer queries.
 pub struct CommitPhaseData<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> {
     /// Prover data for each folding round, used to open Merkle paths at query indices.
-    pub folded_evals_data: Vec<FriMmcs::ProverData<RowMajorMatrix<EF>>>,
+    pub(crate) folded_evals_data: Vec<FriMmcs::ProverData<RowMajorMatrix<EF>>>,
     _marker: PhantomData<F>,
 }
 
@@ -136,8 +136,8 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> CommitPhaseData<
             let matrix_view = mmcs.get_matrices(&prover_data)[0];
 
             evals = match log_arity {
-                1 => FriFold2::fold_matrix_packed(matrix_view.as_view(), &s_invs, beta),
-                2 => FriFold4::fold_matrix_packed(matrix_view.as_view(), &s_invs, beta),
+                1 => FriFold2::fold_matrix(matrix_view.as_view(), &s_invs, beta),
+                2 => FriFold4::fold_matrix(matrix_view.as_view(), &s_invs, beta),
                 _ => panic!("Unsupported folding arity"),
             };
             // No bit-reversal needed: folded evals maintain bit-reversed order

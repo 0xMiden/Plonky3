@@ -59,7 +59,7 @@ fn bench_fold_impl<F, EF, FF: FriFold<ARITY>, const ARITY: usize>(
                         black_box(beta),
                     )
                 } else {
-                    FF::fold_matrix::<F, EF>(
+                    FF::fold_matrix_scalar::<F, EF>(
                         black_box(current.as_view()),
                         black_box(&s_invs[..rows]),
                         black_box(beta),

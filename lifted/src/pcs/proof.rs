@@ -16,13 +16,13 @@ pub struct Proof<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: M
     /// Claimed evaluations at each opening point.
     /// Structure: `evals[point_idx][commit_idx]` is a `MatrixGroupEvals` containing
     /// `evals[point_idx][commit_idx][matrix_idx][col_idx]`
-    pub evals: Vec<Vec<MatrixGroupEvals<EF>>>,
+    pub(crate) evals: Vec<Vec<MatrixGroupEvals<EF>>>,
 
     /// FRI commit phase proof (intermediate commitments + final polynomial)
-    pub fri_commit_proof: CommitPhaseProof<EF, FriMmcs>,
+    pub(crate) fri_commit_proof: CommitPhaseProof<EF, FriMmcs>,
 
     /// Query phase proofs, one per query index
-    pub query_proofs: Vec<QueryProof<F, EF, InputMmcs, FriMmcs>>,
+    pub(crate) query_proofs: Vec<QueryProof<F, EF, InputMmcs, FriMmcs>>,
 }
 
 /// Proof for a single FRI query index.
@@ -32,10 +32,10 @@ pub struct Proof<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: M
 pub struct QueryProof<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: Mmcs<EF>> {
     /// Openings of the input matrices at this query index
     /// (one BatchOpening per committed matrix group)
-    pub input_openings: DeepQuery<F, InputMmcs>,
+    pub(crate) input_openings: DeepQuery<F, InputMmcs>,
 
     /// Openings for each FRI folding round
-    pub fri_round_openings: Vec<BatchOpening<EF, FriMmcs>>,
+    pub(crate) fri_round_openings: Vec<BatchOpening<EF, FriMmcs>>,
 
     _marker: PhantomData<F>,
 }

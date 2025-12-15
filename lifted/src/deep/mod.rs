@@ -40,8 +40,6 @@ use p3_commit::{BatchOpening, Mmcs};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 pub use verifier::DeepError;
 
-pub use crate::utils::bit_reversed_coset_points;
-
 /// Query proof containing Merkle openings for DEEP quotient verification.
 ///
 /// Holds the batch openings from the input commitment that the verifier
@@ -66,18 +64,6 @@ impl<T> MatrixGroupEvals<T> {
     /// Structure: `evals[matrix_idx][column_idx]` for each matrix in a commitment group.
     pub const fn new(evals: Vec<Vec<T>>) -> Self {
         Self(evals)
-    }
-
-    /// Returns the number of matrices in this group.
-    #[inline]
-    pub const fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Returns `true` if there are no matrices in this group.
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.0.is_empty()
     }
 
     /// Iterate over matrix evaluations as slices.
