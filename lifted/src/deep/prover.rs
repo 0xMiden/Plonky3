@@ -102,7 +102,7 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
             debug_assert_eq!(point_quotient.len(), n);
 
             let coeffs_flat = coeffs_columns.iter().flatten().copied();
-            let evals_flat = opening.evals.iter().flat_map(|g| g.flatten()).copied();
+            let evals_flat = opening.evals.iter().flat_map(|g| g.iter_evals()).copied();
             let f_reduced_at_z: EF = dot_product(coeffs_flat, evals_flat);
             let f_reduced_at_z_packed = EF::ExtensionPacking::from(f_reduced_at_z);
             let point_coeff_ef = EF::ExtensionPacking::from(point_coeff);

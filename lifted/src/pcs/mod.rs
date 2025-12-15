@@ -105,7 +105,7 @@ where
     // Observe evaluations in challenger
     for point_evals in &evals {
         for group_evals in point_evals {
-            for val in group_evals.flatten() {
+            for val in group_evals.iter_evals() {
                 challenger.observe_algebra_element(*val);
             }
         }
@@ -115,7 +115,10 @@ where
     // 3. Construct DEEP quotient
     // ─────────────────────────────────────────────────────────────────────────
     let openings_for_deep: Vec<QuotientOpening<'_, F, EF>> = zip(&quotients, &evals)
-        .map(|(q, e)| QuotientOpening::new(q, e.clone()))
+        .map(|(q, e)| QuotientOpening {
+            quotient: q,
+            evals: e.clone(),
+        })
         .collect();
 
     let deep_poly = DeepPoly::new(
@@ -229,7 +232,7 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     for point_evals in &proof.evals {
         for group_evals in point_evals {
-            for val in group_evals.flatten() {
+            for val in group_evals.iter_evals() {
                 challenger.observe_algebra_element(*val);
             }
         }
@@ -240,7 +243,10 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     // Build openings for oracle: pair each eval_point with its evaluations
     let openings_for_oracle: Vec<OpeningClaim<EF>> = zip(eval_points, &proof.evals)
-        .map(|(&z, evals)| OpeningClaim::new(z, evals.clone()))
+        .map(|(&z, evals)| OpeningClaim {
+            point: z,
+            evals: evals.clone(),
+        })
         .collect();
 
     let deep_oracle = DeepOracle::new(

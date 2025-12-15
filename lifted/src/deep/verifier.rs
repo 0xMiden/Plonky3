@@ -87,15 +87,17 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
                 });
             }
             for (group_idx, (evals, (_, dims))) in zip(&claim.evals, &commitments).enumerate() {
-                if evals.0.len() != dims.len() {
+                if evals.num_matrices() != dims.len() {
                     return Err(DeepError::MatrixCountMismatch {
                         opening: opening_idx,
                         group: group_idx,
                         expected: dims.len(),
-                        actual: evals.0.len(),
+                        actual: evals.num_matrices(),
                     });
                 }
-                for (matrix_idx, (matrix_evals, matrix_dims)) in zip(&evals.0, dims).enumerate() {
+                for (matrix_idx, (matrix_evals, matrix_dims)) in
+                    zip(evals.iter_matrices(), dims).enumerate()
+                {
                     if matrix_evals.len() != matrix_dims.width {
                         return Err(DeepError::ColumnCountMismatch {
                             opening: opening_idx,
@@ -116,7 +118,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
         let reduced_openings: Vec<(EF, EF)> = openings
             .iter()
             .map(|claim| {
-                let slices = claim.evals.iter().flat_map(|g| g.iter());
+                let slices = claim.evals.iter().flat_map(|g| g.iter_matrices());
                 let reduced_eval = reduce_with_powers(slices, challenge_columns, alignment);
                 (claim.point, reduced_eval)
             })

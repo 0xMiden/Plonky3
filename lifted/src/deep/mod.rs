@@ -33,7 +33,6 @@ pub mod prover;
 pub mod verifier;
 
 use alloc::vec::Vec;
-use core::ops::Index;
 
 pub use interpolate::SinglePointQuotient;
 use p3_commit::{BatchOpening, Mmcs};
@@ -66,45 +65,21 @@ impl<T> MatrixGroupEvals<T> {
         Self(evals)
     }
 
-    /// Iterate over matrix evaluations as slices.
-    ///
-    /// Each yielded slice contains the column evaluations for one matrix.
-    pub fn iter(&self) -> impl Iterator<Item = &[T]> {
+    /// Returns the number of matrices in this group.
+    pub const fn num_matrices(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Iterate over matrices, yielding the column evaluations for each.
+    pub fn iter_matrices(&self) -> impl Iterator<Item = &[T]> {
         self.0.iter().map(|v| v.as_slice())
     }
 
-    /// Flatten all evaluations into a single iterator.
+    /// Iterate over all column evaluations across all matrices.
     ///
-    /// Yields column evaluations in order: all columns of matrix 0, then matrix 1, etc.
-    pub fn flatten(&self) -> impl Iterator<Item = &T> {
+    /// Yields evaluations in order: all columns of matrix 0, then matrix 1, etc.
+    pub fn iter_evals(&self) -> impl Iterator<Item = &T> {
         self.0.iter().flatten()
-    }
-}
-
-impl<T> Index<usize> for MatrixGroupEvals<T> {
-    type Output = Vec<T>;
-
-    #[inline]
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.0[index]
-    }
-}
-
-impl<T> IntoIterator for MatrixGroupEvals<T> {
-    type Item = Vec<T>;
-    type IntoIter = alloc::vec::IntoIter<Vec<T>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
-    }
-}
-
-impl<'a, T> IntoIterator for &'a MatrixGroupEvals<T> {
-    type Item = &'a Vec<T>;
-    type IntoIter = core::slice::Iter<'a, Vec<T>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
     }
 }
 
@@ -120,13 +95,6 @@ pub struct OpeningClaim<EF> {
     pub evals: Vec<MatrixGroupEvals<EF>>,
 }
 
-impl<EF> OpeningClaim<EF> {
-    /// Create a new opening claim.
-    pub const fn new(point: EF, evals: Vec<MatrixGroupEvals<EF>>) -> Self {
-        Self { point, evals }
-    }
-}
-
 /// Prover's quotient data at a single opening point.
 ///
 /// Bundles the precomputed quotient `1/(z - X)` with the polynomial evaluations
@@ -137,16 +105,6 @@ pub struct QuotientOpening<'a, F: TwoAdicField, EF: ExtensionField<F>> {
     /// Evaluations `f_i(z^r)` grouped by commitment, then matrix, then column.
     /// The lift factor `r` varies per matrix based on its height.
     pub evals: Vec<MatrixGroupEvals<EF>>,
-}
-
-impl<'a, F: TwoAdicField, EF: ExtensionField<F>> QuotientOpening<'a, F, EF> {
-    /// Create a new quotient opening.
-    pub const fn new(
-        quotient: &'a SinglePointQuotient<F, EF>,
-        evals: Vec<MatrixGroupEvals<EF>>,
-    ) -> Self {
-        Self { quotient, evals }
-    }
 }
 
 #[cfg(test)]
@@ -243,8 +201,14 @@ mod tests {
         prover_challenger.observe(commitment);
 
         let openings_for_prover: Vec<QuotientOpening<'_, F, EF>> = vec![
-            QuotientOpening::new(&q1, evals1.clone()),
-            QuotientOpening::new(&q2, evals2.clone()),
+            QuotientOpening {
+                quotient: &q1,
+                evals: evals1.clone(),
+            },
+            QuotientOpening {
+                quotient: &q2,
+                evals: evals2.clone(),
+            },
         ];
         let deep_poly = DeepPoly::new(
             &lmcs,
@@ -259,8 +223,16 @@ mod tests {
         let mut verifier_challenger = Challenger::new(perm);
         verifier_challenger.observe(commitment);
 
-        let openings_for_verifier: Vec<OpeningClaim<EF>> =
-            vec![OpeningClaim::new(z1, evals1), OpeningClaim::new(z2, evals2)];
+        let openings_for_verifier: Vec<OpeningClaim<EF>> = vec![
+            OpeningClaim {
+                point: z1,
+                evals: evals1,
+            },
+            OpeningClaim {
+                point: z2,
+                evals: evals2,
+            },
+        ];
         let deep_oracle = DeepOracle::new(
             &openings_for_verifier,
             vec![(commitment, dims)],

@@ -173,8 +173,14 @@ where
             let mut challenger = base_challenger.clone();
 
             let openings: Vec<QuotientOpening<'_, F, EF>> = vec![
-                QuotientOpening::new(&q1, evals1.clone()),
-                QuotientOpening::new(&q2, evals2.clone()),
+                QuotientOpening {
+                    quotient: &q1,
+                    evals: evals1.clone(),
+                },
+                QuotientOpening {
+                    quotient: &q2,
+                    evals: evals2.clone(),
+                },
             ];
             black_box(DeepPoly::new(
                 &lmcs,
