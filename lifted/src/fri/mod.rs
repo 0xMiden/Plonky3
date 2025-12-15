@@ -8,12 +8,12 @@ pub mod prover;
 pub mod verifier;
 
 pub use prover::CommitPhaseData;
-pub use verifier::CommitPhaseProof;
+pub use verifier::{CommitPhaseProof, FriError};
 
 /// FRI protocol parameters.
 ///
 /// Controls the trade-off between proof size, prover time, and verifier time.
-pub struct Params {
+pub struct FriParams {
     /// Log₂ of the blowup factor (LDE domain size / polynomial degree).
     ///
     /// Higher values increase soundness but also proof size and prover time.
@@ -39,7 +39,7 @@ pub struct Params {
     pub num_queries: usize,
 }
 
-impl Params {
+impl FriParams {
     /// Compute the number of folding rounds for a given initial evaluation domain size.
     ///
     /// Each round reduces the domain by `2^log_folding_factor`. We fold until the domain
@@ -165,7 +165,7 @@ mod tests {
     fn open_query<M: Mmcs<EF>>(
         mmcs: &M,
         data: &CommitPhaseData<F, EF, M>,
-        params: &Params,
+        params: &FriParams,
         index: usize,
     ) -> Vec<p3_commit::BatchOpening<EF, M>> {
         let log_arity = params.log_folding_factor;
@@ -195,7 +195,7 @@ mod tests {
         let mut rng = SmallRng::seed_from_u64(42);
         let (perm, fri_mmcs) = test_components();
 
-        let params = Params {
+        let params = FriParams {
             log_blowup: 2,
             log_folding_factor,
             log_final_degree: 2,
@@ -225,15 +225,17 @@ mod tests {
             let initial_eval = evals[index];
             let openings = open_query(&fri_mmcs, &prover_data, &params, index);
 
-            proof.verify_query::<F>(
-                &fri_mmcs,
-                &params,
-                index,
-                log_poly_degree,
-                initial_eval,
-                &betas,
-                &openings,
-            );
+            proof
+                .verify_query::<F>(
+                    &fri_mmcs,
+                    &params,
+                    index,
+                    log_poly_degree,
+                    initial_eval,
+                    &betas,
+                    &openings,
+                )
+                .expect("verification should succeed");
         }
     }
 
@@ -251,7 +253,6 @@ mod tests {
 
     /// Test that verification fails with wrong initial evaluation.
     #[test]
-    #[should_panic(expected = "Evaluation mismatch")]
     fn test_fri_verify_wrong_eval() {
         let mut rng = SmallRng::seed_from_u64(42);
         let (perm, fri_mmcs) = test_components();
@@ -261,7 +262,7 @@ mod tests {
         let log_final_degree = 2;
         let log_folding_factor = 1;
 
-        let params = Params {
+        let params = FriParams {
             log_blowup,
             log_folding_factor,
             log_final_degree,
@@ -283,7 +284,7 @@ mod tests {
         let wrong_eval: EF = rng.sample(StandardUniform); // Wrong!
         let openings = open_query(&fri_mmcs, &prover_data, &params, index);
 
-        proof.verify_query::<F>(
+        let result = proof.verify_query::<F>(
             &fri_mmcs,
             &params,
             index,
@@ -292,12 +293,17 @@ mod tests {
             &betas,
             &openings,
         );
+
+        assert!(
+            matches!(result, Err(FriError::EvaluationMismatch { .. })),
+            "expected EvaluationMismatch error, got {:?}",
+            result
+        );
     }
 
     /// Test that verification fails with wrong beta challenges.
     /// With wrong betas, folding produces wrong values that don't match opened rows.
     #[test]
-    #[should_panic(expected = "Evaluation mismatch")]
     fn test_fri_verify_wrong_beta() {
         let mut rng = SmallRng::seed_from_u64(42);
         let (perm, fri_mmcs) = test_components();
@@ -307,7 +313,7 @@ mod tests {
         let log_final_degree = 2;
         let log_folding_factor = 1;
 
-        let params = Params {
+        let params = FriParams {
             log_blowup,
             log_folding_factor,
             log_final_degree,
@@ -335,7 +341,7 @@ mod tests {
         let initial_eval = evals[index];
         let openings = open_query(&fri_mmcs, &prover_data, &params, index);
 
-        proof.verify_query::<F>(
+        let result = proof.verify_query::<F>(
             &fri_mmcs,
             &params,
             index,
@@ -343,6 +349,12 @@ mod tests {
             initial_eval,
             &wrong_betas, // Should fail
             &openings,
+        );
+
+        assert!(
+            matches!(result, Err(FriError::EvaluationMismatch { .. })),
+            "expected EvaluationMismatch error, got {:?}",
+            result
         );
     }
 
@@ -358,7 +370,7 @@ mod tests {
         let log_final_degree = 3;
         let log_folding_factor = 1;
 
-        let params = Params {
+        let params = FriParams {
             log_blowup,
             log_folding_factor,
             log_final_degree,

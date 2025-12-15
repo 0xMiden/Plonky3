@@ -1,15 +1,46 @@
 use alloc::vec::Vec;
-use core::array;
 use core::iter::zip;
+use core::{array, fmt};
 
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{BatchOpening, Mmcs};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::Dimensions;
 use p3_util::reverse_bits_len;
+use thiserror::Error;
 
-use crate::fri::Params;
+use crate::fri::FriParams;
 use crate::fri::fold::{FriFold, FriFold2, FriFold4};
+
+// ============================================================================
+// Error Types
+// ============================================================================
+
+/// Errors that can occur during FRI verification.
+#[derive(Debug, Error)]
+pub enum FriError<MmcsError> {
+    /// Merkle verification failed.
+    #[error("Merkle verification failed at round {1}: {0:?}")]
+    MmcsError(MmcsError, usize),
+    /// Wrong number of commitments in proof.
+    #[error("wrong number of commitments: expected {expected}, got {actual}")]
+    WrongCommitmentCount { expected: usize, actual: usize },
+    /// Wrong number of folding challenges.
+    #[error("wrong number of betas: expected {expected}, got {actual}")]
+    WrongBetaCount { expected: usize, actual: usize },
+    /// Wrong number of Merkle openings.
+    #[error("wrong number of openings: expected {expected}, got {actual}")]
+    WrongOpeningCount { expected: usize, actual: usize },
+    /// Final polynomial has wrong length.
+    #[error("wrong final polynomial length: expected {expected}, got {actual}")]
+    WrongFinalPolyLen { expected: usize, actual: usize },
+    /// Evaluation mismatch during folding.
+    #[error("evaluation mismatch at row {row_index}, position {position}")]
+    EvaluationMismatch { row_index: usize, position: usize },
+    /// Final polynomial evaluation doesn't match folded value.
+    #[error("final polynomial mismatch")]
+    FinalPolyMismatch,
+}
 
 // ============================================================================
 // Proof Data Structure
@@ -67,53 +98,65 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> CommitPhaseProof<EF, FriMmcs> {
     /// - `eval`: Initial evaluation f(x) at the queried point
     /// - `betas`: Folding challenges β₀, β₁, ... from the verifier
     /// - `openings`: Merkle openings for each folding round
+    ///
+    /// ## Errors
+    ///
+    /// Returns `FriError` if any verification check fails.
     #[allow(clippy::too_many_arguments)]
     pub fn verify_query<F: TwoAdicField>(
         &self,
         mmcs: &FriMmcs,
-        params: &Params,
+        params: &FriParams,
         index: usize,
         log_max_degree: usize,
         eval: EF,
         betas: &[EF],
         openings: &[BatchOpening<EF, FriMmcs>],
-    ) where
+    ) -> Result<(), FriError<FriMmcs::Error>>
+    where
         EF: ExtensionField<F>,
+        FriMmcs::Error: fmt::Debug,
     {
         let log_domain_size = log_max_degree + params.log_blowup;
 
         // Verify the proof has the expected number of rounds
         let expected_num_rounds = params.num_rounds(log_domain_size);
-        assert_eq!(
-            self.commitments.len(),
-            expected_num_rounds,
-            "Number of commitments doesn't match expected rounds",
-        );
-        assert_eq!(
-            betas.len(),
-            expected_num_rounds,
-            "Number of betas doesn't match expected rounds",
-        );
-        assert_eq!(
-            openings.len(),
-            expected_num_rounds,
-            "Number of openings doesn't match expected rounds",
-        );
+        if self.commitments.len() != expected_num_rounds {
+            return Err(FriError::WrongCommitmentCount {
+                expected: expected_num_rounds,
+                actual: self.commitments.len(),
+            });
+        }
+        if betas.len() != expected_num_rounds {
+            return Err(FriError::WrongBetaCount {
+                expected: expected_num_rounds,
+                actual: betas.len(),
+            });
+        }
+        if openings.len() != expected_num_rounds {
+            return Err(FriError::WrongOpeningCount {
+                expected: expected_num_rounds,
+                actual: openings.len(),
+            });
+        }
 
         // Verify the final polynomial has the expected degree
         let expected_final_poly_len = params.final_poly_degree(log_domain_size);
-        assert_eq!(
-            self.final_poly.len(),
-            expected_final_poly_len,
-            "Final polynomial length doesn't match expected degree",
-        );
+        if self.final_poly.len() != expected_final_poly_len {
+            return Err(FriError::WrongFinalPolyLen {
+                expected: expected_final_poly_len,
+                actual: self.final_poly.len(),
+            });
+        }
 
         // Phase 1: Verify all Merkle openings
-        self.verify_openings(mmcs, params, index, log_max_degree, openings);
+        self.verify_openings(mmcs, params, index, log_max_degree, openings)?;
 
         // Phase 2: Process opened rows and verify folding
         let rows = openings.iter().map(|o| o.opened_values[0].as_slice());
-        self.verify_folding::<F>(params, index, log_max_degree, eval, betas, rows);
+        self.verify_folding::<F, FriMmcs::Error>(params, index, log_max_degree, eval, betas, rows)?;
+
+        Ok(())
     }
 
     /// Phase 1: Verify all Merkle openings without processing contents.
@@ -122,16 +165,19 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> CommitPhaseProof<EF, FriMmcs> {
     fn verify_openings(
         &self,
         mmcs: &FriMmcs,
-        params: &Params,
+        params: &FriParams,
         mut index: usize,
         log_max_degree: usize,
         openings: &[BatchOpening<EF, FriMmcs>],
-    ) {
+    ) -> Result<(), FriError<FriMmcs::Error>>
+    where
+        FriMmcs::Error: fmt::Debug,
+    {
         let log_arity = params.log_folding_factor;
         let arity = 1 << log_arity;
         let mut num_rows = 1 << (log_max_degree + params.log_blowup).saturating_sub(log_arity);
 
-        for (commit, opening) in zip(&self.commitments, openings) {
+        for (round, (commit, opening)) in zip(&self.commitments, openings).enumerate() {
             let row_index = index >> log_arity;
 
             mmcs.verify_batch(
@@ -143,11 +189,12 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> CommitPhaseProof<EF, FriMmcs> {
                 row_index,
                 opening.into(),
             )
-            .expect("Merkle verification failed");
+            .map_err(|e| FriError::MmcsError(e, round))?;
 
             index = row_index;
             num_rows >>= log_arity;
         }
+        Ok(())
     }
 
     /// Phase 2: Verify folding consistency given opened rows.
@@ -167,15 +214,16 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> CommitPhaseProof<EF, FriMmcs> {
     /// - `eval`: Initial evaluation f(x) at the queried point
     /// - `betas`: Folding challenges β₀, β₁, ...
     /// - `rows`: Iterator yielding opened rows as `&[EF]` slices
-    fn verify_folding<'a, F: TwoAdicField>(
+    fn verify_folding<'a, F: TwoAdicField, MmcsError: fmt::Debug>(
         &self,
-        params: &Params,
+        params: &FriParams,
         mut index: usize,
         log_max_degree: usize,
         mut eval: EF,
         betas: &[EF],
         rows: impl Iterator<Item = &'a [EF]>,
-    ) where
+    ) -> Result<(), FriError<MmcsError>>
+    where
         EF: ExtensionField<F> + 'a,
     {
         let log_arity = params.log_folding_factor;
@@ -194,10 +242,12 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> CommitPhaseProof<EF, FriMmcs> {
             // ─────────────────────────────────────────────────────────────────
             // The evaluation we're carrying forward must match the opened value
             // at the corresponding position within the coset.
-            assert_eq!(
-                row[position_in_coset], eval,
-                "Evaluation mismatch at row {row_index}, position {position_in_coset}"
-            );
+            if row[position_in_coset] != eval {
+                return Err(FriError::EvaluationMismatch {
+                    row_index,
+                    position: position_in_coset,
+                });
+            }
 
             // ─────────────────────────────────────────────────────────────────
             // Compute coset generator inverse s⁻¹
@@ -251,7 +301,12 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> CommitPhaseProof<EF, FriMmcs> {
             .iter()
             .rev()
             .fold(EF::ZERO, |acc, &coeff| acc * x + coeff);
-        assert_eq!(final_eval, eval, "Final polynomial mismatch");
+
+        if final_eval != eval {
+            return Err(FriError::FinalPolyMismatch);
+        }
+
+        Ok(())
     }
 
     /// Absorb the proof into a challenger and return the folding challenges.

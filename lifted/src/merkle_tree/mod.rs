@@ -8,6 +8,7 @@ use p3_matrix::{Dimensions, Matrix};
 use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulHasher};
 use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 mod hiding_lmcs;
 mod lifted_tree;
@@ -299,11 +300,13 @@ where
 }
 
 /// Errors that can arise while building or verifying lifted Merkle commitments.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum LmcsError {
     /// Number of opened rows doesn't match number of committed matrices.
+    #[error("wrong batch size: number of opened rows doesn't match committed matrices")]
     WrongBatchSize,
     /// Opened row width doesn't match the committed matrix width.
+    #[error("wrong width at matrix {matrix}: expected {expected}, got {actual}")]
     WrongWidth {
         /// Index of the matrix with mismatched width.
         matrix: usize,
@@ -313,6 +316,7 @@ pub enum LmcsError {
         actual: usize,
     },
     /// Salt row length doesn't match expected width.
+    #[error("wrong salt width: expected {expected}, got {actual}")]
     WrongSalt {
         /// Expected salt width.
         expected: usize,
@@ -320,6 +324,7 @@ pub enum LmcsError {
         actual: usize,
     },
     /// Matrix height doesn't match expected height.
+    #[error("wrong height: expected {expected}, got {actual}")]
     WrongHeight {
         /// Expected height.
         expected: usize,
@@ -327,6 +332,7 @@ pub enum LmcsError {
         actual: usize,
     },
     /// Authentication path length doesn't match tree height.
+    #[error("wrong proof length: expected {expected}, got {actual}")]
     WrongProofLen {
         /// Expected proof length (log₂ of tree height).
         expected: usize,
@@ -334,6 +340,7 @@ pub enum LmcsError {
         actual: usize,
     },
     /// Query index exceeds tree height.
+    #[error("index {index} out of bounds (max height: {max_height})")]
     IndexOutOfBounds {
         /// Maximum valid index (tree height).
         max_height: usize,
@@ -341,10 +348,13 @@ pub enum LmcsError {
         index: usize,
     },
     /// Recomputed root doesn't match the commitment.
+    #[error("root mismatch: recomputed root doesn't match commitment")]
     RootMismatch,
     /// No matrices provided for commitment.
+    #[error("empty batch: no matrices provided for commitment")]
     EmptyBatch,
     /// Matrix height is not a power of two (required for lifting).
+    #[error("non-power-of-two height at matrix {matrix}: height {height}")]
     NonPowerOfTwoHeight {
         /// Index of the invalid matrix.
         matrix: usize,
@@ -352,6 +362,9 @@ pub enum LmcsError {
         height: usize,
     },
     /// Matrix height doesn't divide the final tree height.
+    #[error(
+        "height not divisor at matrix {matrix}: height {height} doesn't divide final height {final_height}"
+    )]
     HeightNotDivisor {
         /// Index of the invalid matrix.
         matrix: usize,
@@ -361,13 +374,16 @@ pub enum LmcsError {
         final_height: usize,
     },
     /// Matrix has zero height.
+    #[error("zero height matrix at index {matrix}")]
     ZeroHeightMatrix {
         /// Index of the zero-height matrix.
         matrix: usize,
     },
     /// Matrices are not sorted by non-decreasing height.
+    #[error("unsorted by height: matrices must be sorted by non-decreasing height")]
     UnsortedByHeight,
     /// Salt matrix height doesn't match tree height.
+    #[error("salt height mismatch: expected {expected}, got {actual}")]
     SaltHeightMismatch {
         /// Expected salt height (equal to tree height).
         expected: usize,

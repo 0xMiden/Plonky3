@@ -9,7 +9,7 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 use p3_util::{log2_strict_usize, reverse_slice_index_bits};
 
-use crate::fri::Params;
+use crate::fri::FriParams;
 use crate::fri::fold::{FriFold, FriFold2, FriFold4};
 use crate::fri::verifier::CommitPhaseProof;
 
@@ -73,7 +73,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> CommitPhaseData<
     /// - `CommitPhaseData`: Prover data needed to answer queries
     pub fn new<Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment>>(
         mmcs: &FriMmcs,
-        params: &Params,
+        params: &FriParams,
         mut evals: Vec<EF>,
         challenger: &mut Challenger,
     ) -> (Self, CommitPhaseProof<EF, FriMmcs>)
@@ -206,7 +206,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, FriMmcs: Mmcs<EF>> CommitPhaseData<
     pub fn open_query(
         &self,
         mmcs: &FriMmcs,
-        params: &Params,
+        params: &FriParams,
         index: usize,
     ) -> Vec<BatchOpening<EF, FriMmcs>> {
         let log_arity = params.log_folding_factor;

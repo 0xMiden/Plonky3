@@ -6,8 +6,51 @@ use p3_commit::{BatchOpeningRef, Mmcs};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::Dimensions;
 use p3_util::{log2_strict_usize, reverse_bits_len};
+use thiserror::Error;
 
-use super::{DeepQuery, MatrixGroupEvals};
+use super::{DeepQuery, OpeningClaim};
+
+// ============================================================================
+// Error Types
+// ============================================================================
+
+/// Errors that can occur during DEEP verifier construction.
+#[derive(Debug, Error)]
+pub enum DeepError {
+    /// No openings provided.
+    #[error("no openings provided")]
+    EmptyOpenings,
+    /// Number of evaluation groups doesn't match number of commitments.
+    #[error(
+        "evaluation group count mismatch at opening {opening}: expected {expected}, got {actual}"
+    )]
+    EvalGroupCountMismatch {
+        opening: usize,
+        expected: usize,
+        actual: usize,
+    },
+    /// Number of matrices in evaluation group doesn't match commitment dimensions.
+    #[error(
+        "matrix count mismatch at opening {opening}, group {group}: expected {expected}, got {actual}"
+    )]
+    MatrixCountMismatch {
+        opening: usize,
+        group: usize,
+        expected: usize,
+        actual: usize,
+    },
+    /// Number of columns in matrix evaluation doesn't match committed width.
+    #[error(
+        "column count mismatch at opening {opening}, group {group}, matrix {matrix}: expected {expected}, got {actual}"
+    )]
+    ColumnCountMismatch {
+        opening: usize,
+        group: usize,
+        matrix: usize,
+        expected: usize,
+        actual: usize,
+    },
+}
 
 /// Verifier's view of the DEEP quotient as a point-query oracle.
 ///
@@ -52,44 +95,60 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
     /// Construct from claimed openings and commitments.
     ///
     /// # Arguments
-    /// - `openings`: Pairs `(zⱼ, evals_groups)` where `evals_groups[commit][matrix][col] = fᵢ(zⱼʳ)`
-    ///   are the prover's claimed evaluations. The lift factor r varies per matrix.
+    /// - `openings`: Claimed evaluations at each opening point
     /// - `commitments`: Pairs `(commitment, dims)` for Merkle verification
-    /// - `challenge_columns`: Challenge `α` for batching columns into `f_reduced`
-    /// - `challenge_points`: Challenge `β` for batching opening points
+    /// - `challenger`: Fiat-Shamir challenger for sampling challenges
     /// - `alignment`: Width for coefficient alignment (see struct doc)
     ///
     /// We reduce each opening's evaluations to `f_reduced(zⱼ) = Σᵢ αⁱ · fᵢ(zⱼʳ)` eagerly.
     /// This optimization is possible because all columns share the same opening points—
     /// at query time, we only compute one Horner reduction per query, not per-column.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DeepError` if the proof structure is invalid.
     pub fn new<Challenger: FieldChallenger<F>>(
-        openings: &[(EF, Vec<MatrixGroupEvals<EF>>)],
+        openings: &[OpeningClaim<EF>],
         commitments: Vec<(Commit::Commitment, Vec<Dimensions>)>,
         challenger: &mut Challenger,
         alignment: usize,
-    ) -> Self {
-        assert!(!openings.is_empty(), "must have at least one opening");
+    ) -> Result<Self, DeepError> {
+        if openings.is_empty() {
+            return Err(DeepError::EmptyOpenings);
+        }
         let num_commits = commitments.len();
 
         // Validate structure: evals_groups[commit][matrix][col] matches dims
-        for (_, evals_groups) in openings {
-            assert_eq!(
-                evals_groups.len(),
-                num_commits,
-                "evals must have same number of commits"
-            );
-            for (evals, (_, dims)) in evals_groups.iter().zip(&commitments) {
-                assert_eq!(
-                    evals.0.len(),
-                    dims.len(),
-                    "evals must have same number of matrices as dims"
-                );
-                for (matrix_evals, matrix_dims) in evals.0.iter().zip(dims) {
-                    assert_eq!(
-                        matrix_evals.len(),
-                        matrix_dims.width,
-                        "evals must have same number of columns as dims.width"
-                    );
+        for (opening_idx, claim) in openings.iter().enumerate() {
+            if claim.evals.len() != num_commits {
+                return Err(DeepError::EvalGroupCountMismatch {
+                    opening: opening_idx,
+                    expected: num_commits,
+                    actual: claim.evals.len(),
+                });
+            }
+            for (group_idx, (evals, (_, dims))) in claim.evals.iter().zip(&commitments).enumerate()
+            {
+                if evals.0.len() != dims.len() {
+                    return Err(DeepError::MatrixCountMismatch {
+                        opening: opening_idx,
+                        group: group_idx,
+                        expected: dims.len(),
+                        actual: evals.0.len(),
+                    });
+                }
+                for (matrix_idx, (matrix_evals, matrix_dims)) in
+                    evals.0.iter().zip(dims).enumerate()
+                {
+                    if matrix_evals.len() != matrix_dims.width {
+                        return Err(DeepError::ColumnCountMismatch {
+                            opening: opening_idx,
+                            group: group_idx,
+                            matrix: matrix_idx,
+                            expected: matrix_dims.width,
+                            actual: matrix_evals.len(),
+                        });
+                    }
                 }
             }
         }
@@ -100,21 +159,21 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
         // Reduce each opening's evaluations via Horner: (z_j, f_reduced(z_j))
         let reduced_openings: Vec<(EF, EF)> = openings
             .iter()
-            .map(|(point, evals_groups)| {
-                let slices = evals_groups.iter().flat_map(|g| g.iter());
+            .map(|claim| {
+                let slices = claim.evals.iter().flat_map(|g| g.iter());
                 let reduced_eval = reduce_with_powers(slices, challenge_columns, alignment);
-                (*point, reduced_eval)
+                (claim.point, reduced_eval)
             })
             .collect();
 
-        Self {
+        Ok(Self {
             commitments,
             reduced_openings,
             challenge_columns,
             challenge_points,
             alignment,
             _marker: PhantomData,
-        }
+        })
     }
 
     /// Verify Merkle openings and compute `Q(X)` at the queried domain point.

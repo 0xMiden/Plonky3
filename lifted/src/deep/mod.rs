@@ -33,9 +33,12 @@ pub mod prover;
 pub mod verifier;
 
 use alloc::vec::Vec;
+use core::ops::Index;
 
+pub use interpolate::SinglePointQuotient;
 use p3_commit::{BatchOpening, Mmcs};
-use p3_field::Field;
+use p3_field::{ExtensionField, Field, TwoAdicField};
+pub use verifier::DeepError;
 
 pub use crate::utils::bit_reversed_coset_points;
 
@@ -65,6 +68,18 @@ impl<T> MatrixGroupEvals<T> {
         Self(evals)
     }
 
+    /// Returns the number of matrices in this group.
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns `true` if there are no matrices in this group.
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Iterate over matrix evaluations as slices.
     ///
     /// Each yielded slice contains the column evaluations for one matrix.
@@ -79,6 +94,75 @@ impl<T> MatrixGroupEvals<T> {
         self.0.iter().flatten()
     }
 }
+
+impl<T> Index<usize> for MatrixGroupEvals<T> {
+    type Output = Vec<T>;
+
+    #[inline]
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl<T> IntoIterator for MatrixGroupEvals<T> {
+    type Item = Vec<T>;
+    type IntoIter = alloc::vec::IntoIter<Vec<T>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a MatrixGroupEvals<T> {
+    type Item = &'a Vec<T>;
+    type IntoIter = core::slice::Iter<'a, Vec<T>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+/// A claimed evaluation at a single point, with evaluations grouped by commitment.
+///
+/// Used by the verifier to check prover claims. Structure:
+/// `evals[commit_idx][matrix_idx][col_idx]` = claimed value at `point`.
+#[derive(Clone, Debug)]
+pub struct OpeningClaim<EF> {
+    /// The out-of-domain evaluation point `z`.
+    pub point: EF,
+    /// Claimed evaluations `f_i(z)` grouped by commitment, then matrix, then column.
+    pub evals: Vec<MatrixGroupEvals<EF>>,
+}
+
+impl<EF> OpeningClaim<EF> {
+    /// Create a new opening claim.
+    pub const fn new(point: EF, evals: Vec<MatrixGroupEvals<EF>>) -> Self {
+        Self { point, evals }
+    }
+}
+
+/// Prover's quotient data at a single opening point.
+///
+/// Bundles the precomputed quotient `1/(z - X)` with the polynomial evaluations
+/// at that point. Used to construct the DEEP quotient polynomial.
+pub struct QuotientOpening<'a, F: TwoAdicField, EF: ExtensionField<F>> {
+    /// Precomputed quotient data for point `z`.
+    pub quotient: &'a SinglePointQuotient<F, EF>,
+    /// Evaluations `f_i(z^r)` grouped by commitment, then matrix, then column.
+    /// The lift factor `r` varies per matrix based on its height.
+    pub evals: Vec<MatrixGroupEvals<EF>>,
+}
+
+impl<'a, F: TwoAdicField, EF: ExtensionField<F>> QuotientOpening<'a, F, EF> {
+    /// Create a new quotient opening.
+    pub const fn new(
+        quotient: &'a SinglePointQuotient<F, EF>,
+        evals: Vec<MatrixGroupEvals<EF>>,
+    ) -> Self {
+        Self { quotient, evals }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;
@@ -96,10 +180,9 @@ mod tests {
     use rand::prelude::SmallRng;
     use rand::{Rng, SeedableRng};
 
-    use super::MatrixGroupEvals;
-    use super::interpolate::SinglePointQuotient;
     use super::prover::DeepPoly;
     use super::verifier::DeepOracle;
+    use super::{OpeningClaim, QuotientOpening, SinglePointQuotient};
     use crate::merkle_tree::{Lifting, MerkleTreeLmcs};
     use crate::utils::bit_reversed_coset_points;
 
@@ -173,11 +256,10 @@ mod tests {
         let mut prover_challenger = Challenger::new(perm.clone());
         prover_challenger.observe(commitment);
 
-        #[allow(clippy::type_complexity)]
-        let openings_for_prover: Vec<(
-            &SinglePointQuotient<F, EF>,
-            Vec<MatrixGroupEvals<EF>>,
-        )> = vec![(&q1, evals1.clone()), (&q2, evals2.clone())];
+        let openings_for_prover: Vec<QuotientOpening<'_, F, EF>> = vec![
+            QuotientOpening::new(&q1, evals1.clone()),
+            QuotientOpening::new(&q2, evals2.clone()),
+        ];
         let deep_poly = DeepPoly::new(
             &lmcs,
             &openings_for_prover,
@@ -191,14 +273,15 @@ mod tests {
         let mut verifier_challenger = Challenger::new(perm);
         verifier_challenger.observe(commitment);
 
-        let openings_for_verifier: Vec<(EF, Vec<MatrixGroupEvals<EF>>)> =
-            vec![(z1, evals1), (z2, evals2)];
+        let openings_for_verifier: Vec<OpeningClaim<EF>> =
+            vec![OpeningClaim::new(z1, evals1), OpeningClaim::new(z2, evals2)];
         let deep_oracle = DeepOracle::new(
             &openings_for_verifier,
             vec![(commitment, dims)],
             &mut verifier_challenger,
             alignment,
-        );
+        )
+        .expect("DeepOracle construction should succeed");
 
         // Step 5: Verify at random query indices
         let sample_indices = [0, 1, n / 4, n / 2, n - 1];

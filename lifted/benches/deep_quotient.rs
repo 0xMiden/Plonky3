@@ -7,9 +7,8 @@ use p3_commit::Mmcs;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks};
-use p3_lifted::deep::interpolate::SinglePointQuotient;
 use p3_lifted::deep::prover::DeepPoly;
-use p3_lifted::deep::{MatrixGroupEvals, bit_reversed_coset_points};
+use p3_lifted::deep::{QuotientOpening, SinglePointQuotient, bit_reversed_coset_points};
 use p3_lifted::{Lifting, MerkleTreeLmcs};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -172,11 +171,10 @@ where
             // Clone challenger for each iteration to ensure consistent state
             let mut challenger = base_challenger.clone();
 
-            #[allow(clippy::type_complexity)]
-            let openings: Vec<(
-                &SinglePointQuotient<F, EF>,
-                Vec<MatrixGroupEvals<EF>>,
-            )> = vec![(&q1, evals1.clone()), (&q2, evals2.clone())];
+            let openings: Vec<QuotientOpening<'_, F, EF>> = vec![
+                QuotientOpening::new(&q1, evals1.clone()),
+                QuotientOpening::new(&q2, evals2.clone()),
+            ];
             black_box(DeepPoly::new(
                 &lmcs,
                 &openings,

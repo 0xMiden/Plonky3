@@ -1,11 +1,11 @@
 use alloc::vec::Vec;
-use core::fmt;
 use core::marker::PhantomData;
 
 use p3_commit::{BatchOpening, Mmcs};
 use p3_field::{ExtensionField, Field};
+use thiserror::Error;
 
-use crate::deep::{DeepQuery, MatrixGroupEvals};
+use crate::deep::{DeepError, DeepQuery, MatrixGroupEvals};
 use crate::fri::CommitPhaseProof;
 
 /// Complete PCS opening proof.
@@ -60,47 +60,27 @@ impl<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: Mmcs<EF>>
 ///
 /// Verification can fail due to invalid Merkle proofs, inconsistent folding,
 /// or mismatched polynomial evaluations.
-#[derive(Debug)]
-pub enum PcsError<InputMmcsError: fmt::Debug, FriMmcsError: fmt::Debug> {
+#[derive(Debug, Error)]
+pub enum PcsError<InputMmcsError, FriMmcsError> {
     /// Input MMCS verification failed
+    #[error("Input MMCS error: {0:?}")]
     InputMmcsError(InputMmcsError),
     /// FRI MMCS verification failed
+    #[error("FRI MMCS error: {0:?}")]
     FriMmcsError(FriMmcsError),
     /// DEEP quotient evaluation mismatch
+    #[error("DEEP quotient mismatch at query {query_index}")]
     DeepQuotientMismatch { query_index: usize },
     /// FRI folding verification failed
+    #[error("FRI folding error at query {query_index}, round {round}")]
     FriFoldingError { query_index: usize, round: usize },
     /// Final polynomial evaluation mismatch
+    #[error("Final polynomial mismatch at query {query_index}")]
     FinalPolyMismatch { query_index: usize },
     /// Wrong number of queries in proof
+    #[error("Wrong number of queries: expected {expected}, got {actual}")]
     WrongNumQueries { expected: usize, actual: usize },
-}
-
-impl<E1: fmt::Debug, E2: fmt::Debug> fmt::Display for PcsError<E1, E2> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InputMmcsError(e) => write!(f, "Input MMCS error: {:?}", e),
-            Self::FriMmcsError(e) => write!(f, "FRI MMCS error: {:?}", e),
-            Self::DeepQuotientMismatch { query_index } => {
-                write!(f, "DEEP quotient mismatch at query {}", query_index)
-            }
-            Self::FriFoldingError { query_index, round } => {
-                write!(
-                    f,
-                    "FRI folding error at query {}, round {}",
-                    query_index, round
-                )
-            }
-            Self::FinalPolyMismatch { query_index } => {
-                write!(f, "Final polynomial mismatch at query {}", query_index)
-            }
-            Self::WrongNumQueries { expected, actual } => {
-                write!(
-                    f,
-                    "Wrong number of queries: expected {}, got {}",
-                    expected, actual
-                )
-            }
-        }
-    }
+    /// DEEP oracle construction failed
+    #[error("DEEP error: {0}")]
+    DeepError(#[from] DeepError),
 }

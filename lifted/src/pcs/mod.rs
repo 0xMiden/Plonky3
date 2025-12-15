@@ -25,11 +25,10 @@ use p3_matrix::{Dimensions, Matrix};
 use p3_util::log2_strict_usize;
 
 pub use self::proof::{PcsError, Proof, QueryProof};
-use crate::deep::MatrixGroupEvals;
-use crate::deep::interpolate::SinglePointQuotient;
 use crate::deep::prover::DeepPoly;
 use crate::deep::verifier::DeepOracle;
-use crate::fri::{CommitPhaseData, Params};
+use crate::deep::{MatrixGroupEvals, OpeningClaim, QuotientOpening, SinglePointQuotient};
+use crate::fri::{CommitPhaseData, FriError, FriParams};
 use crate::utils::bit_reversed_coset_points;
 
 /// Open committed matrices at multiple evaluation points.
@@ -60,7 +59,7 @@ pub fn open<F, EF, InputMmcs, FriMmcs, M, Challenger, const NUM_POINTS: usize>(
     prover_data: Vec<&InputMmcs::ProverData<M>>,
     eval_points: &[EF; NUM_POINTS],
     challenger: &mut Challenger,
-    params: &Params,
+    params: &FriParams,
     fri_mmcs: &FriMmcs,
     alignment: usize,
 ) -> Proof<F, EF, InputMmcs, FriMmcs>
@@ -92,21 +91,16 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     // 2. Compute evaluations at each opening point
     // ─────────────────────────────────────────────────────────────────────────
-    #[allow(clippy::type_complexity)]
-    let mut quotients_and_evals: Vec<(SinglePointQuotient<F, EF>, Vec<MatrixGroupEvals<EF>>)> =
-        Vec::with_capacity(NUM_POINTS);
+    let mut quotients: Vec<SinglePointQuotient<F, EF>> = Vec::with_capacity(NUM_POINTS);
+    let mut evals: Vec<Vec<MatrixGroupEvals<EF>>> = Vec::with_capacity(NUM_POINTS);
 
     for &z in eval_points {
         let quotient = SinglePointQuotient::<F, EF>::new(z, &coset_points);
-        let evals = quotient.batch_eval_lifted(&matrices_groups, &coset_points, params.log_blowup);
-        quotients_and_evals.push((quotient, evals));
+        let point_evals =
+            quotient.batch_eval_lifted(&matrices_groups, &coset_points, params.log_blowup);
+        quotients.push(quotient);
+        evals.push(point_evals);
     }
-
-    // Extract evals for the proof: evals[point_idx][commit_idx] = MatrixGroupEvals
-    let evals: Vec<Vec<MatrixGroupEvals<EF>>> = quotients_and_evals
-        .iter()
-        .map(|(_, evals)| evals.clone())
-        .collect();
 
     // Observe evaluations in challenger
     for point_evals in &evals {
@@ -120,12 +114,11 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     // 3. Construct DEEP quotient
     // ─────────────────────────────────────────────────────────────────────────
-    #[allow(clippy::type_complexity)]
-    let openings_for_deep: Vec<(&SinglePointQuotient<F, EF>, Vec<MatrixGroupEvals<EF>>)> =
-        quotients_and_evals
-            .iter()
-            .map(|(q, e)| (q, e.clone()))
-            .collect();
+    let openings_for_deep: Vec<QuotientOpening<'_, F, EF>> = quotients
+        .iter()
+        .zip(&evals)
+        .map(|(q, e)| QuotientOpening::new(q, e.clone()))
+        .collect();
 
     let deep_poly = DeepPoly::new(
         input_mmcs,
@@ -203,7 +196,7 @@ pub fn verify<F, EF, InputMmcs, FriMmcs, Challenger, const NUM_POINTS: usize>(
     eval_points: &[EF; NUM_POINTS],
     proof: &Proof<F, EF, InputMmcs, FriMmcs>,
     challenger: &mut Challenger,
-    params: &Params,
+    params: &FriParams,
     fri_mmcs: &FriMmcs,
     alignment: usize,
 ) -> Result<Vec<Vec<MatrixGroupEvals<EF>>>, PcsError<InputMmcs::Error, FriMmcs::Error>>
@@ -250,10 +243,10 @@ where
     // 3. Construct verifier's DEEP oracle
     // ─────────────────────────────────────────────────────────────────────────
     // Build openings for oracle: pair each eval_point with its evaluations
-    let openings_for_oracle: Vec<(EF, Vec<MatrixGroupEvals<EF>>)> = eval_points
+    let openings_for_oracle: Vec<OpeningClaim<EF>> = eval_points
         .iter()
         .zip(proof.evals.iter())
-        .map(|(&z, evals)| (z, evals.clone()))
+        .map(|(&z, evals)| OpeningClaim::new(z, evals.clone()))
         .collect();
 
     let deep_oracle = DeepOracle::new(
@@ -261,7 +254,7 @@ where
         commitments.to_vec(),
         challenger,
         alignment,
-    );
+    )?;
 
     // ─────────────────────────────────────────────────────────────────────────
     // 4. Process FRI commit proof to get betas
@@ -285,15 +278,31 @@ where
             .map_err(PcsError::InputMmcsError)?;
 
         // 7c. Verify FRI rounds
-        proof.fri_commit_proof.verify_query::<F>(
-            fri_mmcs,
-            params,
-            index,
-            log_max_degree,
-            deep_eval,
-            &betas,
-            &query_proof.fri_round_openings,
-        );
+        proof
+            .fri_commit_proof
+            .verify_query::<F>(
+                fri_mmcs,
+                params,
+                index,
+                log_max_degree,
+                deep_eval,
+                &betas,
+                &query_proof.fri_round_openings,
+            )
+            .map_err(|e| match e {
+                FriError::MmcsError(err, _) => PcsError::FriMmcsError(err),
+                FriError::EvaluationMismatch { .. }
+                | FriError::WrongCommitmentCount { .. }
+                | FriError::WrongBetaCount { .. }
+                | FriError::WrongOpeningCount { .. }
+                | FriError::WrongFinalPolyLen { .. } => {
+                    PcsError::FriFoldingError {
+                        query_index: index,
+                        round: 0, // Round info is lost in the generic FRI error
+                    }
+                }
+                FriError::FinalPolyMismatch => PcsError::FinalPolyMismatch { query_index: index },
+            })?;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -326,7 +335,7 @@ mod tests {
     use rand::{Rng, SeedableRng};
 
     use super::*;
-    use crate::fri::Params;
+    use crate::fri::FriParams;
     use crate::merkle_tree::{Lifting, MerkleTreeLmcs};
 
     type F = BabyBear;
@@ -414,7 +423,7 @@ mod tests {
         let (perm, base_lmcs, fri_mmcs) = test_components();
 
         let log_blowup = 2;
-        let params = Params {
+        let params = FriParams {
             log_blowup,
             log_folding_factor: 1,
             log_final_degree: 2,

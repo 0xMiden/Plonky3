@@ -10,8 +10,7 @@ use p3_field::{
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 
-use super::interpolate::SinglePointQuotient;
-use super::{DeepQuery, MatrixGroupEvals};
+use super::{DeepQuery, QuotientOpening};
 
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
 ///
@@ -35,17 +34,14 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
     ///
     /// # Arguments
     /// - `c`: The MMCS used for commitment (extracts matrices from prover data)
-    /// - `openings`: Pairs `(quotient, evals_groups)` where:
-    ///   - `quotient`: Precomputed `1/(zⱼ - X)` from [`SinglePointQuotient`]
-    ///   - `evals_groups[commit][matrix][col] = fᵢ(zⱼʳ)` are evaluations at the opening point
+    /// - `openings`: Quotient data for each opening point, containing precomputed
+    ///   `1/(zⱼ - X)` and evaluations `fᵢ(zⱼʳ)`
     /// - `prover_data`: References to committed matrix data
-    /// - `challenge_points`: Challenge `β` for batching opening points
-    /// - `challenge_columns`: Challenge `α` for batching columns
+    /// - `challenger`: Fiat-Shamir challenger for sampling batching challenges
     /// - `alignment`: Width for coefficient alignment (must match commitment)
-    #[allow(clippy::type_complexity)]
     pub fn new<Challenger: FieldChallenger<F>>(
         c: &Commit,
-        openings: &[(&SinglePointQuotient<F, EF>, Vec<MatrixGroupEvals<EF>>)],
+        openings: &[QuotientOpening<'_, F, EF>],
         prover_data: Vec<&'a Commit::ProverData<M>>,
         challenger: &mut Challenger,
         alignment: usize,
@@ -61,7 +57,7 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
         let challenge_points: EF = challenger.sample_algebra_element();
 
         let w = F::Packing::WIDTH;
-        let n = openings[0].0.point_quotient().len();
+        let n = openings[0].quotient.point_quotient().len();
 
         let group_sizes: Vec<usize> = matrices_groups.iter().map(|g| g.len()).collect();
         let widths: Vec<usize> = matrices_groups
@@ -101,12 +97,12 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
         // Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) · 1/(zⱼ - X)
         let mut deep_poly = EF::zero_vec(n);
         let mut point_coeff = EF::ONE;
-        for (quotient, evals_groups) in openings {
-            let point_quotient = quotient.point_quotient();
+        for opening in openings {
+            let point_quotient = opening.quotient.point_quotient();
             debug_assert_eq!(point_quotient.len(), n);
 
             let coeffs_flat = coeffs_columns.iter().flatten().copied();
-            let evals_flat = evals_groups.iter().flat_map(|g| g.flatten()).copied();
+            let evals_flat = opening.evals.iter().flat_map(|g| g.flatten()).copied();
             let f_reduced_at_z: EF = dot_product(coeffs_flat, evals_flat);
             let f_reduced_at_z_packed = EF::ExtensionPacking::from(f_reduced_at_z);
             let point_coeff_ef = EF::ExtensionPacking::from(point_coeff);
