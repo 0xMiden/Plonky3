@@ -96,8 +96,7 @@ fn bench_lifted(c: &mut Criterion) {
                     let out = build_leaf_states_cyclic::<Packed, Packed, _, _, WIDTH, DIGEST>(
                         black_box(&mats[..]),
                         black_box(&sponge),
-                    )
-                    .unwrap();
+                    );
                     black_box(out);
                 });
             },
@@ -112,8 +111,7 @@ fn bench_lifted(c: &mut Criterion) {
                     let out = build_leaf_states_upsampled::<Packed, Packed, _, _, WIDTH, DIGEST>(
                         black_box(&mats[..]),
                         black_box(&sponge),
-                    )
-                    .unwrap();
+                    );
                     black_box(out);
                 });
             },
@@ -133,8 +131,7 @@ fn bench_lifted(c: &mut Criterion) {
                         build_leaf_states_upsampled::<Packed, Packed, _, _, WIDTH, DIGEST>(
                             black_box(&mats_bitrev[..]),
                             black_box(&sponge),
-                        )
-                        .unwrap();
+                        );
                     reverse_slice_index_bits(&mut out);
                     black_box(out);
                 });

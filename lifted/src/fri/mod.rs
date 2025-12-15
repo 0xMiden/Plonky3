@@ -87,18 +87,11 @@ pub enum FriError<MmcsError> {
     /// Merkle verification failed.
     #[error("Merkle verification failed at round {1}: {0:?}")]
     MmcsError(MmcsError, usize),
-    /// Wrong number of commitments in proof.
-    #[error("wrong number of commitments: expected {expected}, got {actual}")]
-    WrongCommitmentCount { expected: usize, actual: usize },
-    /// Wrong number of folding challenges.
-    #[error("wrong number of betas: expected {expected}, got {actual}")]
-    WrongBetaCount { expected: usize, actual: usize },
-    /// Wrong number of Merkle openings.
-    #[error("wrong number of openings: expected {expected}, got {actual}")]
-    WrongOpeningCount { expected: usize, actual: usize },
-    /// Final polynomial has wrong length.
-    #[error("wrong final polynomial length: expected {expected}, got {actual}")]
-    WrongFinalPolyLen { expected: usize, actual: usize },
+    /// Proof structure doesn't match expected format.
+    ///
+    /// This includes wrong number of commitments, openings, betas, or final polynomial length.
+    #[error("invalid proof structure")]
+    InvalidProofStructure,
     /// Evaluation mismatch during folding.
     #[error("evaluation mismatch at row {row_index}, position {position}")]
     EvaluationMismatch { row_index: usize, position: usize },

@@ -9,7 +9,7 @@ use p3_maybe_rayon::prelude::*;
 use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulHasher};
 use serde::{Deserialize, Serialize};
 
-use crate::merkle_tree::{Lifting, LmcsError};
+use crate::merkle_tree::Lifting;
 
 /// A uniform binary Merkle tree whose leaves are constructed from matrices with power-of-two heights.
 ///
@@ -110,7 +110,7 @@ where
         lifting: Lifting,
         leaves: Vec<M>,
         salt: Option<RowMajorMatrix<PF::Value>>,
-    ) -> Result<Self, LmcsError>
+    ) -> Self
     where
         PF: PackedValue<Value = F>,
         PD: PackedValue<Value = D>,
@@ -121,29 +121,22 @@ where
             + PseudoCompressionFunction<[PD; DIGEST_ELEMS], 2>
             + Sync,
     {
-        if leaves.is_empty() {
-            return Err(LmcsError::EmptyBatch);
-        }
+        assert!(!leaves.is_empty(), "cannot commit empty batch");
 
         // Build leaf states from matrices using the sponge
         let mut leaf_states: Vec<[PD::Value; WIDTH]> = match lifting {
             Lifting::Upsample => {
-                build_leaf_states_upsampled::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h)?
+                build_leaf_states_upsampled::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h)
             }
             Lifting::Cyclic => {
-                build_leaf_states_cyclic::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h)?
+                build_leaf_states_cyclic::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h)
             }
         };
 
         // Optionally absorb salt rows into the states prior to squeezing.
         if let Some(salt_matrix) = salt.as_ref() {
             let tree_height = leaf_states.len();
-            if salt_matrix.height() != tree_height {
-                return Err(LmcsError::SaltHeightMismatch {
-                    expected: tree_height,
-                    actual: salt_matrix.height(),
-                });
-            }
+            assert_eq!(salt_matrix.height(), tree_height, "salt height mismatch");
             // Fold the salt matrix rows into the states.
             absorb_matrix::<PF, PD, _, H, WIDTH, DIGEST_ELEMS>(&mut leaf_states, salt_matrix, h);
         }
@@ -165,12 +158,12 @@ where
             digest_layers.push(next_layer);
         }
 
-        Ok(Self {
+        Self {
             leaves,
             digest_layers,
             lifting,
             salt,
-        })
+        }
     }
 
     /// Return the root digest of the tree.
@@ -273,7 +266,7 @@ where
 pub fn build_leaf_states_upsampled<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
     matrices: &[M],
     sponge: &H,
-) -> Result<Vec<[PD::Value; WIDTH]>, LmcsError>
+) -> Vec<[PD::Value; WIDTH]>
 where
     PF: PackedValue,
     PD: PackedValue,
@@ -284,7 +277,7 @@ where
 {
     const { assert!(PF::WIDTH.is_power_of_two()) };
     const { assert!(PD::WIDTH.is_power_of_two()) };
-    let final_height = validate_heights(matrices.iter().map(|d| d.dimensions().height))?;
+    let final_height = validate_heights(matrices.iter().map(|d| d.dimensions().height));
 
     // Memory buffers:
     // - states: Per-leaf scalar states (one per final row), maintained across matrices.
@@ -321,7 +314,7 @@ where
         active_height = height;
     }
 
-    Ok(states)
+    states
 }
 
 /// Build leaf states using the cyclic view; see [`Lifting::Cyclic`] for semantics.
@@ -344,7 +337,7 @@ where
 pub fn build_leaf_states_cyclic<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
     matrices: &[M],
     sponge: &H,
-) -> Result<Vec<[PD::Value; WIDTH]>, LmcsError>
+) -> Vec<[PD::Value; WIDTH]>
 where
     PF: PackedValue,
     PD: PackedValue,
@@ -355,7 +348,7 @@ where
 {
     const { assert!(PF::WIDTH.is_power_of_two()) };
     const { assert!(PD::WIDTH.is_power_of_two()) };
-    let final_height = validate_heights(matrices.iter().map(|d| d.dimensions().height))?;
+    let final_height = validate_heights(matrices.iter().map(|d| d.dimensions().height));
 
     let default_state = [PD::Value::default(); WIDTH];
     let mut states = vec![default_state; final_height];
@@ -379,7 +372,7 @@ where
         active_height = height;
     }
 
-    Ok(states)
+    states
 }
 
 /// Incorporate one matrix’s row-wise contribution into the running per-leaf states.
@@ -494,36 +487,23 @@ fn compress_uniform<
 /// - Heights are in non-decreasing order (sorted by height), so the last height is the maximum
 ///   `H` used by lifting.
 ///
-/// Returns `Ok(max_height)` with the maximum height if all checks pass; otherwise returns a
-/// specific [`LmcsError`]:
-/// - [`LmcsError::ZeroHeightMatrix`]
-/// - [`LmcsError::NonPowerOfTwoHeight`]
-/// - [`LmcsError::UnsortedByHeight`]
-/// - [`LmcsError::EmptyBatch`]
-///
-/// The `matrix` index in the errors refers to the position within the provided iterator.
-fn validate_heights(heights: impl IntoIterator<Item = usize>) -> Result<usize, LmcsError> {
+/// # Panics
+/// Panics if any requirement is violated.
+fn validate_heights(heights: impl IntoIterator<Item = usize>) -> usize {
     let mut active_height = 0;
 
     for (matrix, height) in heights.into_iter().enumerate() {
-        if height == 0 {
-            return Err(LmcsError::ZeroHeightMatrix { matrix });
-        }
-
-        if !height.is_power_of_two() {
-            return Err(LmcsError::NonPowerOfTwoHeight { matrix, height });
-        }
-
-        if height < active_height {
-            return Err(LmcsError::UnsortedByHeight);
-        }
+        assert_ne!(height, 0, "zero height at matrix {matrix}");
+        assert!(
+            height.is_power_of_two(),
+            "non-power-of-two height at matrix {matrix}"
+        );
+        assert!(height >= active_height, "matrices must be sorted by height");
         active_height = height;
     }
 
-    if active_height == 0 {
-        return Err(LmcsError::EmptyBatch);
-    }
-    Ok(active_height)
+    assert_ne!(active_height, 0, "empty batch");
+    active_height
 }
 
 #[cfg(test)]
@@ -545,14 +525,12 @@ mod tests {
     };
 
     fn build_leaves_cyclic(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
-        let mut states =
-            super::build_leaf_states_cyclic::<P, P, _, _, _, _>(matrices, sponge).unwrap();
+        let mut states = super::build_leaf_states_cyclic::<P, P, _, _, _, _>(matrices, sponge);
         states.iter_mut().map(|s| sponge.squeeze(s)).collect()
     }
 
     fn build_leaves_upsampled(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
-        let mut states =
-            super::build_leaf_states_upsampled::<P, P, _, _, _, _>(matrices, sponge).unwrap();
+        let mut states = super::build_leaf_states_upsampled::<P, P, _, _, _, _>(matrices, sponge);
         states.iter_mut().map(|s| sponge.squeeze(s)).collect()
     }
 

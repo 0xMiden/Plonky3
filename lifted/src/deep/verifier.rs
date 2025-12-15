@@ -72,40 +72,20 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
         challenger: &mut Challenger,
         alignment: usize,
     ) -> Result<Self, DeepError> {
-        if openings.is_empty() {
-            return Err(DeepError::EmptyOpenings);
-        }
         let num_commits = commitments.len();
 
         // Validate structure: evals_groups[commit][matrix][col] matches dims
-        for (opening_idx, claim) in openings.iter().enumerate() {
+        for claim in openings {
             if claim.evals.len() != num_commits {
-                return Err(DeepError::EvalGroupCountMismatch {
-                    opening: opening_idx,
-                    expected: num_commits,
-                    actual: claim.evals.len(),
-                });
+                return Err(DeepError);
             }
-            for (group_idx, (evals, (_, dims))) in zip(&claim.evals, &commitments).enumerate() {
+            for (evals, (_, dims)) in zip(&claim.evals, &commitments) {
                 if evals.num_matrices() != dims.len() {
-                    return Err(DeepError::MatrixCountMismatch {
-                        opening: opening_idx,
-                        group: group_idx,
-                        expected: dims.len(),
-                        actual: evals.num_matrices(),
-                    });
+                    return Err(DeepError);
                 }
-                for (matrix_idx, (matrix_evals, matrix_dims)) in
-                    zip(evals.iter_matrices(), dims).enumerate()
-                {
+                for (matrix_evals, matrix_dims) in zip(evals.iter_matrices(), dims) {
                     if matrix_evals.len() != matrix_dims.width {
-                        return Err(DeepError::ColumnCountMismatch {
-                            opening: opening_idx,
-                            group: group_idx,
-                            matrix: matrix_idx,
-                            expected: matrix_dims.width,
-                            actual: matrix_evals.len(),
-                        });
+                        return Err(DeepError);
                     }
                 }
             }
@@ -183,43 +163,12 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
 // Error Types
 // ============================================================================
 
-/// Errors that can occur during DEEP verifier construction.
+/// Claimed evaluations don't match commitment structure.
+///
+/// This can mean wrong number of evaluation groups, matrices, or columns.
 #[derive(Debug, Error)]
-pub enum DeepError {
-    /// No openings provided.
-    #[error("no openings provided")]
-    EmptyOpenings,
-    /// Number of evaluation groups doesn't match number of commitments.
-    #[error(
-        "evaluation group count mismatch at opening {opening}: expected {expected}, got {actual}"
-    )]
-    EvalGroupCountMismatch {
-        opening: usize,
-        expected: usize,
-        actual: usize,
-    },
-    /// Number of matrices in evaluation group doesn't match commitment dimensions.
-    #[error(
-        "matrix count mismatch at opening {opening}, group {group}: expected {expected}, got {actual}"
-    )]
-    MatrixCountMismatch {
-        opening: usize,
-        group: usize,
-        expected: usize,
-        actual: usize,
-    },
-    /// Number of columns in matrix evaluation doesn't match committed width.
-    #[error(
-        "column count mismatch at opening {opening}, group {group}, matrix {matrix}: expected {expected}, got {actual}"
-    )]
-    ColumnCountMismatch {
-        opening: usize,
-        group: usize,
-        matrix: usize,
-        expected: usize,
-        actual: usize,
-    },
-}
+#[error("evaluation structure doesn't match commitment")]
+pub struct DeepError;
 
 /// Horner reduction: computes `Σᵢ αⁿ⁻¹⁻ⁱ · vᵢ` via left-to-right accumulation.
 ///

@@ -88,34 +88,16 @@ impl<EF: Field, FriMmcs: Mmcs<EF>> CommitPhaseProof<EF, FriMmcs> {
     {
         let log_domain_size = log_max_degree + params.log_blowup;
 
-        // Verify the proof has the expected number of rounds
+        // Verify the proof has the expected structure
         let expected_num_rounds = params.num_rounds(log_domain_size);
-        if self.commitments.len() != expected_num_rounds {
-            return Err(FriError::WrongCommitmentCount {
-                expected: expected_num_rounds,
-                actual: self.commitments.len(),
-            });
-        }
-        if betas.len() != expected_num_rounds {
-            return Err(FriError::WrongBetaCount {
-                expected: expected_num_rounds,
-                actual: betas.len(),
-            });
-        }
-        if openings.len() != expected_num_rounds {
-            return Err(FriError::WrongOpeningCount {
-                expected: expected_num_rounds,
-                actual: openings.len(),
-            });
-        }
-
-        // Verify the final polynomial has the expected degree
         let expected_final_poly_len = params.final_poly_degree(log_domain_size);
-        if self.final_poly.len() != expected_final_poly_len {
-            return Err(FriError::WrongFinalPolyLen {
-                expected: expected_final_poly_len,
-                actual: self.final_poly.len(),
-            });
+
+        if self.commitments.len() != expected_num_rounds
+            || betas.len() != expected_num_rounds
+            || openings.len() != expected_num_rounds
+            || self.final_poly.len() != expected_final_poly_len
+        {
+            return Err(FriError::InvalidProofStructure);
         }
 
         // Phase 1: Verify all Merkle openings

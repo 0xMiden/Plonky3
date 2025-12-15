@@ -30,7 +30,7 @@ pub use self::config::PcsConfig;
 pub use self::proof::{PcsError, Proof, QueryProof};
 use crate::deep::prover::DeepPoly;
 use crate::deep::verifier::DeepOracle;
-use crate::deep::{MatrixGroupEvals, OpeningClaim, QuotientOpening, SinglePointQuotient};
+use crate::deep::{MatrixGroupEvals, OpeningClaim, SinglePointQuotient};
 use crate::fri::{CommitPhaseData, FriError};
 use crate::utils::bit_reversed_coset_points;
 
@@ -114,16 +114,10 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     // 3. Construct DEEP quotient
     // ─────────────────────────────────────────────────────────────────────────
-    let openings_for_deep: Vec<QuotientOpening<'_, F, EF>> = zip(&quotients, &evals)
-        .map(|(q, e)| QuotientOpening {
-            quotient: q,
-            evals: e.clone(),
-        })
-        .collect();
-
     let deep_poly = DeepPoly::new(
         input_mmcs,
-        &openings_for_deep,
+        &quotients,
+        &evals,
         prover_data,
         challenger,
         config.alignment,
@@ -291,15 +285,8 @@ where
             )
             .map_err(|e| match e {
                 FriError::MmcsError(err, _) => PcsError::FriMmcsError(err),
-                FriError::EvaluationMismatch { .. }
-                | FriError::WrongCommitmentCount { .. }
-                | FriError::WrongBetaCount { .. }
-                | FriError::WrongOpeningCount { .. }
-                | FriError::WrongFinalPolyLen { .. } => {
-                    PcsError::FriFoldingError {
-                        query_index: index,
-                        round: 0, // Round info is lost in the generic FRI error
-                    }
+                FriError::InvalidProofStructure | FriError::EvaluationMismatch { .. } => {
+                    PcsError::FriFoldingError { query_index: index }
                 }
                 FriError::FinalPolyMismatch => PcsError::FinalPolyMismatch { query_index: index },
             })?;

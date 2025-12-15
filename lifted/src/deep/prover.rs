@@ -10,7 +10,8 @@ use p3_field::{
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 
-use super::{DeepQuery, QuotientOpening};
+use super::interpolate::SinglePointQuotient;
+use super::{DeepQuery, MatrixGroupEvals};
 
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
 ///
@@ -34,19 +35,27 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
     ///
     /// # Arguments
     /// - `c`: The MMCS used for commitment (extracts matrices from prover data)
-    /// - `openings`: Quotient data for each opening point, containing precomputed
-    ///   `1/(zⱼ - X)` and evaluations `fᵢ(zⱼʳ)`
+    /// - `quotients`: Precomputed `1/(zⱼ - X)` for each opening point
+    /// - `evals`: Evaluations `fᵢ(zⱼʳ)` at each opening point, grouped by commitment/matrix
     /// - `prover_data`: References to committed matrix data
     /// - `challenger`: Fiat-Shamir challenger for sampling batching challenges
     /// - `alignment`: Width for coefficient alignment (must match commitment)
+    ///
+    /// # Panics
+    /// Panics if `quotients` and `evals` have different lengths.
     pub fn new<Challenger: FieldChallenger<F>>(
         c: &Commit,
-        openings: &[QuotientOpening<'_, F, EF>],
+        quotients: &[SinglePointQuotient<F, EF>],
+        evals: &[Vec<MatrixGroupEvals<EF>>],
         prover_data: Vec<&'a Commit::ProverData<M>>,
         challenger: &mut Challenger,
         alignment: usize,
     ) -> Self {
-        assert!(!openings.is_empty(), "openings must not be empty");
+        assert_eq!(
+            quotients.len(),
+            evals.len(),
+            "quotients and evals must have the same length"
+        );
 
         let matrices_groups: Vec<Vec<&M>> = prover_data
             .iter()
@@ -57,7 +66,10 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
         let challenge_points: EF = challenger.sample_algebra_element();
 
         let w = F::Packing::WIDTH;
-        let n = openings[0].quotient.point_quotient().len();
+        let n = quotients
+            .first()
+            .map(|q| q.point_quotient().len())
+            .unwrap_or(0);
 
         let group_sizes: Vec<usize> = matrices_groups.iter().map(|g| g.len()).collect();
         let widths: Vec<usize> = matrices_groups
@@ -97,12 +109,12 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
         // Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) · 1/(zⱼ - X)
         let mut deep_poly = EF::zero_vec(n);
         let mut point_coeff = EF::ONE;
-        for opening in openings {
-            let point_quotient = opening.quotient.point_quotient();
+        for (quotient, point_evals) in zip(quotients, evals) {
+            let point_quotient = quotient.point_quotient();
             debug_assert_eq!(point_quotient.len(), n);
 
             let coeffs_flat = coeffs_columns.iter().flatten().copied();
-            let evals_flat = opening.evals.iter().flat_map(|g| g.iter_evals()).copied();
+            let evals_flat = point_evals.iter().flat_map(|g| g.iter_evals()).copied();
             let f_reduced_at_z: EF = dot_product(coeffs_flat, evals_flat);
             let f_reduced_at_z_packed = EF::ExtensionPacking::from(f_reduced_at_z);
             let point_coeff_ef = EF::ExtensionPacking::from(point_coeff);

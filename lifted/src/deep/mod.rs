@@ -36,7 +36,7 @@ use alloc::vec::Vec;
 
 pub use interpolate::SinglePointQuotient;
 use p3_commit::{BatchOpening, Mmcs};
-use p3_field::{ExtensionField, Field, TwoAdicField};
+use p3_field::Field;
 pub use verifier::DeepError;
 
 /// Query proof containing Merkle openings for DEEP quotient verification.
@@ -95,18 +95,6 @@ pub struct OpeningClaim<EF> {
     pub evals: Vec<MatrixGroupEvals<EF>>,
 }
 
-/// Prover's quotient data at a single opening point.
-///
-/// Bundles the precomputed quotient `1/(z - X)` with the polynomial evaluations
-/// at that point. Used to construct the DEEP quotient polynomial.
-pub struct QuotientOpening<'a, F: TwoAdicField, EF: ExtensionField<F>> {
-    /// Precomputed quotient data for point `z`.
-    pub quotient: &'a SinglePointQuotient<F, EF>,
-    /// Evaluations `f_i(z^r)` grouped by commitment, then matrix, then column.
-    /// The lift factor `r` varies per matrix based on its height.
-    pub evals: Vec<MatrixGroupEvals<EF>>,
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::vec;
@@ -126,7 +114,7 @@ mod tests {
 
     use super::prover::DeepPoly;
     use super::verifier::DeepOracle;
-    use super::{OpeningClaim, QuotientOpening, SinglePointQuotient};
+    use super::{OpeningClaim, SinglePointQuotient};
     use crate::merkle_tree::{Lifting, MerkleTreeLmcs};
     use crate::utils::bit_reversed_coset_points;
 
@@ -200,19 +188,12 @@ mod tests {
         let mut prover_challenger = Challenger::new(perm.clone());
         prover_challenger.observe(commitment);
 
-        let openings_for_prover: Vec<QuotientOpening<'_, F, EF>> = vec![
-            QuotientOpening {
-                quotient: &q1,
-                evals: evals1.clone(),
-            },
-            QuotientOpening {
-                quotient: &q2,
-                evals: evals2.clone(),
-            },
-        ];
+        let quotients = [q1, q2];
+        let evals_for_prover = [evals1.clone(), evals2.clone()];
         let deep_poly = DeepPoly::new(
             &lmcs,
-            &openings_for_prover,
+            &quotients,
+            &evals_for_prover,
             vec![&prover_data],
             &mut prover_challenger,
             alignment,

@@ -62,25 +62,22 @@ impl<F: Field, EF: ExtensionField<F>, InputMmcs: Mmcs<F>, FriMmcs: Mmcs<EF>>
 /// or mismatched polynomial evaluations.
 #[derive(Debug, Error)]
 pub enum PcsError<InputMmcsError, FriMmcsError> {
-    /// Input MMCS verification failed
-    #[error("Input MMCS error: {0:?}")]
+    /// Input MMCS verification failed.
+    #[error("input MMCS error: {0:?}")]
     InputMmcsError(InputMmcsError),
-    /// FRI MMCS verification failed
+    /// FRI MMCS verification failed.
     #[error("FRI MMCS error: {0:?}")]
     FriMmcsError(FriMmcsError),
-    /// DEEP quotient evaluation mismatch
-    #[error("DEEP quotient mismatch at query {query_index}")]
-    DeepQuotientMismatch { query_index: usize },
-    /// FRI folding verification failed
-    #[error("FRI folding error at query {query_index}, round {round}")]
-    FriFoldingError { query_index: usize, round: usize },
-    /// Final polynomial evaluation mismatch
-    #[error("Final polynomial mismatch at query {query_index}")]
+    /// FRI folding verification failed.
+    #[error("FRI folding error at query {query_index}")]
+    FriFoldingError { query_index: usize },
+    /// Final polynomial evaluation mismatch.
+    #[error("final polynomial mismatch at query {query_index}")]
     FinalPolyMismatch { query_index: usize },
-    /// Wrong number of queries in proof
-    #[error("Wrong number of queries: expected {expected}, got {actual}")]
+    /// Wrong number of queries in proof.
+    #[error("wrong number of queries: expected {expected}, got {actual}")]
     WrongNumQueries { expected: usize, actual: usize },
-    /// DEEP oracle construction failed
+    /// DEEP oracle construction failed.
     #[error("DEEP error: {0}")]
     DeepError(#[from] DeepError),
 }

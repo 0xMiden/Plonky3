@@ -7,8 +7,8 @@ use p3_commit::Mmcs;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks};
+use p3_lifted::deep::SinglePointQuotient;
 use p3_lifted::deep::prover::DeepPoly;
-use p3_lifted::deep::{QuotientOpening, SinglePointQuotient};
 use p3_lifted::merkle_tree::{Lifting, MerkleTreeLmcs};
 use p3_lifted::utils::bit_reversed_coset_points;
 use p3_matrix::Matrix;
@@ -167,24 +167,18 @@ where
     // Create a base challenger state (outside the benchmark loop)
     let base_challenger = DuplexChallenger::<F, Perm, WIDTH, RATE>::new(perm);
 
+    let quotients = [q1, q2];
+    let evals = [evals1, evals2];
+
     group.bench_function(format!("{field_name}/deep_poly_new"), |b| {
         b.iter(|| {
             // Clone challenger for each iteration to ensure consistent state
             let mut challenger = base_challenger.clone();
 
-            let openings: Vec<QuotientOpening<'_, F, EF>> = vec![
-                QuotientOpening {
-                    quotient: &q1,
-                    evals: evals1.clone(),
-                },
-                QuotientOpening {
-                    quotient: &q2,
-                    evals: evals2.clone(),
-                },
-            ];
             black_box(DeepPoly::new(
                 &lmcs,
-                &openings,
+                &quotients,
+                &evals,
                 prover_data.clone(),
                 &mut challenger,
                 alignment,

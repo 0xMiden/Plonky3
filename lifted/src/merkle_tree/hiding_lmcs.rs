@@ -100,8 +100,7 @@ where
             self.inner.lifting,
             inputs,
             salt,
-        )
-        .expect("tree construction failed: inputs must have valid power-of-two heights");
+        );
         let root = tree.root();
         (root, tree)
     }
@@ -144,10 +143,7 @@ where
 
         // Validate salt row
         if salt.len() != self.salt_elems {
-            return Err(LmcsError::WrongSalt {
-                expected: self.salt_elems,
-                actual: salt.len(),
-            });
+            return Err(LmcsError::WrongSalt);
         }
 
         let expected_root =

@@ -172,30 +172,19 @@ impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize>
         let final_height = dimensions.last().unwrap().height;
         // Verify that the leaf index is within the tree bounds
         if index >= final_height {
-            return Err(LmcsError::IndexOutOfBounds {
-                max_height: final_height,
-                index,
-            });
+            return Err(LmcsError::IndexOutOfBounds);
         }
 
         let expected_proof_len = log2_strict_usize(final_height);
         // Verify that the authentication path has the correct length for the tree height
         if proof.len() != expected_proof_len {
-            return Err(LmcsError::WrongProofLen {
-                expected: expected_proof_len,
-                actual: proof.len(),
-            });
+            return Err(LmcsError::WrongProofLen);
         }
 
         let mut state = [PD::Value::default(); WIDTH];
         for (idx, (row, dimension)) in zip(rows, dimensions).enumerate() {
-            let expected_width = dimension.width;
-            if row.len() != expected_width {
-                return Err(LmcsError::WrongWidth {
-                    matrix: idx,
-                    expected: expected_width,
-                    actual: row.len(),
-                });
+            if row.len() != dimension.width {
+                return Err(LmcsError::WrongWidth { matrix: idx });
             }
             self.sponge.absorb_into(&mut state, row.iter().copied());
         }
@@ -249,8 +238,7 @@ where
             self.lifting,
             inputs,
             None,
-        )
-        .expect("tree construction failed");
+        );
         let root = tree.root();
 
         (root, tree)
@@ -299,97 +287,27 @@ where
     }
 }
 
-/// Errors that can arise while building or verifying lifted Merkle commitments.
+/// Errors that can occur during Merkle verification.
 #[derive(Debug, Error)]
 pub enum LmcsError {
     /// Number of opened rows doesn't match number of committed matrices.
-    #[error("wrong batch size: number of opened rows doesn't match committed matrices")]
+    #[error("wrong batch size")]
     WrongBatchSize,
     /// Opened row width doesn't match the committed matrix width.
-    #[error("wrong width at matrix {matrix}: expected {expected}, got {actual}")]
-    WrongWidth {
-        /// Index of the matrix with mismatched width.
-        matrix: usize,
-        /// Expected width from commitment dimensions.
-        expected: usize,
-        /// Actual width of the opened row.
-        actual: usize,
-    },
+    #[error("wrong width at matrix {matrix}")]
+    WrongWidth { matrix: usize },
     /// Salt row length doesn't match expected width.
-    #[error("wrong salt width: expected {expected}, got {actual}")]
-    WrongSalt {
-        /// Expected salt width.
-        expected: usize,
-        /// Actual salt width provided.
-        actual: usize,
-    },
-    /// Matrix height doesn't match expected height.
-    #[error("wrong height: expected {expected}, got {actual}")]
-    WrongHeight {
-        /// Expected height.
-        expected: usize,
-        /// Actual height.
-        actual: usize,
-    },
+    #[error("wrong salt width")]
+    WrongSalt,
     /// Authentication path length doesn't match tree height.
-    #[error("wrong proof length: expected {expected}, got {actual}")]
-    WrongProofLen {
-        /// Expected proof length (log₂ of tree height).
-        expected: usize,
-        /// Actual proof length provided.
-        actual: usize,
-    },
+    #[error("wrong proof length")]
+    WrongProofLen,
     /// Query index exceeds tree height.
-    #[error("index {index} out of bounds (max height: {max_height})")]
-    IndexOutOfBounds {
-        /// Maximum valid index (tree height).
-        max_height: usize,
-        /// Requested index.
-        index: usize,
-    },
+    #[error("index out of bounds")]
+    IndexOutOfBounds,
     /// Recomputed root doesn't match the commitment.
-    #[error("root mismatch: recomputed root doesn't match commitment")]
+    #[error("root mismatch")]
     RootMismatch,
-    /// No matrices provided for commitment.
-    #[error("empty batch: no matrices provided for commitment")]
-    EmptyBatch,
-    /// Matrix height is not a power of two (required for lifting).
-    #[error("non-power-of-two height at matrix {matrix}: height {height}")]
-    NonPowerOfTwoHeight {
-        /// Index of the invalid matrix.
-        matrix: usize,
-        /// The non-power-of-two height.
-        height: usize,
-    },
-    /// Matrix height doesn't divide the final tree height.
-    #[error(
-        "height not divisor at matrix {matrix}: height {height} doesn't divide final height {final_height}"
-    )]
-    HeightNotDivisor {
-        /// Index of the invalid matrix.
-        matrix: usize,
-        /// Height of the matrix.
-        height: usize,
-        /// Final tree height (must be divisible by matrix height).
-        final_height: usize,
-    },
-    /// Matrix has zero height.
-    #[error("zero height matrix at index {matrix}")]
-    ZeroHeightMatrix {
-        /// Index of the zero-height matrix.
-        matrix: usize,
-    },
-    /// Matrices are not sorted by non-decreasing height.
-    #[error("unsorted by height: matrices must be sorted by non-decreasing height")]
-    UnsortedByHeight,
-    /// Salt matrix height doesn't match tree height.
-    #[error("salt height mismatch: expected {expected}, got {actual}")]
-    SaltHeightMismatch {
-        /// Expected salt height (equal to tree height).
-        expected: usize,
-        /// Actual salt matrix height.
-        actual: usize,
-    },
 }
 
 #[cfg(test)]

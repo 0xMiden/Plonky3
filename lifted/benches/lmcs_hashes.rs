@@ -91,8 +91,7 @@ fn benchmark_lmcs_hashes(c: &mut Criterion) {
                     let out = build_leaf_states_upsampled::<P, P, _, _, P2_WIDTH, P2_DIGEST>(
                         black_box(mats),
                         black_box(&sponge),
-                    )
-                    .unwrap();
+                    );
                     black_box(out)
                 });
             });
@@ -120,8 +119,7 @@ fn benchmark_lmcs_hashes(c: &mut Criterion) {
                     let out = build_leaf_states_upsampled::<F, u8, _, _, S_WIDTH, S_DIGEST>(
                         black_box(mats),
                         black_box(hash),
-                    )
-                    .unwrap();
+                    );
                     black_box(out)
                 });
             });
@@ -153,8 +151,7 @@ fn benchmark_lmcs_hashes(c: &mut Criterion) {
                         _,
                         K_WIDTH,
                         K_DIGEST,
-                    >(black_box(mats), black_box(hash))
-                    .unwrap();
+                    >(black_box(mats), black_box(hash));
                     black_box(out)
                 });
             });
