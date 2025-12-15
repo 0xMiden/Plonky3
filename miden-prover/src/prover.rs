@@ -171,47 +171,42 @@ where
     // begin aux trace generation (optional)
     let num_randomness = air.num_randomness();
 
-    let (
-        aux_trace_commit_opt,
-        _aux_trace_opt,
-        aux_trace_data_opt,
-        randomness,
-        aux_bus_boundary_values,
-    ) = if num_randomness > 0 {
-        let randomness: Vec<SC::Challenge> = (0..num_randomness)
-            .map(|_| challenger.sample_algebra_element())
-            .collect();
+    let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness, aux_finals) =
+        if num_randomness > 0 {
+            let randomness: Vec<SC::Challenge> = (0..num_randomness)
+                .map(|_| challenger.sample_algebra_element())
+                .collect();
 
-        // Ask config (VM) to build the aux trace if available.
-        let aux_trace_opt = air.build_aux_trace(trace, &randomness);
+            // Ask config (VM) to build the aux trace if available.
+            let aux_trace_opt = air.build_aux_trace(trace, &randomness);
 
-        // At the moment, it panics if the aux trace is not available.
-        // In a future PR, we will introduce LogUp based permutation as a fall back if aux trace is not available.
-        let aux_trace =
-            aux_trace_opt.expect("aux_challenges > 0 but no aux trace was provided or generated");
+            // At the moment, it panics if the aux trace is not available.
+            // In a future PR, we will introduce LogUp based permutation as a fall back if aux trace is not available.
+            let aux_trace = aux_trace_opt
+                .expect("aux_challenges > 0 but no aux trace was provided or generated");
 
-        let aux_bus_boundary_values_base = aux_trace
-            .last_row()
-            .expect("aux_challenges > 0 but aux trace was empty")
-            .into_iter()
-            .collect_vec();
-        let aux_bus_boundary_values = prover_row_to_ext(&aux_bus_boundary_values_base);
+            let aux_finals_base = aux_trace
+                .last_row()
+                .expect("aux_challenges > 0 but aux trace was empty")
+                .into_iter()
+                .collect_vec();
+            let aux_finals = prover_row_to_ext(&aux_finals_base);
 
-        let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
-            .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
+            let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
+                .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
 
-        challenger.observe(aux_trace_commit.clone());
+            challenger.observe(aux_trace_commit.clone());
 
-        (
-            Some(aux_trace_commit),
-            Some(aux_trace),
-            Some(aux_trace_data),
-            randomness,
-            aux_bus_boundary_values,
-        )
-    } else {
-        (None, None, None, vec![], vec![])
-    };
+            (
+                Some(aux_trace_commit),
+                Some(aux_trace),
+                Some(aux_trace_data),
+                randomness,
+                aux_finals,
+            )
+        } else {
+            (None, None, None, vec![], vec![])
+        };
 
     #[cfg(debug_assertions)]
     crate::check_constraints::<Val<SC>, SC::Challenge, _>(
@@ -276,7 +271,7 @@ where
         &trace_on_quotient_domain,
         aux_trace_on_quotient_domain.as_ref(),
         &randomness,
-        &aux_bus_boundary_values,
+        &aux_finals,
         preprocessed_on_quotient_domain.as_ref(),
         alpha,
         constraint_count,
@@ -412,7 +407,7 @@ where
         (None, None)
     };
     let aux_finals = if aux_trace_data_opt.is_some() {
-        Some(aux_bus_boundary_values)
+        Some(aux_finals)
     } else {
         None
     };
@@ -426,12 +421,12 @@ where
         preprocessed_next,
         quotient_chunks,
         random,
-        aux_finals,
     };
     Proof {
         commitments,
         opened_values,
         opening_proof,
+        aux_finals,
         degree_bits: log_ext_degree,
     }
 }

@@ -1,6 +1,6 @@
 use core::borrow::Borrow;
 
-use miden_air::{MidenAir, MidenAirBuilder};
+use miden_air::{BusType, MidenAir, MidenAirBuilder};
 use miden_prover::{StarkConfig, prove, verify};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
@@ -46,6 +46,11 @@ impl<F: Field, EF: ExtensionField<F>> MidenAir<F, EF> for FibPermAir<F, EF> {
 
     fn num_randomness(&self) -> usize {
         1
+    }
+
+    /// Types of buses
+    fn bus_types(&self) -> Vec<BusType> {
+        vec![BusType::Logup, BusType::Logup, BusType::Logup]
     }
 
     fn with_aux_builder<Builder>(&mut self, builder: Builder)

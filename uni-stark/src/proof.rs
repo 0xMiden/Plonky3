@@ -20,6 +20,7 @@ pub struct Proof<SC: StarkGenericConfig> {
     pub commitments: Commitments<Com<SC>>,
     pub opened_values: OpenedValues<SC::Challenge>,
     pub opening_proof: PcsProof<SC>,
+    pub aux_finals: Option<Vec<SC::Challenge>>,
     pub degree_bits: usize,
 }
 
@@ -41,5 +42,4 @@ pub struct OpenedValues<Challenge> {
     pub preprocessed_next: Option<Vec<Challenge>>, // may not always be necessary
     pub quotient_chunks: Vec<Vec<Challenge>>,
     pub random: Option<Vec<Challenge>>,
-    pub aux_finals: Option<Vec<Challenge>>,
 }

@@ -238,6 +238,7 @@ where
         commitments,
         opened_values,
         opening_proof,
+        aux_finals,
         degree_bits,
     } = proof;
 
@@ -313,12 +314,12 @@ where
         // Check aux trace shape
         && if num_randomness > 0 {
             let aux_width_base = aux_width * SC::Challenge::DIMENSION;
-            match (&opened_values.aux_trace_local, &opened_values.aux_trace_next, &opened_values.aux_finals) {
+            match (&opened_values.aux_trace_local, &opened_values.aux_trace_next, aux_finals) {
                 (Some(l), Some(n), Some(f)) => l.len() == aux_width_base && n.len() == aux_width_base && f.len() == aux_width && bus_types.len() == aux_width,
                 _ => false,
             }
         } else {
-            opened_values.aux_trace_local.is_none() && opened_values.aux_trace_next.is_none() && opened_values.aux_finals.is_none()
+            opened_values.aux_trace_local.is_none() && opened_values.aux_trace_next.is_none() && aux_finals.is_none()
         };
     if !valid_shape {
         return Err(VerificationError::InvalidProofShape);
@@ -452,10 +453,7 @@ where
         zeta,
     );
 
-    for (bus_type, aux_final) in bus_types
-        .iter()
-        .zip(opened_values.aux_finals.as_ref().unwrap_or(&vec![]))
-    {
+    for (bus_type, aux_final) in bus_types.iter().zip(aux_finals.as_ref().unwrap_or(&vec![])) {
         // For now, we expect the buses to be empty
         // We should compute the expected final value based on variable-length public inputs in the future
         let expected_final = match bus_type {
@@ -476,7 +474,7 @@ where
         opened_values.aux_trace_local.as_deref(),
         opened_values.aux_trace_next.as_deref(),
         &randomness,
-        opened_values.aux_finals.as_ref().unwrap_or(&vec![]),
+        aux_finals.as_ref().unwrap_or(&vec![]),
         public_values,
         init_trace_domain,
         zeta,

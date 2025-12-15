@@ -412,12 +412,12 @@ where
         preprocessed_next,
         quotient_chunks,
         random,
-        aux_finals: None,
     };
     Proof {
         commitments,
         opened_values,
         opening_proof,
+        aux_finals: None,
         degree_bits: log_ext_degree,
     }
 }

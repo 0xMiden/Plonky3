@@ -250,7 +250,6 @@ where
             preprocessed_next: None,
             quotient_chunks: qcs,
             random: None, // ZK not supported in batch-stark yet
-            aux_finals: None,
         });
     }
 
