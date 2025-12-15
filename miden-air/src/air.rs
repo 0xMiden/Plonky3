@@ -1,5 +1,12 @@
 use crate::{MidenAirBuilder, RowMajorMatrix};
 
+pub enum BusType {
+    /// A multiset bus
+    Multiset,
+    /// A logup bus
+    Logup,
+}
+
 /// Super trait for all AIR definitions in the Miden VM ecosystem.
 ///
 /// This trait contains all methods from `BaseAir`, `BaseAirWithPublicValues`,
@@ -57,6 +64,11 @@ pub trait MidenAir<F, EF>: Sync {
     /// Number of columns (in based field) that is required for aux trace
     fn aux_width(&self) -> usize {
         0
+    }
+
+    /// Types of buses
+    fn bus_types(&self) -> Vec<BusType> {
+        vec![]
     }
 
     /// Build an aux trace (EF-based) given the main trace and EF challenges.
