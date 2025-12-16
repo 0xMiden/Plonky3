@@ -105,28 +105,6 @@ impl<
     }
 }
 
-impl<
-    F: PrimeCharacteristicRing + Sync + Field,
-    EF: ExtensionField<F>,
-    LinearLayers: Sync,
-    const WIDTH: usize,
-    const SBOX_DEGREE: u64,
-    const SBOX_REGISTERS: usize,
-    const HALF_FULL_ROUNDS: usize,
-    const PARTIAL_ROUNDS: usize,
-> BaseAirWithAuxTrace<F, EF>
-    for Poseidon2Air<
-        F,
-        LinearLayers,
-        WIDTH,
-        SBOX_DEGREE,
-        SBOX_REGISTERS,
-        HALF_FULL_ROUNDS,
-        PARTIAL_ROUNDS,
-    >
-{
-}
-
 pub(crate) fn eval<
     AB: AirBuilder,
     LinearLayers: GenericPoseidon2LinearLayers<WIDTH>,
