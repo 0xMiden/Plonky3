@@ -65,15 +65,14 @@ where
         .iter()
         .zip(public_values.iter())
         .map(|(air, pv)| {
-            let aux_width_base = air.aux_width();
-            let num_randomness_base = air.num_randomness() * SC::Challenge::DIMENSION;
+            // batch-stark doesn't support aux traces yet, so pass 0 for aux_width and num_randomness
             let lqd = get_log_quotient_degree::<Val<SC>, A>(
                 air,
                 0,
                 pv.len(),
                 config.is_zk(),
-                aux_width_base,
-                num_randomness_base,
+                0, // aux_width: batch-stark doesn't support aux traces
+                0, // num_randomness: batch-stark doesn't support randomness
             );
             let qd = 1 << (lqd + config.is_zk());
             (lqd, qd)
@@ -212,9 +211,6 @@ where
             &opened_values.instances[i].trace_next,
             opened_values.instances[i].preprocessed_local.as_deref(),
             opened_values.instances[i].preprocessed_next.as_deref(),
-            None,
-            None,
-            &[],
             &public_values[i],
             init_trace_domain,
             zeta,

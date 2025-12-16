@@ -416,8 +416,6 @@ fn test_invalid_trace_width_rejected() {
                 trace_next: valid_proof.opened_values.instances[0].trace_next.clone(),
                 preprocessed_local: None,
                 preprocessed_next: None,
-                aux_trace_local: None,
-                aux_trace_next: None,
                 quotient_chunks: valid_proof.opened_values.instances[0]
                     .quotient_chunks
                     .clone(),
