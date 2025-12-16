@@ -228,6 +228,7 @@ pub fn verify<SC, A>(
     air: &A,
     proof: &Proof<SC>,
     public_values: &[Val<SC>],
+    var_length_public_inputs: &[&[&[Val<SC>]]],
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
     SC: StarkGenericConfig,
@@ -315,7 +316,9 @@ where
         && if num_randomness > 0 {
             let aux_width_base = aux_width * SC::Challenge::DIMENSION;
             match (&opened_values.aux_trace_local, &opened_values.aux_trace_next, aux_finals) {
-                (Some(l), Some(n), Some(f)) => l.len() == aux_width_base && n.len() == aux_width_base && f.len() == aux_width && bus_types.len() == aux_width,
+                (Some(l), Some(n), Some(f)) => l.len() == aux_width_base
+                    && n.len() == aux_width_base
+                    && f.len() == aux_width,
                 _ => false,
             }
         } else {
@@ -461,13 +464,26 @@ where
         zeta,
     );
 
-    for (bus_type, aux_final) in bus_types.iter().zip(aux_finals.as_ref().unwrap_or(&vec![])) {
-        // For now, we expect the buses to be empty
-        // We should compute the expected final value based on variable-length public inputs in the future
+    // Verify the aux trace final values match the expected values if the aux trace contains buses (one bus per aux column)
+    for (idx, (bus_type, aux_final)) in bus_types
+        .iter()
+        .zip(aux_finals.as_ref().unwrap_or(&vec![]))
+        .enumerate()
+    {
+        let public_inputs_for_bus = *var_length_public_inputs
+            .get(idx)
+            .ok_or(VerificationError::InvalidProofShape)?;
         let expected_final = match bus_type {
-            BusType::Multiset => SC::Challenge::ONE,
-            BusType::Logup => SC::Challenge::ZERO,
+            BusType::Multiset => bus_multiset_boundary_varlen::<_, SC>(
+                &randomness,
+                public_inputs_for_bus.iter().copied(),
+            ),
+            BusType::Logup => bus_logup_boundary_varlen::<_, SC>(
+                &randomness,
+                public_inputs_for_bus.iter().copied(),
+            ),
         };
+
         if *aux_final != expected_final {
             return Err(VerificationError::InvalidBusBoundaryValues);
         }
@@ -491,6 +507,49 @@ where
     )?;
 
     Ok(())
+}
+
+/// Computes the final value for a multiset bus given variable-length public inputs.
+pub fn bus_multiset_boundary_varlen<
+    'a,
+    I: IntoIterator<Item = &'a [Val<SC>]>,
+    SC: StarkGenericConfig,
+>(
+    randomness: &[SC::Challenge],
+    public_inputs: I,
+) -> SC::Challenge {
+    let mut bus_p_last = SC::Challenge::ONE;
+    let rand = randomness;
+    for row in public_inputs {
+        let mut p_last = rand[0];
+        for (c, p_i) in row.iter().enumerate() {
+            p_last += SC::Challenge::from(*p_i) * rand[c + 1];
+        }
+        bus_p_last *= p_last;
+    }
+    bus_p_last
+}
+
+/// Computes the final value for a logup bus boundary constraint given variable-length public inputs.
+pub fn bus_logup_boundary_varlen<
+    'a,
+    I: IntoIterator<Item = &'a [Val<SC>]>,
+    SC: StarkGenericConfig,
+>(
+    randomness: &[SC::Challenge],
+    public_inputs: I,
+) -> SC::Challenge {
+    let mut bus_q_last = SC::Challenge::ZERO;
+    let rand = randomness;
+    for row in public_inputs {
+        let mut q_last = rand[0];
+        for (c, p_i) in row.iter().enumerate() {
+            let p_i = *p_i;
+            q_last += SC::Challenge::from(p_i) * rand[c + 1];
+        }
+        bus_q_last += q_last.inverse();
+    }
+    bus_q_last
 }
 
 #[derive(Debug)]

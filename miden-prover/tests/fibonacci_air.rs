@@ -146,11 +146,12 @@ fn test_fibonacci_impl(a: u64, b: u64, n: usize, x: u64, log_final_poly_len: usi
         Goldilocks::from_u64(b),
         Goldilocks::from_u64(x),
     ];
+    let var_len_pis = vec![];
 
     let air = FibonacciAir::new();
 
     let proof = prove(&config, &air, &trace, &pis);
-    verify(&config, &air, &proof, &pis).expect("verification failed");
+    verify(&config, &air, &proof, &pis, &var_len_pis).expect("verification failed");
 }
 
 #[test]
@@ -202,8 +203,9 @@ fn test_incorrect_fibonacci_value() {
         Goldilocks::ONE,
         Goldilocks::from_u64(999), // incorrect result
     ];
+    let var_len_pis = vec![];
 
     let air = FibonacciAir::new();
     let proof = prove(&config, &air, &trace, &pis);
-    verify(&config, &air, &proof, &pis).expect("verification failed");
+    verify(&config, &air, &proof, &pis, &var_len_pis).expect("verification failed");
 }

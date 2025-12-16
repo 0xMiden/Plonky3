@@ -186,11 +186,12 @@ fn test_fibonacci_periodic_impl(a: u64, b: u64, n: usize, x: u64, log_final_poly
         Goldilocks::from_u64(b),
         Goldilocks::from_u64(x),
     ];
+    let var_len_pis = vec![];
 
     let air = FibonacciPeriodicAir::new();
 
     let proof = prove(&config, &air, &trace, &pis);
-    verify(&config, &air, &proof, &pis).expect("verification failed");
+    verify(&config, &air, &proof, &pis, &var_len_pis).expect("verification failed");
 }
 
 #[test]
@@ -252,10 +253,11 @@ fn test_fibonacci_periodic_wrong_selector() {
     let challenger = Challenger::new(perm);
     let config = MyConfig::new(pcs, challenger);
     let pis = vec![Goldilocks::ZERO, Goldilocks::ONE, Goldilocks::from_u32(21)];
+    let var_len_pis = vec![];
 
     let air = FibonacciPeriodicAir::new();
 
     // This should fail because selector[1] = 0, but periodic[1] = 1
     let proof = prove(&config, &air, &trace, &pis);
-    verify(&config, &air, &proof, &pis).expect("verification failed");
+    verify(&config, &air, &proof, &pis, &var_len_pis).expect("verification failed");
 }
