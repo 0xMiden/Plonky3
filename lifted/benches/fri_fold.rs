@@ -1,11 +1,22 @@
+//! FRI folding benchmarks for lifted implementation.
+//!
+//! Benchmarks FRI fold operations at different arities (2, 4) and packing modes
+//! (scalar vs packed/SIMD).
+//!
+//! Run with:
+//! ```bash
+//! RUSTFLAGS="-Ctarget-cpu=native" cargo bench --bench fri_fold \
+//!     --features bench-babybear,bench-poseidon2
+//!
+//! # With parallelism
+//! RUSTFLAGS="-Ctarget-cpu=native" cargo bench --bench fri_fold \
+//!     --features bench-babybear,bench-poseidon2,parallel
+//! ```
+
 use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use p3_baby_bear::BabyBear;
-use p3_field::extension::BinomialExtensionField;
-use p3_field::{ExtensionField, TwoAdicField};
-use p3_goldilocks::Goldilocks;
 use p3_lifted::fri::fold::{FriFold, FriFold2, FriFold4};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -13,26 +24,25 @@ use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
+#[path = "bench_utils.rs"]
+mod bench_utils;
+use bench_utils::{EF, F, FIELD_NAME, LOG_HEIGHTS, PARALLEL_STR};
+
 /// Target number of rows after all folding rounds.
 const TARGET: usize = 8;
 
-const PARALLEL_STR: &str = if cfg!(feature = "parallel") {
-    "parallel"
-} else {
-    "single"
-};
+// =============================================================================
+// Lifted FRI fold benchmarks
+// =============================================================================
 
-fn bench_fold_impl<F, EF, FF: FriFold<ARITY>, const ARITY: usize>(
+fn bench_lifted_fold<FF: FriFold<ARITY>, const ARITY: usize>(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    field_name: &str,
-    packed: bool,
     n_elems: usize,
+    packed: bool,
 ) where
-    F: TwoAdicField,
-    EF: ExtensionField<F>,
     StandardUniform: Distribution<F> + Distribution<EF>,
 {
-    let rng = &mut SmallRng::seed_from_u64(2025);
+    let rng = &mut SmallRng::seed_from_u64(bench_utils::BENCH_SEED);
 
     let n_rows = n_elems / ARITY;
     let s_invs: Vec<F> = rng.sample_iter(StandardUniform).take(n_rows).collect();
@@ -41,9 +51,7 @@ fn bench_fold_impl<F, EF, FF: FriFold<ARITY>, const ARITY: usize>(
     let input = RowMajorMatrix::new(values, ARITY);
 
     let packed_str = if packed { "packed" } else { "scalar" };
-
-    // Use BenchmarkId::from_parameter for better comparison charts
-    let id = BenchmarkId::from_parameter(format!("{}/{}/{}", field_name, ARITY, packed_str));
+    let id = BenchmarkId::from_parameter(format!("lifted/{}/{}", ARITY, packed_str));
 
     group.bench_with_input(id, &n_elems, |b, &_n| {
         b.iter(|| {
@@ -72,9 +80,14 @@ fn bench_fold_impl<F, EF, FF: FriFold<ARITY>, const ARITY: usize>(
     });
 }
 
-fn bench_fold_matrix(c: &mut Criterion) {
-    for &n_elems in &[1 << 16, 1 << 18, 1 << 20] {
-        let group_name = format!("FRI_Fold/{}/{}", PARALLEL_STR, n_elems);
+// =============================================================================
+// Main benchmark function
+// =============================================================================
+
+fn bench_fri_fold(c: &mut Criterion) {
+    for &log_height in LOG_HEIGHTS {
+        let n_elems = 1usize << log_height;
+        let group_name = format!("FRI_Fold/{}/{}/{}", n_elems, FIELD_NAME, PARALLEL_STR);
         let mut group = c.benchmark_group(&group_name);
 
         group.sample_size(10);
@@ -82,40 +95,13 @@ fn bench_fold_matrix(c: &mut Criterion) {
         group.warm_up_time(Duration::from_secs(3));
         group.throughput(Throughput::Elements(n_elems as u64));
 
-        // BabyBear with degree-4 extension
-        for &arity in &[2, 4] {
-            for packed in [false, true] {
-                if arity == 2 {
-                    bench_fold_impl::<BabyBear, BinomialExtensionField<BabyBear, 4>, FriFold2, 2>(
-                        &mut group, "babybear", packed, n_elems,
-                    );
-                } else {
-                    bench_fold_impl::<BabyBear, BinomialExtensionField<BabyBear, 4>, FriFold4, 4>(
-                        &mut group, "babybear", packed, n_elems,
-                    );
-                }
-            }
-        }
-        // Goldilocks with degree-2 extension
-        for &arity in &[2, 4] {
-            for packed in [false, true] {
-                if arity == 2 {
-                    bench_fold_impl::<Goldilocks, BinomialExtensionField<Goldilocks, 2>, FriFold2, 2>(
-                        &mut group,
-                        "goldilocks",
-                        packed,
-                        n_elems,
-                    );
-                } else {
-                    bench_fold_impl::<Goldilocks, BinomialExtensionField<Goldilocks, 2>, FriFold4, 4>(
-                        &mut group,
-                        "goldilocks",
-                        packed,
-                        n_elems,
-                    );
-                }
-            }
-        }
+        // Lifted arity-2: scalar and packed
+        bench_lifted_fold::<FriFold2, 2>(&mut group, n_elems, false);
+        bench_lifted_fold::<FriFold2, 2>(&mut group, n_elems, true);
+
+        // Lifted arity-4: scalar and packed
+        bench_lifted_fold::<FriFold4, 4>(&mut group, n_elems, false);
+        bench_lifted_fold::<FriFold4, 4>(&mut group, n_elems, true);
 
         group.finish();
     }
@@ -128,6 +114,6 @@ fn setup_criterion() -> Criterion {
 criterion_group! {
     name = benches;
     config = setup_criterion();
-    targets = bench_fold_matrix
+    targets = bench_fri_fold
 }
 criterion_main!(benches);

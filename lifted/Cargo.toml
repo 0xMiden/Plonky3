@@ -20,33 +20,34 @@ p3-symmetric.workspace = true
 p3-util.workspace = true
 
 rand.workspace = true
-thiserror.workspace = true
 serde = { workspace = true, features = ["alloc"] }
+thiserror.workspace = true
 
 [dev-dependencies]
 p3-baby-bear.workspace = true
+p3-fri.workspace = true
 p3-goldilocks.workspace = true
 p3-interpolation.workspace = true
 p3-keccak.workspace = true
 p3-merkle-tree.workspace = true
-p3-sha256.workspace = true
 
 criterion.workspace = true
 rand.workspace = true
 
 [features]
+default = ["bench-goldilocks", "bench-poseidon2"]
 parallel = ["p3-maybe-rayon/parallel"]
 
-[[bench]]
-name = "lifted"
-harness = false
+# Benchmark field selection (mutually exclusive)
+bench-babybear = []
+bench-goldilocks = []
+
+# Benchmark hash selection (mutually exclusive)
+bench-poseidon2 = []
+bench-keccak = []
 
 [[bench]]
-name = "lmcs_vs_mmcs"
-harness = false
-
-[[bench]]
-name = "lmcs_hashes"
+name = "fri_fold"
 harness = false
 
 [[bench]]
@@ -54,11 +55,15 @@ name = "deep_quotient"
 harness = false
 
 [[bench]]
-name = "fri_fold_row"
+name = "merkle_commit"
 harness = false
 
 [[bench]]
-name = "merkle_commit"
+name = "lmcs_vs_mmcs"
+harness = false
+
+[[bench]]
+name = "pcs"
 harness = false
 
 [lints]
