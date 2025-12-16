@@ -77,6 +77,27 @@ itertools = { version = "0.14.0", default-features = false, features = [
 
 miden-air = { path = "miden-air", version = "0.3.0" }
 num-bigint = { version = "0.4.3", default-features = false }
+paste = "1.0.15"
+postcard = { version = "1.0.0", default-features = false }
+proptest = "1.8"
+rand = { version = "0.9.0", default-features = false, features = ["small_rng"] }
+rand_xoshiro = "0.7.0"
+rayon = "1.11.0"
+serde = { version = "1.0", default-features = false }
+serde_json = "1.0.113"
+sha2 = { version = "0.10.8", default-features = false }
+sha3 = { version = "0.10.8", default-features = false }
+spin = "0.10.0"
+tiny-keccak = "2.0.2"
+tracing = { version = "0.1.37", default-features = false, features = [
+    "attributes",
+] }
+tracing-forest = "0.3.0"
+tracing-subscriber = { version = "0.3.17", default-features = false, features = [
+    "alloc",
+] }
+transpose = "0.2.3"
+winter-utils = { version = "0.13", default-features = false }
 
 # Local dependencies
 p3-air = { path = "air", version = "0.3.0" }
@@ -113,27 +134,7 @@ p3-sha256 = { path = "sha256", version = "0.3.0" }
 p3-symmetric = { path = "symmetric", version = "0.3.0" }
 p3-uni-stark = { path = "uni-stark", version = "0.3.0" }
 p3-util = { path = "util", version = "0.3.0" }
-paste = "1.0.15"
-postcard = { version = "1.0.0", default-features = false }
-proptest = "1.8"
-rand = { version = "0.9.0", default-features = false, features = ["small_rng"] }
-rand_xoshiro = "0.7.0"
-rayon = "1.11.0"
-serde = { version = "1.0", default-features = false }
-serde_json = "1.0.113"
-sha2 = { version = "0.10.8", default-features = false }
-sha3 = { version = "0.10.8", default-features = false }
-spin = "0.10.0"
-thiserror = { version = "2.0", default-features = false }
-tiny-keccak = "2.0.2"
-tracing = { version = "0.1.37", default-features = false, features = [
-    "attributes",
-] }
-tracing-forest = "0.3.0"
-tracing-subscriber = { version = "0.3.17", default-features = false, features = [
-    "alloc",
-] }
-transpose = "0.2.3"
+
 
 [workspace.package]
 # General description field used for the sub-crates that are currently missing a description.
