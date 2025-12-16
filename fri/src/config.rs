@@ -127,12 +127,24 @@ pub const fn create_benchmark_fri_params_zk<Mmcs>(mmcs: Mmcs) -> FriParameters<M
     }
 }
 
-/// Creates a set of `FriParameters` suitable for miden VM constraints proving.
-pub const fn create_miden_fri_params<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> {
+/// Creates a set of `FriParameters` for 96-bit conjectured security suitable for miden VM constraints proving in non-recursive context.
+pub const fn create_regular_miden_fri_params<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> {
+    FriParameters {
+        log_blowup: 3,
+        log_final_poly_len: 8,
+        num_queries: 27,
+        proof_of_work_bits: 16,
+        mmcs,
+        log_folding_factor: 3,
+    }
+}
+
+/// Creates a set of `FriParameters` for 96-bit conjectured security suitable for miden VM constraints proving in recursive context.
+pub const fn create_recursive_miden_fri_params<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> {
     FriParameters {
         log_blowup: 3,
         log_final_poly_len: 7,
-        num_queries: 100,
+        num_queries: 27,
         proof_of_work_bits: 16,
         mmcs,
         log_folding_factor: 2,
