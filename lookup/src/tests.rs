@@ -1,4 +1,4 @@
-use alloc::rc::Rc;
+use alloc::sync::Arc;
 use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -27,8 +27,8 @@ type F = BabyBear;
 type EF = BinomialExtensionField<F, 4>;
 
 fn create_symbolic_with_degree(degree: usize) -> SymbolicExpression<F> {
-    let x = Rc::new(SymbolicExpression::Constant(F::ONE));
-    let y = Rc::new(SymbolicExpression::Constant(F::TWO));
+    let x = Arc::new(SymbolicExpression::Constant(F::ONE));
+    let y = Arc::new(SymbolicExpression::Constant(F::TWO));
     SymbolicExpression::Mul {
         x,
         y,

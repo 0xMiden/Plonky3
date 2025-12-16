@@ -233,7 +233,7 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
         miden_prover::generate_logup_trace::<Challenge, _>(main, &challenges[0])
     });
 
-    let proof = prove(&config, &air, &trace, &pis);
+    let proof = prove(&config, &air, trace, &pis);
     verify(&config, &air, &proof, &pis).expect("verification failed");
 }
 
@@ -285,7 +285,7 @@ fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
         miden_prover::generate_logup_trace::<Challenge5, _>(main, &challenges[0])
     });
 
-    let proof = prove(&config, &air, &trace, &pis);
+    let proof = prove(&config, &air, trace, &pis);
     verify(&config, &air, &proof, &pis).expect("verification failed");
 }
 
@@ -316,6 +316,6 @@ fn test_incorrect_public_value() {
     air.with_aux_builder(|main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
         miden_prover::generate_logup_trace::<Challenge, _>(main, &challenges[0])
     });
-    let proof = prove(&config, &air, &trace, &pis);
+    let proof = prove(&config, &air, trace, &pis);
     verify(&config, &air, &proof, &pis).expect("verification failed");
 }

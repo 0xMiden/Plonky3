@@ -149,7 +149,7 @@ fn test_fibonacci_impl(a: u64, b: u64, n: usize, x: u64, log_final_poly_len: usi
 
     let air = FibonacciAir::new();
 
-    let proof = prove(&config, &air, &trace, &pis);
+    let proof = prove(&config, &air, trace, &pis);
     verify(&config, &air, &proof, &pis).expect("verification failed");
 }
 
@@ -204,6 +204,6 @@ fn test_incorrect_fibonacci_value() {
     ];
 
     let air = FibonacciAir::new();
-    let proof = prove(&config, &air, &trace, &pis);
+    let proof = prove(&config, &air, trace, &pis);
     verify(&config, &air, &proof, &pis).expect("verification failed");
 }
