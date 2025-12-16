@@ -1,8 +1,8 @@
 use core::borrow::Borrow;
 use core::marker::PhantomData;
 
-use p3_air::{Air, AirBuilder, BaseAir};
-use p3_field::{PrimeCharacteristicRing, PrimeField};
+use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithAuxTrace};
+use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_poseidon2::GenericPoseidon2LinearLayers;
