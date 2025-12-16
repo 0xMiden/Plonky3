@@ -196,6 +196,9 @@ where
                 .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
 
             challenger.observe(aux_trace_commit.clone());
+            for aux_final in &aux_finals {
+                challenger.observe_algebra_element(*aux_final);
+            }
 
             (
                 Some(aux_trace_commit),

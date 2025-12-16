@@ -334,6 +334,14 @@ where
         } else {
             return Err(VerificationError::InvalidProofShape);
         }
+        if let Some(aux_finals) = &aux_finals {
+            for aux_final in aux_finals {
+                challenger.observe_algebra_element(*aux_final);
+            }
+        } else {
+            return Err(VerificationError::InvalidProofShape);
+        }
+
         randomness
     } else {
         // No aux trace expected
