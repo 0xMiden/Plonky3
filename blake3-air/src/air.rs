@@ -3,8 +3,8 @@ use core::borrow::Borrow;
 
 use itertools::izip;
 use p3_air::utils::{add2, add3, pack_bits_le, xor_32_shift};
-use p3_air::{Air, AirBuilder, BaseAir};
-use p3_field::{PrimeCharacteristicRing, PrimeField64};
+use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithAuxTrace};
+use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField64};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use rand::rngs::SmallRng;
@@ -445,3 +445,7 @@ impl<AB: AirBuilder> Air<AB> for Blake3Air {
         }
     }
 }
+
+
+// Empty implementation of BaseAirWithAuxTrace since Blake3Air has no auxiliary trace
+impl<F: Field, EF: ExtensionField<F>> BaseAirWithAuxTrace<F, EF> for Blake3Air {}

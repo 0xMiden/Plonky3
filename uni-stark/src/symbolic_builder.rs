@@ -28,6 +28,22 @@ where
     get_log_quotient_degree_extension(air, preprocessed_width, num_public_values, 0, 0, is_zk)
 }
 
+/// Alias for backward compatibility - computes log quotient degree
+pub fn get_log_quotient_degree<F, A>(
+    air: &A,
+    preprocessed_width: usize,
+    num_public_values: usize,
+    is_zk: usize,
+    aux_width: usize,
+    num_randomness: usize,
+) -> usize
+where
+    F: Field,
+    A: Air<SymbolicAirBuilder<F>>,
+{
+    get_log_quotient_degree_extension(air, preprocessed_width, num_public_values, aux_width, num_randomness, is_zk)
+}
+
 #[instrument(name = "infer log of base and extension constraint degree", skip_all)]
 pub fn get_log_quotient_degree_extension<F, EF, A>(
     air: &A,
@@ -251,6 +267,11 @@ impl<F: Field, EF: ExtensionField<F>> SymbolicAirBuilder<F, EF> {
 
     pub fn base_constraints(&self) -> Vec<SymbolicExpression<F>> {
         self.base_constraints.clone()
+    }
+
+    /// Alias for base_constraints() for backward compatibility
+    pub fn constraints(self) -> Vec<SymbolicExpression<F>> {
+        self.base_constraints
     }
 }
 

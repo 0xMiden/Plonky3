@@ -1,8 +1,8 @@
 use core::array;
 use core::borrow::Borrow;
 
-use p3_air::{Air, AirBuilder, BaseAir};
-use p3_field::{PrimeCharacteristicRing, PrimeField64};
+use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithAuxTrace};
+use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField64};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use rand::rngs::SmallRng;
@@ -209,3 +209,7 @@ impl<AB: AirBuilder> Air<AB> for KeccakAir {
         }
     }
 }
+
+
+// Empty implementation of BaseAirWithAuxTrace since KeccakAir has no auxiliary trace
+impl<F: Field, EF: ExtensionField<F>> BaseAirWithAuxTrace<F, EF> for KeccakAir {}
