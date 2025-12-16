@@ -225,6 +225,8 @@ impl<F: Field> Algebra<F> for SymbolicExpression<F> {}
 
 impl<F: Field> Algebra<SymbolicVariable<F>> for SymbolicExpression<F> {}
 
+impl<F: Field, EF: ExtensionField<F>> Algebra<SymbolicExpression<F>> for SymbolicExpression<EF> {}
+
 // Note we cannot implement PermutationMonomial due to the degree_multiple part which makes
 // operations non invertible.
 impl<F: Field + InjectiveMonomial<N>, const N: u64> InjectiveMonomial<N> for SymbolicExpression<F> {}
