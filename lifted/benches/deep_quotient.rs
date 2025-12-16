@@ -28,7 +28,7 @@ use p3_challenger::DuplexChallenger;
 use p3_commit::Mmcs;
 use p3_lifted::deep::SinglePointQuotient;
 use p3_lifted::deep::prover::DeepPoly;
-use p3_lifted::merkle_tree::{Lifting, MerkleTreeLmcs};
+use p3_lifted::merkle_tree::MerkleTreeLmcs;
 use p3_lifted::utils::bit_reversed_coset_points;
 use p3_symmetric::CryptographicPermutation;
 use rand::distr::StandardUniform;
@@ -66,7 +66,6 @@ fn bench_deep_quotient(c: &mut Criterion) {
         let lmcs = MerkleTreeLmcs::<P, P, _, _, { hash::WIDTH }, { hash::DIGEST }>::new(
             sponge.clone(),
             compress.clone(),
-            Lifting::Upsample,
         );
 
         let committed: Vec<_> = matrix_groups

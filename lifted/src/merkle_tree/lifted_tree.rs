@@ -7,9 +7,8 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 use p3_symmetric::{Hash, PseudoCompressionFunction, StatefulHasher};
+use p3_util::log2_strict_usize;
 use serde::{Deserialize, Serialize};
-
-use crate::merkle_tree::Lifting;
 
 /// A uniform binary Merkle tree whose leaves are constructed from matrices with power-of-two heights.
 ///
@@ -22,20 +21,19 @@ use crate::merkle_tree::Lifting;
 /// - **Matrices must be sorted by height** (shortest to tallest)
 /// - Uses incremental hashing via [`StatefulHasher`] instead of one-shot hashing
 ///
-/// The per-leaf row composition follows the chosen [`Lifting`]: each matrix `M_i` is virtually
-/// extended to height `H` (width unchanged) via the index map described in [`Lifting`]. For leaf
-/// row `r`, the sponge absorbs the `r`-th row from each lifted matrix in sequence (with
-/// per-matrix zero padding to a multiple of the hasher's padding width for
+/// The per-leaf row composition uses nearest-neighbor upsampling: each matrix `M_i` is virtually
+/// extended to height `N` (width unchanged) by repeating each row `r_i = N / n_i` times
+/// contiguously. For leaf index `j`, the sponge absorbs the `j`-th row from each lifted matrix
+/// in sequence (with per-matrix zero padding to a multiple of the hasher's padding width for
 /// absorption).
 ///
 /// Equivalent single-matrix view: this commitment is equivalent to first forming a single
-/// height-`H` matrix by (a) lifting every input matrix to height `H` (per [`Lifting`]), (b)
-/// padding each lifted matrix horizontally with zero columns so each width is a multiple of the
-/// hasher's padding width, and (c) concatenating the results side-by-side. The leaf digest at
-/// row `r` is then the
-/// sponge of that single concatenated matrix’s row `r`. From the verifier’s perspective, the two
-/// constructions are indistinguishable: verification absorbs the same padded row segments in the
-/// same order and checks the same Merkle path.
+/// height-`N` matrix by (a) lifting every input matrix to height `N`, (b) padding each lifted
+/// matrix horizontally with zero columns so each width is a multiple of the hasher's padding
+/// width, and (c) concatenating the results side-by-side. The leaf digest at index `j` is then
+/// the sponge of that single concatenated matrix's row `j`. From the verifier's perspective,
+/// the two constructions are indistinguishable: verification absorbs the same padded row
+/// segments in the same order and checks the same Merkle path.
 ///
 /// Since [`StatefulHasher`] operates on a single field type, this tree uses the same type `F`
 /// for both matrix elements and digest words, unlike `MerkleTree` which can hash `F → W`.
@@ -70,8 +68,6 @@ pub struct LiftedMerkleTree<F, D, M, const DIGEST_ELEMS: usize> {
     )]
     pub(crate) digest_layers: Vec<Vec<[D; DIGEST_ELEMS]>>,
 
-    pub(crate) lifting: Lifting,
-
     pub(crate) salt: Option<RowMajorMatrix<F>>,
 }
 
@@ -84,7 +80,6 @@ where
     ///
     /// - `h`: stateful sponge used for incremental hashing of matrix rows.
     /// - `c`: 2-to-1 compression function used on digests.
-    /// - `lifting`: method used to align matrices of different heights to a common height.
     /// - `leaves`: matrices to commit. Must be non-empty, sorted by height (shortest to tallest),
     ///   and all heights must be powers of two.
     /// - `salt`: optional salt matrix absorbed into each leaf state prior to squeezing. When provided,
@@ -107,7 +102,6 @@ where
     pub(crate) fn new_with_optional_salt<PF, PD, H, C, const WIDTH: usize>(
         h: &H,
         c: &C,
-        lifting: Lifting,
         leaves: Vec<M>,
         salt: Option<RowMajorMatrix<PF::Value>>,
     ) -> Self
@@ -124,14 +118,8 @@ where
         assert!(!leaves.is_empty(), "cannot commit empty batch");
 
         // Build leaf states from matrices using the sponge
-        let mut leaf_states: Vec<[PD::Value; WIDTH]> = match lifting {
-            Lifting::Upsample => {
-                build_leaf_states_upsampled::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h)
-            }
-            Lifting::Cyclic => {
-                build_leaf_states_cyclic::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h)
-            }
-        };
+        let mut leaf_states: Vec<[PD::Value; WIDTH]> =
+            build_leaf_states_upsampled::<PF, PD, M, H, WIDTH, DIGEST_ELEMS>(&leaves, h);
 
         // Optionally absorb salt rows into the states prior to squeezing.
         if let Some(salt_matrix) = salt.as_ref() {
@@ -161,7 +149,6 @@ where
         Self {
             leaves,
             digest_layers,
-            lifting,
             salt,
         }
     }
@@ -184,9 +171,9 @@ where
     /// Extract the opened rows for a given leaf index.
     ///
     /// Returns the row from each committed matrix that corresponds to the given
-    /// leaf index after applying the tree's [`Lifting`] strategy. For matrices
-    /// shorter than the tree height, the lifted row index is computed via
-    /// [`Lifting::map_index`].
+    /// leaf index after applying nearest-neighbor upsampling. For matrices
+    /// shorter than the tree height, the lifted row index is computed as
+    /// `floor(index / (max_height / height))`.
     ///
     /// # Arguments
     ///
@@ -201,9 +188,11 @@ where
         self.leaves
             .iter()
             .map(|m| {
-                let row_index = self.lifting.map_index(index, m.height(), max_height);
+                let height = m.height();
+                let log_scaling_factor = log2_strict_usize(max_height / height);
+                let row_index = index >> log_scaling_factor;
                 m.row_slice(row_index)
-                    .expect("row_index must be valid after lifting.map_index")
+                    .expect("row_index must be valid after upsampling")
                     .to_vec()
             })
             .collect()
@@ -317,65 +306,7 @@ where
     states
 }
 
-/// Build leaf states using the cyclic view; see [`Lifting::Cyclic`] for semantics.
-///
-/// Returns the sponge states after absorbing all matrix rows but **before squeezing**.
-/// Callers must squeeze the states to obtain final leaf digests.
-///
-/// Conceptually, each matrix is virtually extended to height `H` by repeating its `h` rows
-/// `L = H / h` times in a cycle (width unchanged), and the leaf `r` absorbs the `r`-th row from
-/// each extended matrix in order. Each absorbed row is virtually padded with zeros to a multiple
-/// of the hasher's padding width for absorption; see [`LiftedMerkleTree`] docs for the
-/// equivalent single-matrix view.
-///
-/// # Preconditions
-/// - `matrices` is non-empty and sorted by non-decreasing power-of-two heights.
-/// - `P::WIDTH` is a power of two.
-///
-/// Panics in debug builds if preconditions are violated.
-#[allow(dead_code)]
-pub fn build_leaf_states_cyclic<PF, PD, M, H, const WIDTH: usize, const DIGEST_ELEMS: usize>(
-    matrices: &[M],
-    sponge: &H,
-) -> Vec<[PD::Value; WIDTH]>
-where
-    PF: PackedValue,
-    PD: PackedValue,
-    M: Matrix<PF::Value>,
-    H: StatefulHasher<PF::Value, [PD::Value; WIDTH], [PD::Value; DIGEST_ELEMS]>
-        + StatefulHasher<PF, [PD; WIDTH], [PD; DIGEST_ELEMS]>
-        + Sync,
-{
-    const { assert!(PF::WIDTH.is_power_of_two()) };
-    const { assert!(PD::WIDTH.is_power_of_two()) };
-    let final_height = validate_heights(matrices.iter().map(|d| d.dimensions().height));
-
-    let default_state = [PD::Value::default(); WIDTH];
-    let mut states = vec![default_state; final_height];
-    let mut active_height = matrices.first().unwrap().height();
-
-    // Process matrices in ascending height, cycling each shorter matrix over the final leaf range.
-    for matrix in matrices {
-        let height = matrix.height();
-
-        // Extend the state vector cyclically to reach the height of the next matrix.
-        if height > active_height {
-            let (first_chunk, remaining) = states.split_at_mut(active_height);
-            remaining
-                .par_chunks_exact_mut(active_height)
-                .for_each(|states_chunk| states_chunk.copy_from_slice(first_chunk));
-        }
-
-        // Absorb the rows of the matrix into the extended state vector
-        absorb_matrix::<PF, PD, _, _, WIDTH, DIGEST_ELEMS>(&mut states[..height], matrix, sponge);
-
-        active_height = height;
-    }
-
-    states
-}
-
-/// Incorporate one matrix’s row-wise contribution into the running per-leaf states.
+/// Incorporate one matrix's row-wise contribution into the running per-leaf states.
 ///
 /// Semantics: given `states` of length `h = matrix.height()`, for each row index `r ∈ [0, h)`
 /// update `states[r]` by absorbing the matrix row `r` into that state. In the overall tree
@@ -511,31 +442,26 @@ mod tests {
     use alloc::vec::Vec;
 
     use p3_matrix::Matrix;
-    use p3_matrix::bitrev::BitReversibleMatrix;
     use p3_matrix::dense::RowMajorMatrix;
     use p3_symmetric::StatefulHasher;
-    use p3_util::reverse_slice_index_bits;
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
-    use crate::merkle_tree::Lifting;
     use crate::tests::{
         DIGEST, F, P, RATE, Sponge, build_leaves_single, components, concatenate_matrices,
         lift_matrix, matrix_scenarios,
     };
-
-    fn build_leaves_cyclic(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
-        let mut states = super::build_leaf_states_cyclic::<P, P, _, _, _, _>(matrices, sponge);
-        states.iter_mut().map(|s| sponge.squeeze(s)).collect()
-    }
 
     fn build_leaves_upsampled(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
         let mut states = super::build_leaf_states_upsampled::<P, P, _, _, _, _>(matrices, sponge);
         states.iter_mut().map(|s| sponge.squeeze(s)).collect()
     }
 
+    /// Test that upsampled lifting produces correct results:
+    /// 1. Incremental lifting equals explicit lifting
+    /// 2. Explicit lifting equals single-matrix concatenation baseline
     #[test]
-    fn cyclic_upsampled_equivalence() {
+    fn upsampled_equivalence() {
         let (sponge, _compressor) = components();
         let mut rng = SmallRng::seed_from_u64(42);
 
@@ -544,52 +470,22 @@ mod tests {
                 .into_iter()
                 .map(|(h, w)| RowMajorMatrix::rand(&mut rng, h, w))
                 .collect();
-            let matrices_bitreversed: Vec<_> = matrices
-                .iter()
-                .map(|m: &RowMajorMatrix<F>| m.as_view().bit_reverse_rows().to_row_major_matrix())
-                .collect();
 
             let max_height = matrices.last().unwrap().height();
 
-            // Cyclic path equivalence vs explicit cyclic lifting and single-concat baseline
-            {
-                let leaves = build_leaves_cyclic(&matrices, &sponge);
-
-                let matrices_cyclic: Vec<_> = matrices
-                    .iter()
-                    .map(|m: &RowMajorMatrix<F>| lift_matrix(m, Lifting::Cyclic, max_height))
-                    .collect();
-                let leaves_lifted = build_leaves_cyclic(&matrices_cyclic, &sponge);
-                assert_eq!(leaves, leaves_lifted);
-
-                let matrix_single = concatenate_matrices::<RATE>(&matrices_cyclic);
-                let leaves_single = build_leaves_single(&matrix_single, &sponge);
-                assert_eq!(leaves, leaves_single);
-
-                let mut leaves_bitreversed = build_leaves_upsampled(&matrices_bitreversed, &sponge);
-                reverse_slice_index_bits(&mut leaves_bitreversed);
-                assert_eq!(leaves, leaves_bitreversed);
-            }
-
             // Upsampled path equivalence vs explicit upsampled lifting and single-concat baseline
-            {
-                let leaves = build_leaves_upsampled(&matrices, &sponge);
+            let leaves = build_leaves_upsampled(&matrices, &sponge);
 
-                let matrices_upsampled: Vec<_> = matrices
-                    .iter()
-                    .map(|m: &RowMajorMatrix<F>| lift_matrix(m, Lifting::Upsample, max_height))
-                    .collect();
-                let leaves_lifted = build_leaves_upsampled(&matrices_upsampled, &sponge);
-                assert_eq!(leaves, leaves_lifted);
+            let matrices_upsampled: Vec<_> = matrices
+                .iter()
+                .map(|m: &RowMajorMatrix<F>| lift_matrix(m, max_height))
+                .collect();
+            let leaves_lifted = build_leaves_upsampled(&matrices_upsampled, &sponge);
+            assert_eq!(leaves, leaves_lifted);
 
-                let matrix_single = concatenate_matrices::<RATE>(&matrices_upsampled);
-                let leaves_single = build_leaves_single(&matrix_single, &sponge);
-                assert_eq!(leaves, leaves_single);
-
-                let mut leaves_bitreversed = build_leaves_cyclic(&matrices_bitreversed, &sponge);
-                reverse_slice_index_bits(&mut leaves_bitreversed);
-                assert_eq!(leaves, leaves_bitreversed);
-            }
+            let matrix_single = concatenate_matrices::<RATE>(&matrices_upsampled);
+            let leaves_single = build_leaves_single(&matrix_single, &sponge);
+            assert_eq!(leaves, leaves_single);
         }
     }
 }

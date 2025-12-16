@@ -1,3 +1,67 @@
+//! Lifted Merkle tree commitment scheme for matrices with power-of-two heights.
+//!
+//! This module provides a Merkle tree commitment scheme optimized for matrices that store
+//! polynomial evaluations in **bit-reversed order** over multiplicative cosets.
+//!
+//! # Mathematical Foundation
+//!
+//! Consider a polynomial `f(X)` of degree less than `d`, and let `g` be the coset generator and
+//! `K` a subgroup of order `n ≥ d` with primitive root `ω`. The coset evaluations
+//! `{f(g·ω^j) : j ∈ [0, n)}` can be stored in two orderings:
+//!
+//! - **Canonical order**: `[f(g·ω^0), f(g·ω^1), ..., f(g·ω^{n-1})]`
+//! - **Bit-reversed order**: `[f(g·ω^{bitrev(0)}), f(g·ω^{bitrev(1)}), ..., f(g·ω^{bitrev(n-1)})]`
+//!
+//! where `bitrev(i)` is the bit-reversal of index `i` within `log2(n)` bits.
+//!
+//! # Lifting by Upsampling
+//!
+//! When we have matrices with different heights `n_0 ≤ n_1 ≤ ... ≤ n_{t-1}` (each a power of two),
+//! we "lift" smaller matrices to the maximum height `N = n_{t-1}` using **nearest-neighbor
+//! upsampling**: each row is repeated contiguously `r = N/n` times.
+//!
+//! For a matrix of height `n` lifted to `N`, the index map is: `i ↦ floor(i / r) = i >> log2(r)`
+//!
+//! **Example** (`n=4`, `N=8`):
+//! - Original rows: `[row0, row1, row2, row3]`
+//! - Upsampled: `[row0, row0, row1, row1, row2, row2, row3, row3]` (blocks of 2)
+//!
+//! # Why Upsampling for Bit-Reversed Data
+//!
+//! Given bit-reversed evaluations of `f(X)` over a coset `gK` where `|K| = n`, upsampling to
+//! height `N = n · r` (where `r = 2^k`) produces the bit-reversed evaluations of `f'(X) = f(X^r)`
+//! over the coset `gK'` where `|K'| = N`.
+//!
+//! Mathematically, if the input contains `f(g·(ω_n)^{bitrev_n(j)})` at index `j`, then after
+//! upsampling, each index `i` in `[0, N)` maps to the original index `j = i >> k`, giving:
+//!
+//! ```text
+//! upsampled[i] = f(g·(ω_n)^{bitrev_n(i >> k)}) = f'(g·(ω_N)^{bitrev_N(i)})
+//! ```
+//!
+//! where `f'(X) = f(X^r)`. This is exactly the bit-reversed evaluation of `f'` over `gK'`.
+//!
+//! # Opening Semantics
+//!
+//! When opening at index `i`, we retrieve the value at position `i` in the bit-reversed list.
+//! For the lifted polynomial `f'(X) = f(X^r)`, this gives `f'(g·(ω_N)^{bitrev_N(i)})`.
+//!
+//! Equivalently, this is `f'(g·ξ^i)` where `ξ = (ω_N)^{bitrev_N(i)}` is the `i`-th element
+//! when iterating over `K'` in the order induced by bit-reversed indices.
+//!
+//! # Equivalence to Cyclic Lifting
+//!
+//! Upsampling bit-reversed data is equivalent to cyclically repeating canonically-ordered data:
+//!
+//! ```text
+//! Upsample(BitReverse(data)) = BitReverse(Cyclic(data))
+//! ```
+//!
+//! where cyclic repetition tiles the original `n` rows periodically: `[row0, row1, ..., row_{n-1}, row0, ...]`.
+//!
+//! This equivalence follows from the bit-reversal identity: for `r = N/n = 2^k`,
+//! `bitrev_N(i) mod n = bitrev_n(i >> k)`.
+
 use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
@@ -14,104 +78,26 @@ mod hiding_lmcs;
 mod lifted_tree;
 
 pub use hiding_lmcs::MerkleTreeHidingLmcs;
-pub use lifted_tree::{LiftedMerkleTree, build_leaf_states_cyclic, build_leaf_states_upsampled};
-
-/// Lifting method used to align matrices of different heights to a common height.
-///
-/// Consider matrices `M_0, …, M_{t-1}` with heights `h_0 ≤ h_1 ≤ … ≤ h_{t-1}` (each a power of
-/// two), and let `H = h_{t-1}`. For each matrix `M_i`, lifting defines a row-index mapping
-/// `f_i: {0,…,H-1} → {0,…,h_i-1}` and thereby a virtual height-`H` matrix `M_i^↑` of the same
-/// width, whose `r`-th row is `row_{f_i(r)}(M_i)`. In other words, lifting “extends” each matrix
-/// vertically to height `H` without changing its width. The LMCS leaf at position `r` then uses,
-/// in order, the row `r` from each lifted matrix `M_i^↑` as input to the sponge (with per-matrix
-/// zero padding to a multiple of the hasher's padding width for absorption).
-///
-/// Two canonical choices for `f_i` are supported:
-/// - Upsample (nearest-neighbor): each original row is repeated contiguously
-///   `s_i = H / h_i` times; with `s_i = 2^k`, we have `f_i(r) = r >> k = floor(r / s_i)`.
-/// - Cyclic: the entire `h_i`-row matrix is repeated periodically until height `H`;
-///   equivalently `f_i(r) = r mod h_i = r & (h_i - 1)`.
-///
-/// Example (h_i = 4, H = 8):
-/// - Original rows of `M_i`: `[r0, r1, r2, r3]`.
-/// - Upsample (s_i = 2): `M_i^↑` rows by index `r = 0..7` are
-///   `[r0, r0, r1, r1, r2, r2, r3, r3]` (blocks of length 2).
-/// - Cyclic: `M_i^↑` rows are `[r0, r1, r2, r3, r0, r1, r2, r3]` (period 4).
-///
-/// Summary view:
-/// - Upsample lifting: virtually extend by repeating each row `s_i` times (blocks of identical
-///   rows), width unchanged.
-/// - Cyclic lifting: virtually extend by tiling the `h_i` original rows `s_i` times, width
-///   unchanged.
-///
-/// The implementation realizes these semantics incrementally by maintaining one sponge state per
-/// final row `r ∈ [0, H)`. As taller matrices are processed, states are duplicated contiguously
-/// (upsample) or tiled in cycles (cyclic) so that each state continues to absorb
-/// `row_{f_i(r)}(M_i)` from the current matrix’s virtual extension.
-///
-/// Power-of-two requirement: All matrix heights and the final height `H` must be powers of two.
-/// The implementation relies on this (via bit-shifts and masks) and rejects non-powers-of-two.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum Lifting {
-    /// Nearest-neighbor upsampling. For a matrix of height `h` lifted to `H`, each original row is
-    /// duplicated contiguously `s = H / h` times, and the lifted index map is
-    /// `r ↦ floor(r / s)` (with `s` a power of two). This produces blocks of identical rows.
-    Upsample,
-    /// Cyclic repetition. For a matrix of height `h` lifted to `H`, the lifted index map is
-    /// `r ↦ r mod h`, i.e. rows repeat with period `h` across the final height.
-    Cyclic,
-}
-
-impl Lifting {
-    /// Map a final leaf row index `index ∈ [0, max_height)` to the corresponding row index of a
-    /// particular matrix of height `height`, according to this lifting.
-    ///
-    /// Preconditions:
-    /// - `height` and `max_height` are powers of two with `height ≤ max_height`.
-    /// - `index < max_height`.
-    ///
-    /// Semantics:
-    /// - Upsample: returns `floor(index / (max_height / height))`.
-    /// - Cyclic: returns `index mod height`.
-    ///
-    /// # Panics
-    /// Panics in debug builds if preconditions are violated.
-    pub fn map_index(&self, index: usize, height: usize, max_height: usize) -> usize {
-        debug_assert!(index < max_height, "index must be < max_height");
-        debug_assert!(height.is_power_of_two(), "height must be power of two");
-        debug_assert!(
-            max_height.is_power_of_two(),
-            "max_height must be power of two"
-        );
-        debug_assert!(height <= max_height, "height must be <= max_height ");
-
-        match self {
-            Self::Upsample => {
-                let log_scaling_factor = log2_strict_usize(max_height / height);
-                index >> log_scaling_factor
-            }
-            Self::Cyclic => index & (height - 1),
-        }
-    }
-}
+pub use lifted_tree::{LiftedMerkleTree, build_leaf_states_upsampled};
 
 /// Lifted MMCS built on top of [`LiftedMerkleTree`].
 ///
-/// Matrices of different heights are aligned to the tallest height via a chosen [`Lifting`]
-/// (either upsampled/nearest-neighbor or cyclic repetition). Conceptually, each matrix is
-/// virtually extended vertically to height `H` (width unchanged) and the leaf `r` absorbs the
-/// `r`-th row from each extended matrix. See [`Lifting`] for the precise definition of the
-/// row-index mapping.
+/// Matrices of different heights are aligned to the tallest height via nearest-neighbor
+/// upsampling. For a matrix of height `n` lifted to `N`, each original row is duplicated
+/// contiguously `r = N / n` times, and the lifted index map is `i ↦ floor(i / r)` (with `r` a
+/// power of two). This produces blocks of identical rows.
 ///
-/// Equivalent single-matrix view: the scheme is equivalent to lifting every matrix to height `H`,
-/// padding each horizontally with zeros to a multiple of the hasher's padding width, and concatenating them side-by-
-/// side into one matrix. The Merkle tree and verification behavior are identical to committing to
-/// and opening that single concatenated matrix.
+/// Conceptually, each matrix is virtually extended vertically to height `N` (width unchanged)
+/// and the leaf at index `i` absorbs the `i`-th row from each extended matrix.
+///
+/// Equivalent single-matrix view: the scheme is equivalent to lifting every matrix to height `N`,
+/// padding each horizontally with zeros to a multiple of the hasher's padding width, and
+/// concatenating them side-by-side into one matrix. The Merkle tree and verification behavior are
+/// identical to committing to and opening that single concatenated matrix.
 #[derive(Copy, Clone, Debug)]
 pub struct MerkleTreeLmcs<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize> {
-    sponge: H,
-    compress: C,
-    lifting: Lifting,
+    pub(crate) sponge: H,
+    pub(crate) compress: C,
     _phantom: PhantomData<(PF, PD)>,
 }
 
@@ -124,12 +110,10 @@ impl<PF, PD, H, C, const WIDTH: usize, const DIGEST_ELEMS: usize>
     ///
     /// - `sponge`: Stateful sponge for hashing matrix rows into leaf digests.
     /// - `compress`: 2-to-1 compression function for building internal tree nodes.
-    /// - `lifting`: Strategy for aligning matrices of different heights (see [`Lifting`]).
-    pub const fn new(sponge: H, compress: C, lifting: Lifting) -> Self {
+    pub const fn new(sponge: H, compress: C) -> Self {
         Self {
             sponge,
             compress,
-            lifting,
             _phantom: PhantomData,
         }
     }
@@ -233,7 +217,6 @@ where
         let tree = LiftedMerkleTree::new_with_optional_salt::<PF, PD, H, C, WIDTH>(
             &self.sponge,
             &self.compress,
-            self.lifting,
             inputs,
             None,
         );

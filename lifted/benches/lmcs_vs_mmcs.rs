@@ -27,7 +27,6 @@ use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use p3_commit::Mmcs;
-use p3_lifted::merkle_tree::Lifting;
 
 #[path = "bench_utils.rs"]
 mod bench_utils;
@@ -59,7 +58,7 @@ fn bench_lmcs_vs_mmcs(c: &mut Criterion) {
 
         // Packed mode for Poseidon2
         let (sponge, compress) = hash::components();
-        let lmcs = hash::PackedLmcs::new(sponge.clone(), compress.clone(), Lifting::Upsample);
+        let lmcs = hash::PackedLmcs::new(sponge.clone(), compress.clone());
         let mmcs = hash::PackedMmcs::new(sponge, compress);
 
         let id_lmcs = BenchmarkId::from_parameter("lmcs");

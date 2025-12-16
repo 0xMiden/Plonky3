@@ -97,7 +97,6 @@ where
         let tree = LiftedMerkleTree::new_with_optional_salt::<PF, PD, H, C, WIDTH>(
             &self.inner.sponge,
             &self.inner.compress,
-            self.inner.lifting,
             inputs,
             salt,
         );

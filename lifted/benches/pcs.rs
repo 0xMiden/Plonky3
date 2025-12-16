@@ -31,7 +31,6 @@ use p3_dft::Radix2DitParallel;
 use p3_field::Field;
 use p3_fri::{FriParameters, TwoAdicFriPcs};
 use p3_lifted::fri::FriParams;
-use p3_lifted::merkle_tree::Lifting;
 use p3_lifted::pcs::{self, PcsConfig};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -157,7 +156,7 @@ fn bench_pcs(c: &mut Criterion) {
         // Lifted PCS (log_folding_factor = 1)
         // ---------------------------------------------------------------------
         {
-            let lmcs = LiftedLmcs::new(sponge.clone(), compress.clone(), Lifting::Upsample);
+            let lmcs = LiftedLmcs::new(sponge.clone(), compress.clone());
             let fri_mmcs = LiftedFriMmcs::new(lmcs.clone());
 
             let config = PcsConfig {

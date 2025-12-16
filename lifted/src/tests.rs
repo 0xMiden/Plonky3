@@ -20,7 +20,7 @@ use rand::SeedableRng;
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
 
-use crate::merkle_tree::{Lifting, MerkleTreeLmcs};
+use crate::merkle_tree::MerkleTreeLmcs;
 
 // ============================================================================
 // Type Aliases
@@ -91,7 +91,7 @@ pub(crate) fn test_components() -> (Perm, Sponge, Compress) {
 /// Create standard base LMCS for testing.
 pub(crate) fn base_lmcs() -> BaseLmcs {
     let (_, sponge, compress) = test_components();
-    MerkleTreeLmcs::new(sponge, compress, Lifting::Upsample)
+    MerkleTreeLmcs::new(sponge, compress)
 }
 
 /// Create standard FRI MMCS for testing.
@@ -171,18 +171,17 @@ pub(crate) fn build_leaves_single(matrix: &RowMajorMatrix<F>, sponge: &Sponge) -
         .collect()
 }
 
-/// Explicitly lift a matrix to the target height using the given lifting strategy.
+/// Explicitly lift a matrix to the target height using nearest-neighbor upsampling.
 ///
 /// Used for testing equivalence between incremental and explicit lifting.
-pub(crate) fn lift_matrix(
-    matrix: &RowMajorMatrix<F>,
-    lifting: Lifting,
-    max_height: usize,
-) -> RowMajorMatrix<F> {
+pub(crate) fn lift_matrix(matrix: &RowMajorMatrix<F>, max_height: usize) -> RowMajorMatrix<F> {
+    use p3_util::log2_strict_usize;
+
     let Dimensions { height, width } = matrix.dimensions();
+    let log_scaling_factor = log2_strict_usize(max_height / height);
     let data = (0..max_height)
         .flat_map(|index| {
-            let mapped_index = lifting.map_index(index, height, max_height);
+            let mapped_index = index >> log_scaling_factor;
             matrix.row(mapped_index).unwrap()
         })
         .collect();

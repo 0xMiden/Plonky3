@@ -23,7 +23,6 @@ use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use p3_commit::{ExtensionMmcs, Mmcs};
-use p3_lifted::merkle_tree::Lifting;
 use p3_matrix::dense::RowMajorMatrix;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -61,7 +60,7 @@ fn bench_merkle_commit(c: &mut Criterion) {
         // ---------------------------------------------------------------------
         {
             let (sponge, compress) = hash::components();
-            let lmcs = hash::ScalarLmcs::new(sponge, compress, Lifting::Upsample);
+            let lmcs = hash::ScalarLmcs::new(sponge, compress);
 
             let id = BenchmarkId::from_parameter("scalar");
             group.bench_with_input(id, &matrix_groups, |b, groups| {
@@ -78,7 +77,7 @@ fn bench_merkle_commit(c: &mut Criterion) {
         // ---------------------------------------------------------------------
         {
             let (sponge, compress) = hash::components();
-            let lmcs = hash::PackedLmcs::new(sponge, compress, Lifting::Upsample);
+            let lmcs = hash::PackedLmcs::new(sponge, compress);
 
             let id = BenchmarkId::from_parameter("packed");
             group.bench_with_input(id, &matrix_groups, |b, groups| {
@@ -95,7 +94,7 @@ fn bench_merkle_commit(c: &mut Criterion) {
         // ---------------------------------------------------------------------
         {
             let (sponge, compress) = hash::components();
-            let lmcs = hash::PackedLmcs::new(sponge, compress, Lifting::Upsample);
+            let lmcs = hash::PackedLmcs::new(sponge, compress);
             let ext_mmcs = ExtensionMmcs::<F, EF, _>::new(lmcs);
 
             let rng = &mut SmallRng::seed_from_u64(bench_utils::BENCH_SEED);
@@ -112,7 +111,7 @@ fn bench_merkle_commit(c: &mut Criterion) {
         // ---------------------------------------------------------------------
         {
             let (sponge, compress) = hash::components();
-            let lmcs = hash::PackedLmcs::new(sponge, compress, Lifting::Upsample);
+            let lmcs = hash::PackedLmcs::new(sponge, compress);
             let ext_mmcs = ExtensionMmcs::<F, EF, _>::new(lmcs);
 
             let rng = &mut SmallRng::seed_from_u64(bench_utils::BENCH_SEED);
