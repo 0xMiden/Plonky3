@@ -1,12 +1,12 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_air::{Air, };
+use p3_air::{Air, BaseAirWithAuxTrace};
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
 use p3_uni_stark::{
-    SymbolicAirBuilder, VerificationError, VerifierConstraintFolder, 
+    SymbolicAirBuilder, VerificationError, VerifierConstraintFolder, get_log_quotient_degree,
     recompose_quotient_from_chunks, verify_constraints,
 };
 use p3_util::zip_eq::zip_eq;
