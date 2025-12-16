@@ -211,9 +211,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> SinglePointQuotient<F, EF> {
 mod tests {
     use alloc::vec;
 
-    use p3_baby_bear::BabyBear as F;
     use p3_dft::{NaiveDft, TwoAdicSubgroupDft};
-    use p3_field::extension::BinomialExtensionField;
     use p3_field::{Field, PrimeCharacteristicRing};
     use p3_interpolation::{interpolate_coset, interpolate_coset_with_precomputation};
     use p3_matrix::bitrev::BitReversibleMatrix;
@@ -224,9 +222,8 @@ mod tests {
     use rand::{Rng, SeedableRng};
 
     use super::SinglePointQuotient;
+    use crate::tests::{EF, F};
     use crate::utils::bit_reversed_coset_points;
-
-    type EF = BinomialExtensionField<F, 4>;
 
     /// Verify `batch_eval_lifted` matches `interpolate_coset` for various lift factors.
     #[test]

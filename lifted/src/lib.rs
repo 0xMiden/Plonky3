@@ -56,3 +56,6 @@ pub mod merkle_tree;
 pub mod pcs;
 
 pub mod utils;
+
+#[cfg(test)]
+mod tests;

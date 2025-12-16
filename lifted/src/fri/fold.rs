@@ -337,8 +337,6 @@ impl FriFold<4> for FriFold4 {
 mod tests {
     use core::array;
 
-    use p3_baby_bear::BabyBear;
-    use p3_field::extension::BinomialExtensionField;
     use p3_field::{Field, PrimeCharacteristicRing, TwoAdicField};
     use p3_matrix::dense::RowMajorMatrix;
     use p3_util::reverse_slice_index_bits;
@@ -347,9 +345,8 @@ mod tests {
     use rand::{Rng, SeedableRng};
 
     use super::*;
+    use crate::tests::{EF, F};
 
-    type F = BabyBear;
-    type EF = BinomialExtensionField<F, 4>;
     type Pf = <F as Field>::Packing;
     type Pef = <EF as ExtensionField<F>>::ExtensionPacking;
 
@@ -455,15 +452,11 @@ mod tests {
 
     #[test]
     fn test_arity_2_babybear() {
-        type F = BabyBear;
-        type EF = BinomialExtensionField<F, 4>;
         test_fold::<F, EF, FriFold2, 2>();
     }
 
     #[test]
     fn test_arity_4_babybear() {
-        type F = BabyBear;
-        type EF = BinomialExtensionField<F, 4>;
         test_fold::<F, EF, FriFold4, 4>();
     }
 

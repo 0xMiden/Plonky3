@@ -274,14 +274,11 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    use p3_baby_bear::BabyBear as F;
-    use p3_field::extension::BinomialExtensionField;
     use p3_field::{PrimeCharacteristicRing, dot_product};
 
     use super::derive_coeffs_from_challenge;
     use crate::deep::verifier::reduce_with_powers;
-
-    type EF = BinomialExtensionField<F, 4>;
+    use crate::tests::{EF, F};
 
     /// `reduce_with_powers` (Horner) must match explicit `derive_coeffs` + dot product.
     #[test]

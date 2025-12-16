@@ -12,8 +12,6 @@ use thiserror::Error;
 
 mod hiding_lmcs;
 mod lifted_tree;
-#[cfg(test)]
-mod test_helpers;
 
 pub use hiding_lmcs::MerkleTreeHidingLmcs;
 pub use lifted_tree::{LiftedMerkleTree, build_leaf_states_cyclic, build_leaf_states_upsampled};
@@ -311,61 +309,4 @@ pub enum LmcsError {
 }
 
 #[cfg(test)]
-mod tests {
-    use alloc::vec;
-    use alloc::vec::Vec;
-
-    use p3_baby_bear::Poseidon2BabyBear;
-    use p3_matrix::dense::RowMajorMatrix;
-    use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-    use rand::rngs::SmallRng;
-    use rand::{RngCore, SeedableRng};
-
-    use super::test_helpers::{DIGEST, F, P, RATE, WIDTH};
-    use super::*;
-
-    fn components() -> (
-        PaddingFreeSponge<Poseidon2BabyBear<WIDTH>, WIDTH, RATE, DIGEST>,
-        TruncatedPermutation<Poseidon2BabyBear<WIDTH>, 2, DIGEST, WIDTH>,
-    ) {
-        let mut rng = SmallRng::seed_from_u64(123);
-        let perm = Poseidon2BabyBear::<WIDTH>::new_from_rng_128(&mut rng);
-        let sponge = PaddingFreeSponge::<_, WIDTH, RATE, DIGEST>::new(perm.clone());
-        let compress = TruncatedPermutation::<_, 2, DIGEST, WIDTH>::new(perm);
-        (sponge, compress)
-    }
-
-    fn rand_matrix(h: usize, w: usize, rng: &mut SmallRng) -> RowMajorMatrix<F> {
-        let vals = (0..h * w).map(|_| F::new(rng.next_u32())).collect();
-        RowMajorMatrix::new(vals, w)
-    }
-
-    #[test]
-    fn commit_open_verify_roundtrip() {
-        let (sponge, compress) = components();
-        let lmcs =
-            MerkleTreeLmcs::<P, P, _, _, WIDTH, DIGEST>::new(sponge, compress, Lifting::Upsample);
-
-        let mut rng = SmallRng::seed_from_u64(9);
-        let matrices = vec![
-            rand_matrix(2, 3, &mut rng),
-            rand_matrix(4, 5, &mut rng),
-            rand_matrix(8, 7, &mut rng),
-        ];
-        let dims: Vec<Dimensions> = matrices
-            .iter()
-            .map(|m: &RowMajorMatrix<F>| m.dimensions())
-            .collect();
-
-        let (commitment, tree) = lmcs.commit(matrices);
-        let final_height = dims.last().unwrap().height;
-        let index = final_height - 1; // valid index within range
-
-        let opening = lmcs.open_batch(index, &tree);
-        let opening_ref: BatchOpeningRef<'_, F, _> = (&opening).into();
-        assert!(
-            lmcs.verify_batch(&commitment, &dims, index, opening_ref)
-                .is_ok()
-        );
-    }
-}
+mod tests;

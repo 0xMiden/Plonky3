@@ -519,9 +519,9 @@ mod tests {
     use rand::rngs::SmallRng;
 
     use crate::merkle_tree::Lifting;
-    use crate::merkle_tree::test_helpers::{
+    use crate::tests::{
         DIGEST, F, P, RATE, Sponge, build_leaves_single, components, concatenate_matrices,
-        lift_matrix, matrix_scenarios, rand_matrix,
+        lift_matrix, matrix_scenarios,
     };
 
     fn build_leaves_cyclic(matrices: &[RowMajorMatrix<F>], sponge: &Sponge) -> Vec<[F; DIGEST]> {
@@ -542,7 +542,7 @@ mod tests {
         for scenario in matrix_scenarios() {
             let matrices: Vec<RowMajorMatrix<F>> = scenario
                 .into_iter()
-                .map(|(h, w)| rand_matrix(h, w, &mut rng))
+                .map(|(h, w)| RowMajorMatrix::rand(&mut rng, h, w))
                 .collect();
             let matrices_bitreversed: Vec<_> = matrices
                 .iter()
