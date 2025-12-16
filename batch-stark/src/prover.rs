@@ -132,12 +132,7 @@ where
             ext_trace_domains[i].create_disjoint_domain(1 << (log_ext_degrees[i] + lqd));
 
         // Count constraints to size alpha powers packing.
-        let constraint_cnt = get_symbolic_constraints(
-            airs[i],
-            0,
-            pub_vals[i].len(),
-        )
-        .len();
+        let constraint_cnt = get_symbolic_constraints(airs[i], 0, pub_vals[i].len()).len();
 
         // Get evaluations on quotient domain from the main commitment.
         let trace_on_quotient_domain =
