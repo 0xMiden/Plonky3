@@ -287,7 +287,6 @@ fn eval_sbox<AB, const DEGREE: u64, const REGISTERS: usize>(
     }
 }
 
-
 // Empty implementation of BaseAirWithAuxTrace for Poseidon2Air (no auxiliary trace)
 impl<
     F: Field,
@@ -299,5 +298,14 @@ impl<
     const HALF_FULL_ROUNDS: usize,
     const PARTIAL_ROUNDS: usize,
 > BaseAirWithAuxTrace<F, EF>
-    for Poseidon2Air<F, LinearLayers, WIDTH, SBOX_DEGREE, SBOX_REGISTERS, HALF_FULL_ROUNDS, PARTIAL_ROUNDS>
-{}
+    for Poseidon2Air<
+        F,
+        LinearLayers,
+        WIDTH,
+        SBOX_DEGREE,
+        SBOX_REGISTERS,
+        HALF_FULL_ROUNDS,
+        PARTIAL_ROUNDS,
+    >
+{
+}

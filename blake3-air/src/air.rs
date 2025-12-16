@@ -446,6 +446,5 @@ impl<AB: AirBuilder> Air<AB> for Blake3Air {
     }
 }
 
-
 // Empty implementation of BaseAirWithAuxTrace since Blake3Air has no auxiliary trace
 impl<F: Field, EF: ExtensionField<F>> BaseAirWithAuxTrace<F, EF> for Blake3Air {}

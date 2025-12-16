@@ -189,7 +189,7 @@ fn test_fibonacci_periodic_impl(a: u64, b: u64, n: usize, x: u64, log_final_poly
 
     let air = FibonacciPeriodicAir::new();
 
-    let proof = prove(&config, &air, trace, &pis);
+    let proof = prove(&config, &air, &trace, &pis);
     verify(&config, &air, &proof, &pis).expect("verification failed");
 }
 
@@ -256,6 +256,6 @@ fn test_fibonacci_periodic_wrong_selector() {
     let air = FibonacciPeriodicAir::new();
 
     // This should fail because selector[1] = 0, but periodic[1] = 1
-    let proof = prove(&config, &air, trace, &pis);
+    let proof = prove(&config, &air, &trace, &pis);
     verify(&config, &air, &proof, &pis).expect("verification failed");
 }

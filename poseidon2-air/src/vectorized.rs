@@ -274,7 +274,6 @@ impl<
     }
 }
 
-
 // Empty implementation of BaseAirWithAuxTrace for VectorizedPoseidon2Air (no auxiliary trace)
 impl<
     F: Field,
@@ -287,5 +286,15 @@ impl<
     const PARTIAL_ROUNDS: usize,
     const VECTOR_LEN: usize,
 > BaseAirWithAuxTrace<F, EF>
-    for VectorizedPoseidon2Air<F, LinearLayers, WIDTH, SBOX_DEGREE, SBOX_REGISTERS, HALF_FULL_ROUNDS, PARTIAL_ROUNDS, VECTOR_LEN>
-{}
+    for VectorizedPoseidon2Air<
+        F,
+        LinearLayers,
+        WIDTH,
+        SBOX_DEGREE,
+        SBOX_REGISTERS,
+        HALF_FULL_ROUNDS,
+        PARTIAL_ROUNDS,
+        VECTOR_LEN,
+    >
+{
+}

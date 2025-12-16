@@ -41,7 +41,14 @@ where
     F: Field,
     A: Air<SymbolicAirBuilder<F>>,
 {
-    get_log_quotient_degree_extension(air, preprocessed_width, num_public_values, aux_width, num_randomness, is_zk)
+    get_log_quotient_degree_extension(
+        air,
+        preprocessed_width,
+        num_public_values,
+        aux_width,
+        num_randomness,
+        is_zk,
+    )
 }
 
 #[instrument(name = "infer log of base and extension constraint degree", skip_all)]

@@ -210,6 +210,5 @@ impl<AB: AirBuilder> Air<AB> for KeccakAir {
     }
 }
 
-
 // Empty implementation of BaseAirWithAuxTrace since KeccakAir has no auxiliary trace
 impl<F: Field, EF: ExtensionField<F>> BaseAirWithAuxTrace<F, EF> for KeccakAir {}
