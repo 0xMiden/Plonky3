@@ -1,4 +1,3 @@
-use alloc::vec::Vec;
 use core::iter::{Product, Sum};
 use core::mem::MaybeUninit;
 use core::ops::{Div, DivAssign};
@@ -378,6 +377,17 @@ pub trait PackedFieldExtension<
     #[must_use]
     fn pack_ext_columns<const N: usize>(rows: &[[ExtField; N]]) -> [Self; N];
 
+    /// Extract the extension field element at the given SIMD lane.
+    ///
+    /// This is the inverse of broadcasting a scalar to all lanes.
+    #[inline]
+    #[must_use]
+    fn extract_lane(&self, lane: usize) -> ExtField {
+        ExtField::from_basis_coefficients_fn(|d| {
+            self.as_basis_coefficients_slice()[d].as_slice()[lane]
+        })
+    }
+
     /// Unpack this packed extension field element into a slice of extension field elements.
     ///
     /// The output slice `out` must have length at least `BaseField::Packing::WIDTH`.
@@ -385,10 +395,9 @@ pub trait PackedFieldExtension<
     /// This performs the inverse transformation to `from_ext_slice`.
     #[inline]
     fn to_ext_slice(&self, out: &mut [ExtField]) {
-        let packed_coeffs = self.as_basis_coefficients_slice();
         #[allow(clippy::needless_range_loop)]
         for i in 0..BaseField::Packing::WIDTH {
-            out[i] = ExtField::from_basis_coefficients_fn(|j| packed_coeffs[j].as_slice()[i]);
+            out[i] = self.extract_lane(i);
         }
     }
 
@@ -399,12 +408,8 @@ pub trait PackedFieldExtension<
     #[inline]
     #[must_use]
     fn to_ext_iter(iter: impl IntoIterator<Item = Self>) -> impl Iterator<Item = ExtField> {
-        iter.into_iter().flat_map(|x| {
-            let packed_coeffs = x.as_basis_coefficients_slice();
-            (0..BaseField::Packing::WIDTH)
-                .map(|i| ExtField::from_basis_coefficients_fn(|j| packed_coeffs[j].as_slice()[i]))
-                .collect::<Vec<_>>() // PackedFieldExtension's should reimplement this to avoid this allocation.
-        })
+        iter.into_iter()
+            .flat_map(|x| (0..BaseField::Packing::WIDTH).map(move |i| x.extract_lane(i)))
     }
 
     /// Similar to `packed_powers`, construct an iterator which returns
