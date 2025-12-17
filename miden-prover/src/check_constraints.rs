@@ -145,7 +145,7 @@ pub struct DebugConstraintBuilder<'a, F: Field, EF: ExtensionField<F>> {
     aux: ViewPair<'a, EF>,
     /// randomness that is used to compute aux trace
     aux_randomness: &'a [EF],
-    /// Aux bus boundary values (finals)
+    /// Aux bus boundary values (against the last row)
     aux_bus_boundary_values: &'a [EF],
     /// A view of the preprocessed current and next row as a vertical pair (if present).
     preprocessed: Option<ViewPair<'a, F>>,
