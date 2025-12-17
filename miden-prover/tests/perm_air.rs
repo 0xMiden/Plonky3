@@ -227,6 +227,7 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
 
     let config = MyConfig::new(pcs, challenger);
     let pis = vec![Goldilocks::ZERO, Goldilocks::ONE, Goldilocks::from_u64(x)];
+    let var_len_pis = vec![];
 
     let mut air = FibPermAir::new();
     air.with_aux_builder(|main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
@@ -234,7 +235,7 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
     });
 
     let proof = prove(&config, &air, &trace, &pis);
-    verify(&config, &air, &proof, &pis).expect("verification failed");
+    verify(&config, &air, &proof, &pis, &var_len_pis).expect("verification failed");
 }
 
 #[test]
@@ -279,6 +280,7 @@ fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
 
     let config = MyConfig5::new(pcs, challenger);
     let pis = vec![Goldilocks::ZERO, Goldilocks::ONE, Goldilocks::from_u64(x)];
+    let var_len_pis = vec![];
 
     let mut air = FibPermAir::<Goldilocks, BinomialExtensionField<Goldilocks, 5>>::new();
     air.with_aux_builder(|main: &RowMajorMatrix<Val>, challenges: &[Challenge5]| {
@@ -286,7 +288,7 @@ fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
     });
 
     let proof = prove(&config, &air, &trace, &pis);
-    verify(&config, &air, &proof, &pis).expect("verification failed");
+    verify(&config, &air, &proof, &pis, &var_len_pis).expect("verification failed");
 }
 
 #[cfg(debug_assertions)]
@@ -311,11 +313,12 @@ fn test_incorrect_public_value() {
         Goldilocks::ONE,
         Goldilocks::from_u32(123_123), // incorrect result
     ];
+    let var_len_pis = vec![];
 
     let mut air = FibPermAir::new();
     air.with_aux_builder(|main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
         miden_prover::generate_logup_trace::<Challenge, _>(main, &challenges[0])
     });
     let proof = prove(&config, &air, &trace, &pis);
-    verify(&config, &air, &proof, &pis).expect("verification failed");
+    verify(&config, &air, &proof, &pis, &var_len_pis).expect("verification failed");
 }

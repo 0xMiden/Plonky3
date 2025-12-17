@@ -1,7 +1,9 @@
 //! See `prover.rs` for an overview of the protocol and a more detailed soundness analysis.
 
+use std::marker::PhantomData;
+
 use itertools::Itertools;
-use miden_air::MidenAir;
+use miden_air::{BusType, MidenAir};
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing, TwoAdicField};
@@ -13,7 +15,10 @@ use tracing::{debug_span, instrument};
 use crate::periodic_tables::evaluate_periodic_at_point;
 use crate::symbolic_builder::get_log_quotient_degree;
 use crate::util::verifier_row_to_ext;
-use crate::{Domain, PcsError, Proof, StarkGenericConfig, Val, VerifierConstraintFolder};
+use crate::{
+    AirWithBoundaryConstraints, Domain, PcsError, Proof, StarkGenericConfig, Val,
+    VerifierConstraintFolder,
+};
 
 /// Recomposes the quotient polynomial from its chunks evaluated at a point.
 ///
@@ -75,6 +80,7 @@ pub fn verify_constraints<SC, A, PcsErr>(
     aux_local: Option<&[SC::Challenge]>,
     aux_next: Option<&[SC::Challenge]>,
     randomness: &[SC::Challenge],
+    aux_bus_boundary_values: &[SC::Challenge],
     public_values: &[Val<SC>],
     trace_domain: Domain<SC>,
     zeta: SC::Challenge,
@@ -82,7 +88,7 @@ pub fn verify_constraints<SC, A, PcsErr>(
     quotient: SC::Challenge,
 ) -> Result<(), VerificationError<PcsErr>>
 where
-    SC: StarkGenericConfig,
+    SC: StarkGenericConfig + Sync,
     A: MidenAir<Val<SC>, SC::Challenge>,
     Val<SC>: TwoAdicField,
 {
@@ -147,6 +153,7 @@ where
         main,
         aux,
         randomness,
+        aux_bus_boundary_values,
         preprocessed,
         public_values,
         periodic_values: &periodic_values,
@@ -226,16 +233,23 @@ pub fn verify<SC, A>(
     air: &A,
     proof: &Proof<SC>,
     public_values: &[Val<SC>],
+    var_length_public_inputs: &[&[&[Val<SC>]]],
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
-    SC: StarkGenericConfig,
+    SC: StarkGenericConfig + Sync,
     A: MidenAir<Val<SC>, SC::Challenge>,
     Val<SC>: TwoAdicField,
 {
+    let air = &AirWithBoundaryConstraints {
+        inner: air,
+        phantom: PhantomData::<SC>,
+    };
+
     let Proof {
         commitments,
         opened_values,
         opening_proof,
+        aux_finals,
         degree_bits,
     } = proof;
 
@@ -247,9 +261,9 @@ where
     let trace_domain = pcs.natural_domain_for_degree(degree);
     // TODO: allow moving preprocessed commitment to preprocess time, if known in advance
     let (preprocessed_width, preprocessed_commit) =
-        process_preprocessed_trace::<SC, A>(air, opened_values, pcs, trace_domain, config.is_zk())?;
+        process_preprocessed_trace::<SC, _>(air, opened_values, pcs, trace_domain, config.is_zk())?;
 
-    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, SC::Challenge, A>(
+    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, SC::Challenge, _>(
         air,
         preprocessed_width,
         public_values.len(),
@@ -297,7 +311,8 @@ where
     // begin processing aux trace (optional)
     let num_randomness = air.num_randomness();
 
-    let air_width = A::width(air);
+    let air_width = air.width();
+    let bus_types = air.bus_types();
     let valid_shape = opened_values.trace_local.len() == air_width
         && opened_values.trace_next.len() == air_width
         && opened_values.quotient_chunks.len() == quotient_degree
@@ -310,12 +325,15 @@ where
         // Check aux trace shape
         && if num_randomness > 0 {
             let aux_width_base = aux_width * SC::Challenge::DIMENSION;
-            match (&opened_values.aux_trace_local, &opened_values.aux_trace_next) {
-                (Some(l), Some(n)) => l.len() == aux_width_base && n.len() == aux_width_base,
+            // Note: bus_types length is not matched against aux_width, to allow for more generic aux traces.
+            match (&opened_values.aux_trace_local, &opened_values.aux_trace_next, aux_finals) {
+                (Some(l), Some(n), Some(f)) => l.len() == aux_width_base
+                    && n.len() == aux_width_base
+                    && f.len() == aux_width,
                 _ => false,
             }
         } else {
-            opened_values.aux_trace_local.is_none() && opened_values.aux_trace_next.is_none()
+            opened_values.aux_trace_local.is_none() && opened_values.aux_trace_next.is_none() && aux_finals.is_none()
         };
     if !valid_shape {
         return Err(VerificationError::InvalidProofShape);
@@ -330,6 +348,14 @@ where
         } else {
             return Err(VerificationError::InvalidProofShape);
         }
+        if let Some(aux_finals) = &aux_finals {
+            for aux_final in aux_finals {
+                challenger.observe_algebra_element(*aux_final);
+            }
+        } else {
+            return Err(VerificationError::InvalidProofShape);
+        }
+
         randomness
     } else {
         // No aux trace expected
@@ -449,7 +475,33 @@ where
         zeta,
     );
 
-    verify_constraints::<SC, A, PcsError<SC>>(
+    // Verify the aux trace final values match the expected values if the aux trace contains buses (one bus per aux column)
+    // Note: if no buses are defined (bus_types.is_empty), the boundary values of the aux_trace are not checked against the provided variable-length public inputs.
+    for (idx, (bus_type, aux_final)) in bus_types
+        .iter()
+        .zip(aux_finals.as_ref().unwrap_or(&vec![]))
+        .enumerate()
+    {
+        let public_inputs_for_bus = *var_length_public_inputs
+            .get(idx)
+            .ok_or(VerificationError::InvalidProofShape)?;
+        let expected_final = match bus_type {
+            BusType::Multiset => bus_multiset_boundary_varlen::<_, SC>(
+                &randomness,
+                public_inputs_for_bus.iter().copied(),
+            ),
+            BusType::Logup => bus_logup_boundary_varlen::<_, SC>(
+                &randomness,
+                public_inputs_for_bus.iter().copied(),
+            ),
+        };
+
+        if *aux_final != expected_final {
+            return Err(VerificationError::InvalidBusBoundaryValues);
+        }
+    }
+
+    verify_constraints::<SC, _, PcsError<SC>>(
         air,
         &opened_values.trace_local,
         &opened_values.trace_next,
@@ -458,6 +510,7 @@ where
         opened_values.aux_trace_local.as_deref(),
         opened_values.aux_trace_next.as_deref(),
         &randomness,
+        aux_finals.as_ref().unwrap_or(&vec![]),
         public_values,
         init_trace_domain,
         zeta,
@@ -466,6 +519,49 @@ where
     )?;
 
     Ok(())
+}
+
+/// Computes the final value for a multiset bus given variable-length public inputs.
+pub fn bus_multiset_boundary_varlen<
+    'a,
+    I: IntoIterator<Item = &'a [Val<SC>]>,
+    SC: StarkGenericConfig,
+>(
+    randomness: &[SC::Challenge],
+    public_inputs: I,
+) -> SC::Challenge {
+    let mut bus_p_last = SC::Challenge::ONE;
+    let rand = randomness;
+    for row in public_inputs {
+        let mut p_last = rand[0];
+        for (c, p_i) in row.iter().enumerate() {
+            p_last += SC::Challenge::from(*p_i) * rand[c + 1];
+        }
+        bus_p_last *= p_last;
+    }
+    bus_p_last
+}
+
+/// Computes the final value for a logup bus boundary constraint given variable-length public inputs.
+pub fn bus_logup_boundary_varlen<
+    'a,
+    I: IntoIterator<Item = &'a [Val<SC>]>,
+    SC: StarkGenericConfig,
+>(
+    randomness: &[SC::Challenge],
+    public_inputs: I,
+) -> SC::Challenge {
+    let mut bus_q_last = SC::Challenge::ZERO;
+    let rand = randomness;
+    for row in public_inputs {
+        let mut q_last = rand[0];
+        for (c, p_i) in row.iter().enumerate() {
+            let p_i = *p_i;
+            q_last += SC::Challenge::from(p_i) * rand[c + 1];
+        }
+        bus_q_last += q_last.inverse();
+    }
+    bus_q_last
 }
 
 #[derive(Debug)]
@@ -482,4 +578,6 @@ pub enum VerificationError<PcsErr> {
     RandomizationError,
     /// The domain does not support computing the next point algebraically.
     NextPointUnavailable,
+    /// The expected bus boundary final values do not match the opened values.
+    InvalidBusBoundaryValues,
 }

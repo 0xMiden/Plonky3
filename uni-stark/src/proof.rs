@@ -20,6 +20,7 @@ pub struct Proof<SC: StarkGenericConfig> {
     pub commitments: Commitments<Com<SC>>,
     pub opened_values: OpenedValues<SC::Challenge>,
     pub opening_proof: PcsProof<SC>,
+    pub aux_finals: Option<Vec<SC::Challenge>>,
     pub degree_bits: usize,
 }
 

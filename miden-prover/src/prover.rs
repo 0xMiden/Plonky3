@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use itertools::Itertools;
 use miden_air::MidenAir;
 use p3_challenger::{CanObserve, FieldChallenger};
@@ -12,9 +14,11 @@ use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
 use crate::periodic_tables::compute_periodic_on_quotient_eval_domain;
+use crate::util::prover_row_to_ext;
 use crate::{
-    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
-    StarkGenericConfig, Val, get_log_quotient_degree, get_symbolic_constraints,
+    AirWithBoundaryConstraints, Commitments, Domain, OpenedValues, PackedChallenge, PackedVal,
+    Proof, ProverConstraintFolder, StarkGenericConfig, Val, get_log_quotient_degree,
+    get_symbolic_constraints,
 };
 
 /// Commits the preprocessed trace if present.
@@ -44,10 +48,15 @@ pub fn prove<SC, A>(
     public_values: &[Val<SC>],
 ) -> Proof<SC>
 where
-    SC: StarkGenericConfig,
+    SC: StarkGenericConfig + Sync,
     A: MidenAir<Val<SC>, SC::Challenge>,
     Val<SC>: TwoAdicField,
 {
+    let air = &AirWithBoundaryConstraints {
+        inner: air,
+        phantom: PhantomData::<SC>,
+    };
+
     // Compute the height `N = 2^n` and `log_2(height)`, `n`, of the trace.
     let degree = trace.height();
     let log_degree = log2_strict_usize(degree);
@@ -104,7 +113,7 @@ where
     // From the degree of the constraint polynomial, compute the number
     // of quotient polynomials we will split Q(x) into. This is chosen to
     // always be a power of 2.
-    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, SC::Challenge, A>(
+    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, SC::Challenge, _>(
         air,
         preprocessed_width,
         public_values.len(),
@@ -170,7 +179,7 @@ where
     // begin aux trace generation (optional)
     let num_randomness = air.num_randomness();
 
-    let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness) =
+    let (aux_trace_commit_opt, _aux_trace_opt, aux_trace_data_opt, randomness, aux_finals) =
         if num_randomness > 0 {
             let randomness: Vec<SC::Challenge> = (0..num_randomness)
                 .map(|_| challenger.sample_algebra_element())
@@ -184,19 +193,30 @@ where
             let aux_trace = aux_trace_opt
                 .expect("aux_challenges > 0 but no aux trace was provided or generated");
 
+            let aux_finals_base = aux_trace
+                .last_row()
+                .expect("aux_challenges > 0 but aux trace was empty")
+                .into_iter()
+                .collect_vec();
+            let aux_finals = prover_row_to_ext(&aux_finals_base);
+
             let (aux_trace_commit, aux_trace_data) = info_span!("commit to aux trace data")
                 .in_scope(|| pcs.commit([(ext_trace_domain, aux_trace.clone().flatten_to_base())]));
 
             challenger.observe(aux_trace_commit.clone());
+            for aux_final in &aux_finals {
+                challenger.observe_algebra_element(*aux_final);
+            }
 
             (
                 Some(aux_trace_commit),
                 Some(aux_trace),
                 Some(aux_trace_data),
                 randomness,
+                aux_finals,
             )
         } else {
-            (None, None, None, vec![])
+            (None, None, None, vec![], vec![])
         };
 
     #[cfg(debug_assertions)]
@@ -254,7 +274,7 @@ where
     //          `C(T_1(x), ..., T_w(x), T_1(hx), ..., T_w(hx), selectors(x)) / Z_H(x)`
     // at every point in the quotient domain. The degree of `Q(x)` is `<= deg(C(x)) - N = 2N - 2` in the case
     // where `deg(C) = 3`. (See the discussion above constraint_degree for more details.)
-    let quotient_values: Vec<SC::Challenge> = quotient_values::<SC, A, _>(
+    let quotient_values: Vec<SC::Challenge> = quotient_values::<SC, _, _>(
         air,
         public_values,
         trace_domain,
@@ -262,6 +282,7 @@ where
         &trace_on_quotient_domain,
         aux_trace_on_quotient_domain.as_ref(),
         &randomness,
+        &aux_finals,
         preprocessed_on_quotient_domain.as_ref(),
         alpha,
         constraint_count,
@@ -396,6 +417,12 @@ where
     } else {
         (None, None)
     };
+    let aux_finals = if aux_trace_data_opt.is_some() {
+        Some(aux_finals)
+    } else {
+        None
+    };
+
     let opened_values = OpenedValues {
         trace_local,
         trace_next,
@@ -410,6 +437,7 @@ where
         commitments,
         opened_values,
         opening_proof,
+        aux_finals,
         degree_bits: log_ext_degree,
     }
 }
@@ -425,12 +453,13 @@ pub fn quotient_values<SC, A, Mat>(
     trace_on_quotient_domain: &Mat,
     aux_trace_on_quotient_domain: Option<&Mat>,
     randomness: &[SC::Challenge],
+    aux_bus_boundary_values: &[SC::Challenge],
     preprocessed_on_quotient_domain: Option<&Mat>,
     alpha: SC::Challenge,
     constraint_count: usize,
 ) -> Vec<SC::Challenge>
 where
-    SC: StarkGenericConfig,
+    SC: StarkGenericConfig + Sync,
     A: MidenAir<Val<SC>, SC::Challenge>,
     Mat: Matrix<Val<SC>> + Sync,
     Val<SC>: TwoAdicField,
@@ -547,6 +576,13 @@ where
             let packed_randomness: Vec<PackedChallenge<SC>> =
                 randomness.iter().copied().map(Into::into).collect();
 
+            // Pack aux bus boundary values
+            let packed_aux_bus_boundary_values: Vec<PackedChallenge<SC>> = aux_bus_boundary_values
+                .iter()
+                .copied()
+                .map(Into::into)
+                .collect();
+
             // Grab precomputed periodic evaluations for this packed chunk.
             let periodic_values: Vec<PackedChallenge<SC>> = periodic_on_quotient
                 .as_ref()
@@ -575,7 +611,9 @@ where
                 accumulator,
                 constraint_index: 0,
                 packed_randomness,
+                aux_bus_boundary_values: &packed_aux_bus_boundary_values,
             };
+
             air.eval(&mut folder);
 
             // quotient(x) = constraints(x) / Z_H(x)

@@ -238,6 +238,7 @@ where
         commitments,
         opened_values,
         opening_proof,
+        aux_finals: _aux_finals,
         degree_bits,
     } = proof;
 

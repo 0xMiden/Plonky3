@@ -72,6 +72,15 @@ pub(crate) fn check_constraints<F, EF, A>(
             )
         };
 
+        let aux_bus_boundary_values;
+        if let Some(aux_matrix) = aux_trace.as_ref() {
+            let aux_bus_boundary_values_base =
+                unsafe { aux_matrix.row_slice_unchecked(height - 1) };
+            aux_bus_boundary_values = prover_row_to_ext::<F, EF>(&aux_bus_boundary_values_base);
+        } else {
+            aux_bus_boundary_values = vec![];
+        };
+
         let preprocessed_pair = preprocessed.as_ref().map(|preprocessed_matrix| {
             let preprocessed_local = preprocessed_matrix
                 .values
@@ -109,6 +118,7 @@ pub(crate) fn check_constraints<F, EF, A>(
             main,
             aux,
             aux_randomness,
+            aux_bus_boundary_values: &aux_bus_boundary_values,
             preprocessed: preprocessed_pair,
             public_values,
             periodic_values,
@@ -135,6 +145,8 @@ pub struct DebugConstraintBuilder<'a, F: Field, EF: ExtensionField<F>> {
     aux: ViewPair<'a, EF>,
     /// randomness that is used to compute aux trace
     aux_randomness: &'a [EF],
+    /// Aux bus boundary values (against the last row)
+    aux_bus_boundary_values: &'a [EF],
     /// A view of the preprocessed current and next row as a vertical pair (if present).
     preprocessed: Option<ViewPair<'a, F>>,
     /// The public values provided for constraint validation (e.g. inputs or outputs).
@@ -233,7 +245,7 @@ where
     }
 
     fn aux_bus_boundary_values(&self) -> &[Self::VarEF] {
-        unimplemented!()
+        self.aux_bus_boundary_values
     }
 
     fn periodic_evals(&self) -> &[Self::PeriodicVal] {

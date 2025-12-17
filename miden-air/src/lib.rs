@@ -42,7 +42,7 @@ mod air;
 mod builder;
 mod filtered_builder;
 
-pub use air::MidenAir;
+pub use air::{BusType, MidenAir};
 pub use builder::MidenAirBuilder;
 pub use filtered_builder::FilteredMidenAirBuilder;
 // Re-export for convenience

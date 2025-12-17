@@ -417,6 +417,7 @@ where
         commitments,
         opened_values,
         opening_proof,
+        aux_finals: None,
         degree_bits: log_ext_degree,
     }
 }
