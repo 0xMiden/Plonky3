@@ -325,6 +325,7 @@ where
         // Check aux trace shape
         && if num_randomness > 0 {
             let aux_width_base = aux_width * SC::Challenge::DIMENSION;
+            // Note: bus_types length is not matched against aux_width, to allow for more generic aux traces.
             match (&opened_values.aux_trace_local, &opened_values.aux_trace_next, aux_finals) {
                 (Some(l), Some(n), Some(f)) => l.len() == aux_width_base
                     && n.len() == aux_width_base
@@ -475,6 +476,7 @@ where
     );
 
     // Verify the aux trace final values match the expected values if the aux trace contains buses (one bus per aux column)
+    // Note: if no buses are defined (bus_types.is_empty), the boundary values of the aux_trace are not checked against the provided variable-length public inputs.
     for (idx, (bus_type, aux_final)) in bus_types
         .iter()
         .zip(aux_finals.as_ref().unwrap_or(&vec![]))
