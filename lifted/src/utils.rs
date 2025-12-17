@@ -4,6 +4,14 @@ use p3_field::TwoAdicField;
 use p3_field::coset::TwoAdicMultiplicativeCoset;
 use p3_util::reverse_slice_index_bits;
 
+/// Compute padding needed to align `len` to `alignment`.
+///
+/// Returns the number of zeros to add so that `len + padding` is a multiple of `alignment`.
+#[inline]
+pub const fn alignment_padding(len: usize, alignment: usize) -> usize {
+    len.next_multiple_of(alignment) - len
+}
+
 /// Coset points `gK` in bit-reversed order.
 ///
 /// Bit-reversal gives two properties essential for lifting:

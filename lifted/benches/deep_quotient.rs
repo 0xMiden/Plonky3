@@ -29,6 +29,7 @@ use p3_challenger::DuplexChallenger;
 use p3_commit::Mmcs;
 use p3_field::FieldArray;
 use p3_lifted::deep::prover::DeepPoly;
+use p3_lifted::deep::{DeepChallenges, MatrixGroupEvals};
 use p3_lifted::merkle_tree::MerkleTreeLmcs;
 use p3_lifted::utils::bit_reversed_coset_points;
 use p3_symmetric::CryptographicPermutation;
@@ -106,15 +107,24 @@ fn bench_deep_quotient(c: &mut Criterion) {
                 let z: EF = rng.sample(StandardUniform);
 
                 let quotient = PointQuotients::<F, EF, 1>::new(FieldArray([z]), &coset_points);
-                let evals = quotient.batch_eval_lifted(&matrices_refs, &coset_points, LOG_BLOWUP);
+                let batched_evals =
+                    quotient.batch_eval_lifted(&matrices_refs, &coset_points, LOG_BLOWUP);
+
+                // Transpose to [point][group][matrix][col]
+                let evals: Vec<Vec<MatrixGroupEvals<EF>>> = (0..1)
+                    .map(|i| batched_evals.iter().map(|g| g.map(|arr| arr[i])).collect())
+                    .collect();
 
                 let mut challenger = base_challenger.clone();
+                let challenges =
+                    DeepChallenges::sample::<F, _>(&evals, &mut challenger, hash::RATE);
+
                 black_box(DeepPoly::new(
                     &lmcs,
                     &quotient,
-                    &evals,
+                    &batched_evals,
                     prover_data.clone(),
-                    &mut challenger,
+                    &challenges,
                     hash::RATE,
                 ))
             });
@@ -130,15 +140,24 @@ fn bench_deep_quotient(c: &mut Criterion) {
                 let z2: EF = rng.sample(StandardUniform);
 
                 let quotient = PointQuotients::<F, EF, 2>::new(FieldArray([z1, z2]), &coset_points);
-                let evals = quotient.batch_eval_lifted(&matrices_refs, &coset_points, LOG_BLOWUP);
+                let batched_evals =
+                    quotient.batch_eval_lifted(&matrices_refs, &coset_points, LOG_BLOWUP);
+
+                // Transpose to [point][group][matrix][col]
+                let evals: Vec<Vec<MatrixGroupEvals<EF>>> = (0..2)
+                    .map(|i| batched_evals.iter().map(|g| g.map(|arr| arr[i])).collect())
+                    .collect();
 
                 let mut challenger = base_challenger.clone();
+                let challenges =
+                    DeepChallenges::sample::<F, _>(&evals, &mut challenger, hash::RATE);
+
                 black_box(DeepPoly::new(
                     &lmcs,
                     &quotient,
-                    &evals,
+                    &batched_evals,
                     prover_data.clone(),
-                    &mut challenger,
+                    &challenges,
                     hash::RATE,
                 ))
             });

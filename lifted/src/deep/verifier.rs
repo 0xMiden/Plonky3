@@ -2,14 +2,14 @@ use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
 
-use p3_challenger::FieldChallenger;
 use p3_commit::{BatchOpeningRef, Mmcs};
 use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::Dimensions;
 use p3_util::{log2_strict_usize, reverse_bits_len};
 use thiserror::Error;
 
-use super::{DeepQuery, OpeningClaim};
+use super::{DeepChallenges, DeepQuery, OpeningClaim};
+use crate::utils::alignment_padding;
 
 /// Verifier's view of the DEEP quotient as a point-query oracle.
 ///
@@ -56,7 +56,7 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
     /// # Arguments
     /// - `openings`: Claimed evaluations at each opening point
     /// - `commitments`: Pairs `(commitment, dims)` for Merkle verification
-    /// - `challenger`: Fiat-Shamir challenger for sampling challenges
+    /// - `challenges`: DEEP batching challenges (α for columns, β for points)
     /// - `alignment`: Width for coefficient alignment (see struct doc)
     ///
     /// We reduce each opening's evaluations to `f_reduced(zⱼ) = Σᵢ αⁱ · fᵢ(zⱼʳ)` eagerly.
@@ -66,10 +66,10 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
     /// # Errors
     ///
     /// Returns `DeepError` if the proof structure is invalid.
-    pub fn new<Challenger: FieldChallenger<F>>(
+    pub fn new(
         openings: &[OpeningClaim<EF>],
         commitments: Vec<(Commit::Commitment, Vec<Dimensions>)>,
-        challenger: &mut Challenger,
+        challenges: &DeepChallenges<EF>,
         alignment: usize,
     ) -> Result<Self, DeepError> {
         let num_commits = commitments.len();
@@ -91,8 +91,8 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, Commit: Mmcs<F>> DeepOracle<F, EF, 
             }
         }
 
-        let challenge_columns: EF = challenger.sample_algebra_element();
-        let challenge_points: EF = challenger.sample_algebra_element();
+        let challenge_columns = challenges.alpha;
+        let challenge_points = challenges.beta;
 
         // Reduce each opening's evaluations via Horner: (z_j, f_reduced(z_j))
         let reduced_openings: Vec<(EF, EF)> = openings
@@ -198,7 +198,6 @@ where
         // Horner's method on this slice: acc = α·acc + v for each v
         let acc = slice.iter().fold(acc, |a, &val| a * challenge + val);
         // Skip alignment gap: equivalent to processing implicit zeros
-        let gap = slice.len().next_multiple_of(alignment) - slice.len();
-        acc * challenge.exp_u64(gap as u64)
+        acc * challenge.exp_u64(alignment_padding(slice.len(), alignment) as u64)
     })
 }

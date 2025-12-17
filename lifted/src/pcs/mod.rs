@@ -31,8 +31,8 @@ pub use self::proof::{PcsError, Proof, QueryProof};
 use crate::deep::interpolate::PointQuotients;
 use crate::deep::prover::DeepPoly;
 use crate::deep::verifier::DeepOracle;
-use crate::deep::{MatrixGroupEvals, OpeningClaim};
-use crate::fri::{CommitPhaseData, FriError};
+use crate::deep::{DeepChallenges, MatrixGroupEvals, OpeningClaim};
+use crate::fri::{CommitPhaseData, FriChallenges, FriError};
 use crate::utils::bit_reversed_coset_points;
 
 /// Open committed matrices at N evaluation points.
@@ -106,29 +106,25 @@ where
         })
         .collect();
 
-    // Observe evaluations in challenger
-    for point_evals in &evals {
-        for group_evals in point_evals {
-            for val in group_evals.iter_evals() {
-                challenger.observe_algebra_element(*val);
-            }
-        }
-    }
+    // ─────────────────────────────────────────────────────────────────────────
+    // 3. Sample DEEP challenges (observes evaluations, then samples α and β)
+    // ─────────────────────────────────────────────────────────────────────────
+    let deep_challenges = DeepChallenges::sample(&evals, challenger, config.alignment);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 3. Construct DEEP quotient
+    // 4. Construct DEEP quotient
     // ─────────────────────────────────────────────────────────────────────────
     let deep_poly = DeepPoly::new(
         input_mmcs,
         &quotient,
         &batched_evals,
         prover_data,
-        challenger,
+        &deep_challenges,
         config.alignment,
     );
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 4. FRI commit phase
+    // 5. FRI commit phase (observes commitments, samples betas internally)
     // ─────────────────────────────────────────────────────────────────────────
     // The deep_poly contains evaluations on the LDE domain (size max_height).
     // FRI will prove that this polynomial is low-degree.
@@ -138,14 +134,14 @@ where
         CommitPhaseData::<F, EF, _>::new(fri_mmcs, &config.fri, deep_evals, challenger);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 5. Sample query indices
+    // 6. Sample query indices
     // ─────────────────────────────────────────────────────────────────────────
     let query_indices: Vec<usize> = (0..config.fri.num_queries)
         .map(|_| challenger.sample_bits(log_n))
         .collect();
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 6. Generate query proofs
+    // 7. Generate query proofs
     // ─────────────────────────────────────────────────────────────────────────
     let query_proofs: Vec<QueryProof<F, EF, InputMmcs, FriMmcs>> = query_indices
         .iter()
@@ -161,7 +157,7 @@ where
         .collect();
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 7. Assemble and return proof
+    // 8. Assemble and return proof
     // ─────────────────────────────────────────────────────────────────────────
     Proof {
         evals,
@@ -226,15 +222,9 @@ where
     let log_max_degree = log_n - config.fri.log_blowup;
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 2. Observe claimed evaluations
+    // 2. Sample DEEP challenges (observes evaluations, then samples α and β)
     // ─────────────────────────────────────────────────────────────────────────
-    for point_evals in &proof.evals {
-        for group_evals in point_evals {
-            for val in group_evals.iter_evals() {
-                challenger.observe_algebra_element(*val);
-            }
-        }
-    }
+    let deep_challenges = DeepChallenges::sample(&proof.evals, challenger, config.alignment);
 
     // ─────────────────────────────────────────────────────────────────────────
     // 3. Construct verifier's DEEP oracle
@@ -250,32 +240,26 @@ where
     let deep_oracle = DeepOracle::new(
         &openings_for_oracle,
         commitments.to_vec(),
-        challenger,
+        &deep_challenges,
         config.alignment,
     )?;
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 4. Process FRI commit proof to get betas
+    // 4. Sample FRI challenges (observes commitments + final poly, samples betas + queries)
     // ─────────────────────────────────────────────────────────────────────────
-    let betas = proof.fri_commit_proof.sample_betas::<F, _>(challenger);
+    let fri_challenges =
+        FriChallenges::sample(&proof.fri_commit_proof, &config.fri, log_n, challenger);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 5. Sample query indices (must match prover)
+    // 5. Verify each query
     // ─────────────────────────────────────────────────────────────────────────
-    let query_indices: Vec<usize> = (0..config.fri.num_queries)
-        .map(|_| challenger.sample_bits(log_n))
-        .collect();
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // 6. Verify each query
-    // ─────────────────────────────────────────────────────────────────────────
-    for (index, query_proof) in zip(query_indices, &proof.query_proofs) {
-        // 7a. Verify input matrix openings and compute expected DeepPoly value
+    for (index, query_proof) in zip(fri_challenges.query_indices, &proof.query_proofs) {
+        // 5a. Verify input matrix openings and compute expected DeepPoly value
         let deep_eval = deep_oracle
             .query(input_mmcs, index, &query_proof.input_openings)
             .map_err(PcsError::InputMmcsError)?;
 
-        // 7c. Verify FRI rounds
+        // 5b. Verify FRI rounds
         proof
             .fri_commit_proof
             .verify_query::<F>(
@@ -284,7 +268,7 @@ where
                 index,
                 log_max_degree,
                 deep_eval,
-                &betas,
+                &fri_challenges.betas,
                 &query_proof.fri_round_openings,
             )
             .map_err(|e| match e {
@@ -297,7 +281,7 @@ where
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 7. Return verified evaluations
+    // 6. Return verified evaluations
     // ─────────────────────────────────────────────────────────────────────────
     Ok(proof.evals.clone())
 }

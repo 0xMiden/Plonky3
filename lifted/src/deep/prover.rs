@@ -2,7 +2,6 @@ use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
 
-use p3_challenger::FieldChallenger;
 use p3_commit::Mmcs;
 use p3_field::{
     ExtensionField, Field, FieldArray, PackedFieldExtension, PackedValue, TwoAdicField, dot_product,
@@ -11,7 +10,7 @@ use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 
 use super::interpolate::PointQuotients;
-use super::{DeepQuery, MatrixGroupEvals};
+use super::{DeepChallenges, DeepQuery, MatrixGroupEvals};
 
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
 ///
@@ -41,14 +40,14 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
     /// - `quotient`: Precomputed `1/(zⱼ - X)` for all N opening points
     /// - `evals`: Evaluations at all N points, indexed as `evals[group_idx][point_idx]`
     /// - `prover_data`: References to committed matrix data
-    /// - `challenger`: Fiat-Shamir challenger for sampling batching challenges
+    /// - `challenges`: DEEP batching challenges (α for columns, β for points)
     /// - `alignment`: Width for coefficient alignment (must match commitment)
-    pub fn new<const N: usize, Challenger: FieldChallenger<F>>(
+    pub fn new<const N: usize>(
         c: &Commit,
         quotient: &PointQuotients<F, EF, N>,
         evals: &[MatrixGroupEvals<FieldArray<EF, N>>],
         prover_data: Vec<&'a Commit::ProverData<M>>,
-        challenger: &mut Challenger,
+        challenges: &DeepChallenges<EF>,
         alignment: usize,
     ) -> Self {
         assert_eq!(
@@ -62,8 +61,8 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
             .map(|data| c.get_matrices(*data))
             .collect();
 
-        let challenge_columns: EF = challenger.sample_algebra_element();
-        let challenge_points: EF = challenger.sample_algebra_element();
+        let challenge_columns = challenges.alpha;
+        let challenge_points = challenges.beta;
 
         let w = F::Packing::WIDTH;
         let point_quotient = quotient.point_quotient();

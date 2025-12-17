@@ -7,6 +7,11 @@ pub mod fold;
 pub mod prover;
 pub mod verifier;
 
+use alloc::vec::Vec;
+
+use p3_challenger::{CanObserve, FieldChallenger};
+use p3_commit::Mmcs;
+use p3_field::{ExtensionField, Field};
 pub use prover::CommitPhaseData;
 use thiserror::Error;
 pub use verifier::CommitPhaseProof;
@@ -74,6 +79,64 @@ impl FriParams {
         let log_final_size = log_domain_size - num_rounds * self.log_folding_factor;
         // degree = domain_size / blowup = 2^(log_final_size - log_blowup)
         1 << log_final_size.saturating_sub(self.log_blowup)
+    }
+}
+
+/// Challenges for FRI verification: folding betas and query indices.
+///
+/// Constructed via [`FriChallenges::sample`], which observes the commit phase proof
+/// (commitments and final polynomial) before sampling to enforce correct Fiat-Shamir ordering.
+#[derive(Clone, Debug)]
+pub struct FriChallenges<EF> {
+    /// Folding challenges β₀, β₁, ... (one per commitment round)
+    pub betas: Vec<EF>,
+    /// Query indices into the initial domain
+    pub query_indices: Vec<usize>,
+}
+
+impl<EF: Field> FriChallenges<EF> {
+    /// Observe commit phase proof and sample FRI challenges from the transcript.
+    ///
+    /// This enforces the correct Fiat-Shamir order:
+    /// 1. For each round: observe commitment, sample beta
+    /// 2. Observe final polynomial coefficients
+    /// 3. Sample query indices
+    pub fn sample<F, FriMmcs, Challenger>(
+        proof: &CommitPhaseProof<EF, FriMmcs>,
+        params: &FriParams,
+        log_domain_size: usize,
+        challenger: &mut Challenger,
+    ) -> Self
+    where
+        F: Field,
+        EF: ExtensionField<F>,
+        FriMmcs: Mmcs<EF>,
+        Challenger: FieldChallenger<F> + CanObserve<FriMmcs::Commitment>,
+    {
+        // Observe each commitment and sample corresponding beta
+        let betas: Vec<EF> = proof
+            .commitments
+            .iter()
+            .map(|commit| {
+                challenger.observe(commit.clone());
+                challenger.sample_algebra_element()
+            })
+            .collect();
+
+        // Observe final polynomial coefficients
+        for &coeff in &proof.final_poly {
+            challenger.observe_algebra_element(coeff);
+        }
+
+        // Sample query indices
+        let query_indices: Vec<usize> = (0..params.num_queries)
+            .map(|_| challenger.sample_bits(log_domain_size))
+            .collect();
+
+        Self {
+            betas,
+            query_indices,
+        }
     }
 }
 

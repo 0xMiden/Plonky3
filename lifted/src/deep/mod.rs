@@ -34,8 +34,64 @@ pub mod verifier;
 
 use alloc::vec::Vec;
 
+use p3_challenger::FieldChallenger;
 use p3_commit::{BatchOpening, Mmcs};
-use p3_field::Field;
+use p3_field::{ExtensionField, Field};
+
+use crate::utils::alignment_padding;
+
+/// Challenges for DEEP quotient batching.
+///
+/// - `alpha` (α): Batches polynomial columns into `f_reduced = Σᵢ αⁱ·fᵢ`
+/// - `beta` (β): Batches opening points into `Q = Σⱼ βʲ·Qⱼ`
+///
+/// Constructed via [`DeepChallenges::sample`], which observes the evaluations
+/// before sampling to enforce correct Fiat-Shamir transcript ordering.
+#[derive(Clone, Copy, Debug)]
+pub struct DeepChallenges<EF> {
+    /// Column batching challenge α
+    pub alpha: EF,
+    /// Point batching challenge β
+    pub beta: EF,
+}
+
+impl<EF: Field> DeepChallenges<EF> {
+    /// Observe evaluations and sample DEEP challenges from the transcript.
+    ///
+    /// This enforces the correct Fiat-Shamir order: observe data, then sample.
+    /// Each matrix's columns are observed with alignment padding to match
+    /// the coefficient derivation in the DEEP quotient.
+    pub fn sample<F, Challenger>(
+        evals: &[Vec<MatrixGroupEvals<EF>>],
+        challenger: &mut Challenger,
+        alignment: usize,
+    ) -> Self
+    where
+        F: Field,
+        EF: ExtensionField<F>,
+        Challenger: FieldChallenger<F>,
+    {
+        // Observe evaluations with alignment padding
+        for point_evals in evals {
+            for group_evals in point_evals {
+                for matrix_evals in group_evals.iter_matrices() {
+                    for val in matrix_evals {
+                        challenger.observe_algebra_element(*val);
+                    }
+                    // Pad to alignment with zeros (must match coefficient alignment)
+                    for _ in 0..alignment_padding(matrix_evals.len(), alignment) {
+                        challenger.observe_algebra_element(EF::ZERO);
+                    }
+                }
+            }
+        }
+
+        Self {
+            alpha: challenger.sample_algebra_element(),
+            beta: challenger.sample_algebra_element(),
+        }
+    }
+}
 
 /// Query proof containing Merkle openings for DEEP quotient verification.
 ///
