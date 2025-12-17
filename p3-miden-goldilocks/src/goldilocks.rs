@@ -38,8 +38,29 @@ pub struct Goldilocks {
 }
 
 impl Goldilocks {
-    pub(crate) const fn new(value: u64) -> Self {
+    /// Create a new Goldilocks field element from a u64 value.
+    ///
+    /// The value does not need to be canonical (less than the field modulus).
+    /// Non-canonical values will be automatically reduced during arithmetic operations.
+    #[inline]
+    pub const fn new(value: u64) -> Self {
         Self { value }
+    }
+
+    /// Returns the inner u64 value without any reduction.
+    ///
+    /// Note: This value may not be canonical (i.e., it may be >= ORDER).
+    #[inline]
+    pub const fn inner(&self) -> u64 {
+        self.value
+    }
+
+    /// Returns the canonical u64 representation of this field element.
+    ///
+    /// This is an alias for `as_canonical_u64()` for compatibility.
+    #[inline]
+    pub fn as_int(&self) -> u64 {
+        PrimeField64::as_canonical_u64(self)
     }
 
     /// Create a field element from a u64 value in a const context.
@@ -505,6 +526,45 @@ impl TwoAdicField for Goldilocks {
     fn two_adic_generator(bits: usize) -> Self {
         assert!(bits <= Self::TWO_ADICITY);
         Self::TWO_ADIC_GENERATORS[bits]
+    }
+}
+
+// ================================================================================================
+// FROM / TRY_FROM IMPLEMENTATIONS (for miden-crypto compatibility)
+// ================================================================================================
+
+impl From<u8> for Goldilocks {
+    #[inline]
+    fn from(value: u8) -> Self {
+        Self::new(value as u64)
+    }
+}
+
+impl From<u16> for Goldilocks {
+    #[inline]
+    fn from(value: u16) -> Self {
+        Self::new(value as u64)
+    }
+}
+
+impl From<u32> for Goldilocks {
+    #[inline]
+    fn from(value: u32) -> Self {
+        Self::new(value as u64)
+    }
+}
+
+impl From<u64> for Goldilocks {
+    #[inline]
+    fn from(value: u64) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<Goldilocks> for u64 {
+    #[inline]
+    fn from(value: Goldilocks) -> u64 {
+        value.as_canonical_u64()
     }
 }
 
