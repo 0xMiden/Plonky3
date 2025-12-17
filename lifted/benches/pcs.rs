@@ -239,10 +239,10 @@ fn bench_pcs(c: &mut Criterion) {
                     // Open all groups at both points
                     let prover_data_refs: Vec<_> =
                         commits_and_data.iter().map(|(_, data)| data).collect();
-                    let proof = pcs::open::<F, EF, _, _, _, _>(
+                    let proof = pcs::open::<F, EF, _, _, _, _, 2>(
                         &lmcs,
                         prover_data_refs,
-                        &[z1, z2],
+                        [z1, z2],
                         &mut challenger,
                         &config,
                         &fri_mmcs,
@@ -277,10 +277,10 @@ fn bench_pcs(c: &mut Criterion) {
                     // Open all groups at both points
                     let prover_data_refs: Vec<_> =
                         commits_and_data.iter().map(|(_, data)| data).collect();
-                    let proof = pcs::open::<F, EF, _, _, _, _>(
+                    let proof = pcs::open::<F, EF, _, _, _, _, 2>(
                         &lmcs,
                         prover_data_refs,
-                        &[z1, z2],
+                        [z1, z2],
                         &mut challenger,
                         &config_arity4,
                         &fri_mmcs,

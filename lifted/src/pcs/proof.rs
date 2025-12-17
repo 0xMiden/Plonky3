@@ -5,7 +5,8 @@ use p3_commit::{BatchOpening, Mmcs};
 use p3_field::{ExtensionField, Field};
 use thiserror::Error;
 
-use crate::deep::{DeepError, DeepQuery, MatrixGroupEvals};
+use crate::deep::verifier::DeepError;
+use crate::deep::{DeepQuery, MatrixGroupEvals};
 use crate::fri::CommitPhaseProof;
 
 /// Complete PCS opening proof.

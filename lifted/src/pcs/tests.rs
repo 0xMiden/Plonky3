@@ -66,10 +66,10 @@ fn test_pcs_open_verify_roundtrip() {
     let mut prover_challenger = challenger();
     prover_challenger.observe(commitment);
 
-    let proof = open::<F, EF, _, _, _, _>(
+    let proof = open::<F, EF, _, _, _, _, 2>(
         &lmcs,
         vec![&prover_data],
-        &eval_points,
+        eval_points,
         &mut prover_challenger,
         &config,
         &mmcs,
@@ -79,10 +79,10 @@ fn test_pcs_open_verify_roundtrip() {
     let mut verifier_challenger = challenger();
     verifier_challenger.observe(commitment);
 
-    let result = verify::<F, EF, _, _, _>(
+    let result = verify::<F, EF, _, _, _, 2>(
         &lmcs,
         &[(commitment, dims)],
-        &eval_points,
+        eval_points,
         &proof,
         &mut verifier_challenger,
         &config,

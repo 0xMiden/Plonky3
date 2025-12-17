@@ -34,10 +34,8 @@ pub mod verifier;
 
 use alloc::vec::Vec;
 
-pub use interpolate::{MultiPointQuotient, SinglePointQuotient};
 use p3_commit::{BatchOpening, Mmcs};
 use p3_field::Field;
-pub use verifier::DeepError;
 
 /// Query proof containing Merkle openings for DEEP quotient verification.
 ///
@@ -80,6 +78,18 @@ impl<T> MatrixGroupEvals<T> {
     /// Yields evaluations in order: all columns of matrix 0, then matrix 1, etc.
     pub fn iter_evals(&self) -> impl Iterator<Item = &T> {
         self.0.iter().flatten()
+    }
+
+    /// Transform each evaluation using the provided closure.
+    ///
+    /// Preserves the matrix/column structure while mapping `T -> U`.
+    pub fn map<U, F: FnMut(&T) -> U>(&self, mut f: F) -> MatrixGroupEvals<U> {
+        MatrixGroupEvals::new(
+            self.0
+                .iter()
+                .map(|matrix| matrix.iter().map(&mut f).collect())
+                .collect(),
+        )
     }
 }
 

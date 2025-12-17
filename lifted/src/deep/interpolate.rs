@@ -82,10 +82,7 @@ use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use p3_field::{
-    ExtensionField, FieldArray, TwoAdicField, batch_multiplicative_inverse,
-    scale_slice_in_place_single_core,
-};
+use p3_field::{ExtensionField, FieldArray, TwoAdicField, batch_multiplicative_inverse};
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 use p3_util::linear_map::LinearMap;
@@ -93,128 +90,13 @@ use p3_util::{flatten_to_base, log2_strict_usize, reconstitute_from_base};
 
 use super::MatrixGroupEvals;
 
-/// Precomputed `1/(z - xᵢ)` for all domain points, enabling O(n) barycentric
-/// evaluation and DEEP quotient construction.
-///
-/// Batch inversion (Montgomery's trick) computes all n inverses with 3n muls + 1 inv,
-/// amortized across all polynomials opened at this point.
-pub struct SinglePointQuotient<F: TwoAdicField, EF: ExtensionField<F>> {
-    /// The evaluation point `z`.
-    point: EF,
-    /// Evaluations of `1/(z-X)` over `gK`, used for both barycentric weights and DEEP quotients.
-    point_quotient: Vec<EF>,
-    _marker: PhantomData<F>,
-}
-
-impl<F: TwoAdicField, EF: ExtensionField<F>> SinglePointQuotient<F, EF> {
-    /// Create precomputation for point `z`.
-    ///
-    /// Computes the point quotient `1/(z-X)` over the coset `gK`.
-    /// Use [`Self::batch_eval_lifted`] to evaluate matrices at `z`.
-    pub fn new(point: EF, coset_points: &[F]) -> Self {
-        // q(X) = 1 / (z - X) evaluated over gK
-        let point_quotient: Vec<EF> = {
-            let diffs: Vec<EF> = coset_points.par_iter().map(|&x| point - x).collect();
-            batch_multiplicative_inverse(&diffs)
-        };
-
-        Self {
-            point,
-            point_quotient,
-            _marker: PhantomData,
-        }
-    }
-
-    /// Returns the precomputed point quotients `1/(z - xᵢ)` for each domain point.
-    ///
-    /// Used both for barycentric interpolation weights and DEEP quotient construction.
-    /// The domain points `xᵢ` are the coset `gK` in bit-reversed order.
-    pub fn point_quotient(&self) -> &[EF] {
-        &self.point_quotient
-    }
-
-    /// Evaluate all matrix columns at `zʳ` where `r = domain_size / matrix_height`.
-    ///
-    /// Exploits weight folding: since lifted polynomials repeat values in bit-reversed
-    /// order, we sum weights for r consecutive indices rather than computing r× more
-    /// dot products. Matrices must be sorted by ascending height to enable progressive
-    /// folding from largest to smallest domain.
-    pub fn batch_eval_lifted<M: Matrix<F>>(
-        &self,
-        matrices_groups: &[Vec<&M>],
-        coset_points: &[F],
-        log_blowup: usize,
-    ) -> Vec<MatrixGroupEvals<EF>> {
-        let n = coset_points.len();
-        let d = n >> log_blowup;
-        let log_d = log2_strict_usize(d);
-
-        let shift = coset_points[0]; // g in bit-reversed order
-        let shift_inverse = shift.inverse();
-
-        // s(z) = ((z/g)^d - 1) / d
-        let barycentric_scaling = {
-            let z_over_shift = self.point * shift_inverse;
-            let t = z_over_shift.exp_power_of_2(log_d) - EF::ONE;
-            t.div_2exp_u64(log_d as u64)
-        };
-
-        let used_heights: BTreeSet<usize> = matrices_groups
-            .iter()
-            .flat_map(|g| g.iter().map(|m| m.height()))
-            .collect();
-
-        // wᵢ(z) = xᵢ / (z - xᵢ) = xᵢ · point_quotient[i]
-        // For smaller domains, sum chunks (weight folding).
-        let barycentric_weights: LinearMap<usize, Vec<EF>> = {
-            let top_weights: Vec<EF> = coset_points[..d]
-                .par_iter()
-                .zip(self.point_quotient[..d].par_iter())
-                .map(|(&k, &inv)| inv * k)
-                .collect();
-
-            let mut result = LinearMap::new();
-            let mut current_weights = top_weights;
-
-            // Descending order: progressively sum chunks to shrink weights
-            for &target_height in used_heights.iter().rev() {
-                let target_d = target_height >> log_blowup;
-                let chunk_size = current_weights.len() / target_d;
-                current_weights = current_weights
-                    .par_chunks_exact(chunk_size)
-                    .map(|chunk| chunk.iter().copied().sum())
-                    .collect();
-                result.insert(target_height, current_weights.clone());
-            }
-            result
-        };
-
-        // f(zʳ) = s(z) · Σ wᵢ(z) · f(xᵢ)
-        matrices_groups
-            .iter()
-            .map(|group| {
-                let evals = group
-                    .iter()
-                    .map(|m| {
-                        let weights = &barycentric_weights[&m.height()];
-                        let mut evals = m.columnwise_dot_product(weights);
-                        scale_slice_in_place_single_core(&mut evals, barycentric_scaling);
-                        evals
-                    })
-                    .collect();
-                MatrixGroupEvals::new(evals)
-            })
-            .collect()
-    }
-}
-
 /// Precomputed `1/(zⱼ - xᵢ)` for N evaluation points, enabling batched O(n) barycentric
 /// evaluation and DEEP quotient construction.
 ///
-/// Unlike [`SinglePointQuotient`] which handles one point at a time, this struct batches
-/// N evaluation points together, sharing a single batch inversion across all points.
-/// This is more efficient when opening at multiple points (e.g., z₁ and z₂ in DEEP).
-pub struct MultiPointQuotient<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> {
+/// This struct batches N evaluation points together, sharing a single batch inversion
+/// across all points. This is more efficient when opening at multiple points (e.g., z
+/// and z·ω in DEEP for current and next row constraints).
+pub struct PointQuotients<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> {
     /// The evaluation points `[z₀, z₁, ..., z_{N-1}]`.
     points: FieldArray<EF, N>,
     /// Batched quotients: `point_quotient[i][j] = 1/(zⱼ - xᵢ)` for domain point xᵢ and eval point zⱼ.
@@ -222,7 +104,7 @@ pub struct MultiPointQuotient<F: TwoAdicField, EF: ExtensionField<F>, const N: u
     _marker: PhantomData<F>,
 }
 
-impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> MultiPointQuotient<F, EF, N> {
+impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> PointQuotients<F, EF, N> {
     /// Create precomputation for N evaluation points.
     ///
     /// Computes `1/(zⱼ - xᵢ)` for all domain points xᵢ and evaluation points zⱼ
@@ -355,10 +237,12 @@ impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> MultiPointQuotient<
 #[cfg(test)]
 mod tests {
     use alloc::vec;
+    use alloc::vec::Vec;
 
     use p3_dft::{NaiveDft, TwoAdicSubgroupDft};
     use p3_field::{Field, FieldArray, PrimeCharacteristicRing};
     use p3_interpolation::{interpolate_coset, interpolate_coset_with_precomputation};
+    use p3_matrix::Matrix;
     use p3_matrix::bitrev::BitReversibleMatrix;
     use p3_matrix::dense::RowMajorMatrix;
     use p3_util::reverse_slice_index_bits;
@@ -366,11 +250,16 @@ mod tests {
     use rand::prelude::SmallRng;
     use rand::{Rng, SeedableRng};
 
-    use super::{MultiPointQuotient, SinglePointQuotient};
+    use super::PointQuotients;
     use crate::tests::{EF, F};
     use crate::utils::bit_reversed_coset_points;
 
     /// Verify `batch_eval_lifted` matches `interpolate_coset` for various lift factors.
+    ///
+    /// This test creates matrices of varying heights and verifies that lifting produces
+    /// the correct evaluation. To satisfy `batch_eval_lifted`'s requirement that at least
+    /// one matrix fills the domain, we include a full-height dummy matrix alongside
+    /// each smaller test matrix.
     #[test]
     fn batch_eval_matches_interpolate_coset() {
         let rng = &mut SmallRng::seed_from_u64(42);
@@ -406,16 +295,27 @@ mod tests {
             let evals_std = NaiveDft.coset_dft_batch(padded_coeffs, lifted_shift);
 
             // Convert to bit-reversed order for our evaluation
-            let evals_br = evals_std.clone().bit_reverse_rows();
+            let evals_br: RowMajorMatrix<F> =
+                evals_std.clone().bit_reverse_rows().to_row_major_matrix();
 
             // Our method computes f(zʳ) where r = n / lde_height = 2^log_scaling
             let z_lifted = z.exp_power_of_2(log_scaling);
 
-            // Our barycentric evaluation
-            let quotient = SinglePointQuotient::<F, EF>::new(z, &coset_points_br);
-            let result =
-                quotient.batch_eval_lifted(&[vec![&evals_br]], &coset_points_br, log_blowup);
-            let our_evals = &result[0].0[0];
+            // Create a full-height dummy matrix to satisfy batch_eval_lifted's domain requirement
+            // (at least one matrix must fill the domain)
+            let dummy_matrix = RowMajorMatrix::new(vec![F::ZERO; n], 1);
+
+            // Our barycentric evaluation using PointQuotients<1>
+            // Include both the dummy (full height) and the test matrix (possibly smaller)
+            let quotient = PointQuotients::<F, EF, 1>::new(FieldArray([z]), &coset_points_br);
+            let result = quotient.batch_eval_lifted(
+                &[vec![&dummy_matrix, &evals_br]],
+                &coset_points_br,
+                log_blowup,
+            );
+            // Extract the single-point evaluations from FieldArray<EF, 1>
+            // Skip the dummy matrix (index 0), use the test matrix (index 1)
+            let our_evals: Vec<EF> = result[0].0[1].iter().map(|arr| arr[0]).collect();
 
             // Standard interpolation on the lifted coset
             let expected_evals = interpolate_coset(&evals_std, lifted_shift, z_lifted);
@@ -451,8 +351,8 @@ mod tests {
         // Random out-of-domain evaluation point
         let z: EF = rng.sample(StandardUniform);
 
-        // Create quotient for bit-reversed coset
-        let quotient = SinglePointQuotient::<F, EF>::new(z, &coset_points_br);
+        // Create quotient for bit-reversed coset using PointQuotients<1>
+        let quotient = PointQuotients::<F, EF, 1>::new(FieldArray([z]), &coset_points_br);
 
         // Test polynomial with no lifting (log_scaling = 0, full LDE domain)
         let poly_degree = n >> log_blowup; // = 64
@@ -472,10 +372,14 @@ mod tests {
 
         // Our barycentric evaluation (no lifting since lde_height = n)
         let result = quotient.batch_eval_lifted(&[vec![&evals_br]], &coset_points_br, log_blowup);
-        let our_evals = &result[0].0[0];
+        // Extract the single-point evaluations from FieldArray<EF, 1>
+        let our_evals: Vec<EF> = result[0].0[0].iter().map(|arr| arr[0]).collect();
 
         // Convert our diff_invs from bit-reversed to standard order for precomputation
-        let mut diff_invs_std = quotient.point_quotient()[..lde_height].to_vec();
+        let mut diff_invs_std: Vec<EF> = quotient.point_quotient()[..lde_height]
+            .iter()
+            .map(|arr| arr[0])
+            .collect();
         reverse_slice_index_bits(&mut diff_invs_std);
 
         // Interpolation with precomputation (both in standard order)
@@ -488,14 +392,14 @@ mod tests {
         );
 
         assert_eq!(our_evals.len(), expected_evals.len(), "length mismatch");
-        for (col, (our, expected)) in our_evals.iter().zip(expected_evals.iter()).enumerate() {
+        for (col, (&our, &expected)) in our_evals.iter().zip(expected_evals.iter()).enumerate() {
             assert_eq!(our, expected, "col={col}: evaluation mismatch");
         }
     }
 
-    /// Verify `MultiPointQuotient` produces the same results as separate `SinglePointQuotient` calls.
+    /// Verify `PointQuotients<2>` produces consistent results with separate `PointQuotients<1>` calls.
     #[test]
-    fn multi_point_matches_single_point() {
+    fn point_quotients_matches_single_point() {
         use alloc::vec::Vec;
 
         use p3_matrix::Matrix;
@@ -535,14 +439,14 @@ mod tests {
 
         let matrices_groups: Vec<Vec<&RowMajorMatrix<F>>> = vec![vec![&evals1_br, &evals2_br]];
 
-        // --- Single-point evaluation (baseline) ---
-        let sq1 = SinglePointQuotient::<F, EF>::new(z1, &coset_points_br);
-        let sq2 = SinglePointQuotient::<F, EF>::new(z2, &coset_points_br);
+        // --- Single-point evaluation using PointQuotients<1> (baseline) ---
+        let sq1 = PointQuotients::<F, EF, 1>::new(FieldArray([z1]), &coset_points_br);
+        let sq2 = PointQuotients::<F, EF, 1>::new(FieldArray([z2]), &coset_points_br);
         let single_evals1 = sq1.batch_eval_lifted(&matrices_groups, &coset_points_br, log_blowup);
         let single_evals2 = sq2.batch_eval_lifted(&matrices_groups, &coset_points_br, log_blowup);
 
         // --- Multi-point evaluation ---
-        let mq = MultiPointQuotient::<F, EF, 2>::new(FieldArray([z1, z2]), &coset_points_br);
+        let mq = PointQuotients::<F, EF, 2>::new(FieldArray([z1, z2]), &coset_points_br);
         let multi_evals = mq.batch_eval_lifted(&matrices_groups, &coset_points_br, log_blowup);
 
         // Verify point_quotient matches
@@ -553,14 +457,14 @@ mod tests {
             .enumerate()
         {
             let mq_q = &mq.point_quotient()[i];
-            assert_eq!(*sq1_q, mq_q[0], "point_quotient mismatch at {i} for z1");
-            assert_eq!(*sq2_q, mq_q[1], "point_quotient mismatch at {i} for z2");
+            assert_eq!(sq1_q[0], mq_q[0], "point_quotient mismatch at {i} for z1");
+            assert_eq!(sq2_q[0], mq_q[1], "point_quotient mismatch at {i} for z2");
         }
 
         // Verify batch_eval_lifted results match
         // multi_evals[group][point] vs single_evals[point][group]
+        // Now single_evals contain FieldArray<EF, 1>, multi_evals contain FieldArray<EF, 2>
         for (group_idx, multi_group) in multi_evals.iter().enumerate() {
-            // multi_group is [MatrixGroupEvals; 2] - one per point
             let single_group1 = &single_evals1[group_idx];
             let single_group2 = &single_evals2[group_idx];
 
@@ -575,7 +479,7 @@ mod tests {
                 );
                 for (col, (m, s)) in multi_mat.iter().zip(single_mat.iter()).enumerate() {
                     assert_eq!(
-                        m[0], *s,
+                        m[0], s[0],
                         "mismatch at group {group_idx}, matrix {matrix_idx}, col {col} for z1"
                     );
                 }
@@ -592,7 +496,7 @@ mod tests {
                 );
                 for (col, (m, s)) in multi_mat.iter().zip(single_mat.iter()).enumerate() {
                     assert_eq!(
-                        m[1], *s,
+                        m[1], s[0],
                         "mismatch at group {group_idx}, matrix {matrix_idx}, col {col} for z2"
                     );
                 }

@@ -5,15 +5,17 @@ use alloc::vec::Vec;
 
 use p3_challenger::CanObserve;
 use p3_commit::Mmcs;
+use p3_field::FieldArray;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use rand::distr::StandardUniform;
 use rand::prelude::SmallRng;
 use rand::{Rng, SeedableRng};
 
+use super::interpolate::PointQuotients;
 use super::prover::DeepPoly;
 use super::verifier::DeepOracle;
-use super::{OpeningClaim, SinglePointQuotient};
+use super::{MatrixGroupEvals, OpeningClaim};
 use crate::tests::{EF, F, RATE, base_lmcs, challenger};
 use crate::utils::bit_reversed_coset_points;
 
@@ -55,26 +57,28 @@ fn deep_quotient_end_to_end() {
     let (commitment, prover_data) = lmcs.commit(matrices.clone());
     let dims: Vec<_> = matrices.iter().map(|m| m.dimensions()).collect();
 
-    // Step 2: Compute evaluations at both opening points
-    let q1 = SinglePointQuotient::<F, EF>::new(z1, &coset_points);
-    let q2 = SinglePointQuotient::<F, EF>::new(z2, &coset_points);
+    // Step 2: Compute batched evaluations at both opening points
+    let quotient = PointQuotients::<F, EF, 2>::new(FieldArray([z1, z2]), &coset_points);
 
     let matrices_ref: Vec<&RowMajorMatrix<F>> = matrices.iter().collect();
     let matrices_groups = [matrices_ref];
-    let evals1 = q1.batch_eval_lifted(&matrices_groups, &coset_points, log_blowup);
-    let evals2 = q2.batch_eval_lifted(&matrices_groups, &coset_points, log_blowup);
+    let batched_evals = quotient.batch_eval_lifted(&matrices_groups, &coset_points, log_blowup);
+
+    // Transpose batched evals to per-point format for verifier
+    let evals1: Vec<MatrixGroupEvals<EF>> =
+        batched_evals.iter().map(|g| g.map(|arr| arr[0])).collect();
+    let evals2: Vec<MatrixGroupEvals<EF>> =
+        batched_evals.iter().map(|g| g.map(|arr| arr[1])).collect();
 
     // Step 3: Prover constructs DeepPoly with challenger
     // The challenger samples alpha (column batching) and beta (point batching) internally
     let mut prover_challenger = challenger();
     prover_challenger.observe(commitment);
 
-    let quotients = [q1, q2];
-    let evals_for_prover = [evals1.clone(), evals2.clone()];
     let deep_poly = DeepPoly::new(
         &lmcs,
-        &quotients,
-        &evals_for_prover,
+        &quotient,
+        &batched_evals,
         vec![&prover_data],
         &mut prover_challenger,
         alignment,

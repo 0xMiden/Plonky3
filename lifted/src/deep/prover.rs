@@ -10,7 +10,7 @@ use p3_field::{
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 
-use super::interpolate::{MultiPointQuotient, SinglePointQuotient};
+use super::interpolate::PointQuotients;
 use super::{DeepQuery, MatrixGroupEvals};
 
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
@@ -31,122 +31,10 @@ pub struct DeepPoly<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Co
 impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
     DeepPoly<'a, F, EF, M, Commit>
 {
-    /// Construct `Q(X)` from committed matrices and their evaluations at opening points.
-    ///
-    /// # Arguments
-    /// - `c`: The MMCS used for commitment (extracts matrices from prover data)
-    /// - `quotients`: Precomputed `1/(zⱼ - X)` for each opening point
-    /// - `evals`: Evaluations `fᵢ(zⱼʳ)` at each opening point, grouped by commitment/matrix
-    /// - `prover_data`: References to committed matrix data
-    /// - `challenger`: Fiat-Shamir challenger for sampling batching challenges
-    /// - `alignment`: Width for coefficient alignment (must match commitment)
-    ///
-    /// # Panics
-    /// Panics if `quotients` and `evals` have different lengths.
-    pub fn new<Challenger: FieldChallenger<F>>(
-        c: &Commit,
-        quotients: &[SinglePointQuotient<F, EF>],
-        evals: &[Vec<MatrixGroupEvals<EF>>],
-        prover_data: Vec<&'a Commit::ProverData<M>>,
-        challenger: &mut Challenger,
-        alignment: usize,
-    ) -> Self {
-        assert_eq!(
-            quotients.len(),
-            evals.len(),
-            "quotients and evals must have the same length"
-        );
-
-        let matrices_groups: Vec<Vec<&M>> = prover_data
-            .iter()
-            .map(|data| c.get_matrices(*data))
-            .collect();
-
-        let challenge_columns: EF = challenger.sample_algebra_element();
-        let challenge_points: EF = challenger.sample_algebra_element();
-
-        let w = F::Packing::WIDTH;
-        let n = quotients
-            .first()
-            .map(|q| q.point_quotient().len())
-            .unwrap_or(0);
-
-        let group_sizes: Vec<usize> = matrices_groups.iter().map(|g| g.len()).collect();
-        let widths: Vec<usize> = matrices_groups
-            .iter()
-            .flat_map(|g| g.iter().map(|m| m.width()))
-            .collect();
-
-        let coeffs_columns: Vec<Vec<EF>> =
-            derive_coeffs_from_challenge(&widths, challenge_columns, alignment);
-
-        // Negate coefficients so inner loop computes f_reduced(z) - f_reduced(X) via addition
-        let neg_column_coeffs: Vec<Vec<EF>> = coeffs_columns
-            .iter()
-            .map(|c| c.iter().copied().map(EF::neg).collect())
-            .collect();
-
-        // Compute -f_reduced(X) = -Σᵢ αⁱ · fᵢ(X) over the LDE domain.
-        // Negating here lets the inner loop compute f_reduced(zⱼ) - f_reduced(X) via addition.
-        let mut neg_column_coeffs_iter = neg_column_coeffs.iter();
-        let neg_f_reduced = zip(&matrices_groups, &group_sizes)
-            .map(|(matrices_group, &size)| {
-                let group_coeffs: Vec<&Vec<EF>> =
-                    neg_column_coeffs_iter.by_ref().take(size).collect();
-                accumulate_matrices(matrices_group, &group_coeffs)
-            })
-            .reduce(|mut acc, next| {
-                debug_assert_eq!(acc.len(), next.len());
-                acc.par_chunks_mut(w).zip(next.par_chunks(w)).for_each(
-                    |(acc_chunk, next_chunk)| {
-                        EF::add_slices(acc_chunk, next_chunk);
-                    },
-                );
-                acc
-            })
-            .unwrap_or_else(|| EF::zero_vec(n));
-
-        // Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) · 1/(zⱼ - X)
-        let mut deep_poly = EF::zero_vec(n);
-        let mut point_coeff = EF::ONE;
-        for (quotient, point_evals) in zip(quotients, evals) {
-            let point_quotient = quotient.point_quotient();
-            debug_assert_eq!(point_quotient.len(), n);
-
-            let coeffs_flat = coeffs_columns.iter().flatten().copied();
-            let evals_flat = point_evals.iter().flat_map(|g| g.iter_evals()).copied();
-            let f_reduced_at_z: EF = dot_product(coeffs_flat, evals_flat);
-            let f_reduced_at_z_packed = EF::ExtensionPacking::from(f_reduced_at_z);
-            let point_coeff_ef = EF::ExtensionPacking::from(point_coeff);
-            deep_poly
-                .par_chunks_exact_mut(w)
-                .zip(neg_f_reduced.par_chunks_exact(w))
-                .zip(point_quotient[..n].par_chunks_exact(w))
-                .for_each(|((acc_chunk, neg_chunk), q_chunk)| {
-                    let acc_p = EF::ExtensionPacking::from_ext_slice(acc_chunk);
-                    let neg_p = EF::ExtensionPacking::from_ext_slice(neg_chunk);
-                    let q_p = EF::ExtensionPacking::from_ext_slice(q_chunk);
-
-                    // Q(X) += βʲ · (f_reduced(zⱼ) - f_reduced(X)) / (zⱼ - X)
-                    //       = βʲ · q(X) · (f_reduced(zⱼ) + neg_f_reduced(X))
-                    // where q(X) = 1/(zⱼ - X) is the point quotient.
-                    let res_p = acc_p + point_coeff_ef * q_p * (f_reduced_at_z_packed + neg_p);
-                    res_p.to_ext_slice(acc_chunk);
-                });
-            point_coeff *= challenge_points;
-        }
-
-        Self {
-            matrices: prover_data,
-            deep_poly,
-            _marker: PhantomData,
-        }
-    }
-
     /// Construct `Q(X)` from committed matrices and batched evaluations at N opening points.
     ///
-    /// This is an optimized version of [`Self::new`] that uses [`MultiPointQuotient`] to batch
-    /// N evaluation points together, sharing batch inversion and using `columnwise_dot_product_batched`.
+    /// Uses [`PointQuotients`] to batch N evaluation points together, sharing batch inversion
+    /// and using `columnwise_dot_product_batched` for better cache utilization.
     ///
     /// # Arguments
     /// - `c`: The MMCS used for commitment (extracts matrices from prover data)
@@ -155,9 +43,9 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
     /// - `prover_data`: References to committed matrix data
     /// - `challenger`: Fiat-Shamir challenger for sampling batching challenges
     /// - `alignment`: Width for coefficient alignment (must match commitment)
-    pub fn new_batched<const N: usize, Challenger: FieldChallenger<F>>(
+    pub fn new<const N: usize, Challenger: FieldChallenger<F>>(
         c: &Commit,
-        quotient: &MultiPointQuotient<F, EF, N>,
+        quotient: &PointQuotients<F, EF, N>,
         evals: &[MatrixGroupEvals<FieldArray<EF, N>>],
         prover_data: Vec<&'a Commit::ProverData<M>>,
         challenger: &mut Challenger,

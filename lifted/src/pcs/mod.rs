@@ -22,19 +22,20 @@ use core::iter::zip;
 
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::Mmcs;
-use p3_field::{ExtensionField, TwoAdicField};
+use p3_field::{ExtensionField, FieldArray, TwoAdicField};
 use p3_matrix::{Dimensions, Matrix};
 use p3_util::log2_strict_usize;
 
 pub use self::config::PcsConfig;
 pub use self::proof::{PcsError, Proof, QueryProof};
+use crate::deep::interpolate::PointQuotients;
 use crate::deep::prover::DeepPoly;
 use crate::deep::verifier::DeepOracle;
-use crate::deep::{MatrixGroupEvals, OpeningClaim, SinglePointQuotient};
+use crate::deep::{MatrixGroupEvals, OpeningClaim};
 use crate::fri::{CommitPhaseData, FriError};
 use crate::utils::bit_reversed_coset_points;
 
-/// Open committed matrices at multiple evaluation points.
+/// Open committed matrices at N evaluation points.
 ///
 /// # Type Parameters
 /// - `F`: Base field (must be two-adic for FRI)
@@ -43,21 +44,22 @@ use crate::utils::bit_reversed_coset_points;
 /// - `FriMmcs`: MMCS used for FRI round commitments (typically `ExtensionMmcs<F, EF, _>`)
 /// - `M`: Matrix type for input matrices
 /// - `Challenger`: Fiat-Shamir challenger
+/// - `N`: Number of evaluation points (compile-time constant)
 ///
 /// # Arguments
 /// - `input_mmcs`: The MMCS instance used for initial commitment
 /// - `prover_data`: Prover data from the commitment phase (one per committed group)
-/// - `eval_points`: Slice of out-of-domain evaluation points
+/// - `eval_points`: Array of N out-of-domain evaluation points
 /// - `challenger`: Mutable reference to the Fiat-Shamir challenger
 /// - `config`: PCS configuration (FRI params + alignment)
 /// - `fri_mmcs`: MMCS instance for FRI round commitments
 ///
 /// # Returns
 /// A `Proof` containing evaluations and all opening proofs
-pub fn open<F, EF, InputMmcs, FriMmcs, M, Challenger>(
+pub fn open<F, EF, InputMmcs, FriMmcs, M, Challenger, const N: usize>(
     input_mmcs: &InputMmcs,
     prover_data: Vec<&InputMmcs::ProverData<M>>,
-    eval_points: &[EF],
+    eval_points: [EF; N],
     challenger: &mut Challenger,
     config: &PcsConfig,
     fri_mmcs: &FriMmcs,
@@ -88,19 +90,21 @@ where
     let coset_points = bit_reversed_coset_points::<F>(log_n);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 2. Compute evaluations at each opening point
+    // 2. Compute evaluations at all N opening points (batched)
     // ─────────────────────────────────────────────────────────────────────────
-    let num_points = eval_points.len();
-    let mut quotients: Vec<SinglePointQuotient<F, EF>> = Vec::with_capacity(num_points);
-    let mut evals: Vec<Vec<MatrixGroupEvals<EF>>> = Vec::with_capacity(num_points);
+    let quotient = PointQuotients::<F, EF, N>::new(FieldArray::from(eval_points), &coset_points);
+    let batched_evals =
+        quotient.batch_eval_lifted(&matrices_groups, &coset_points, config.fri.log_blowup);
 
-    for &z in eval_points {
-        let quotient = SinglePointQuotient::<F, EF>::new(z, &coset_points);
-        let point_evals =
-            quotient.batch_eval_lifted(&matrices_groups, &coset_points, config.fri.log_blowup);
-        quotients.push(quotient);
-        evals.push(point_evals);
-    }
+    // Transpose batched evals: [group][matrix][col] of FieldArray<N> -> [point][group][matrix][col] of EF
+    let evals: Vec<Vec<MatrixGroupEvals<EF>>> = (0..N)
+        .map(|point_idx| {
+            batched_evals
+                .iter()
+                .map(|group| group.map(|arr| arr[point_idx]))
+                .collect()
+        })
+        .collect();
 
     // Observe evaluations in challenger
     for point_evals in &evals {
@@ -116,8 +120,8 @@ where
     // ─────────────────────────────────────────────────────────────────────────
     let deep_poly = DeepPoly::new(
         input_mmcs,
-        &quotients,
-        &evals,
+        &quotient,
+        &batched_evals,
         prover_data,
         challenger,
         config.alignment,
@@ -174,7 +178,7 @@ where
 /// # Arguments
 /// - `input_mmcs`: The MMCS instance used for initial commitment
 /// - `commitments`: The commitments to verify against (with dimensions)
-/// - `eval_points`: Slice of out-of-domain evaluation points
+/// - `eval_points`: Array of N out-of-domain evaluation points
 /// - `proof`: The proof to verify
 /// - `challenger`: Mutable reference to the Fiat-Shamir challenger
 /// - `config`: PCS configuration (must match prover's)
@@ -184,10 +188,10 @@ where
 /// `Ok(evals)` where `evals[point_idx][commit_idx]` contains the verified evaluations,
 /// or `Err` if verification fails.
 #[allow(clippy::type_complexity)]
-pub fn verify<F, EF, InputMmcs, FriMmcs, Challenger>(
+pub fn verify<F, EF, InputMmcs, FriMmcs, Challenger, const N: usize>(
     input_mmcs: &InputMmcs,
     commitments: &[(InputMmcs::Commitment, Vec<Dimensions>)],
-    eval_points: &[EF],
+    eval_points: [EF; N],
     proof: &Proof<F, EF, InputMmcs, FriMmcs>,
     challenger: &mut Challenger,
     config: &PcsConfig,
@@ -236,7 +240,7 @@ where
     // 3. Construct verifier's DEEP oracle
     // ─────────────────────────────────────────────────────────────────────────
     // Build openings for oracle: pair each eval_point with its evaluations
-    let openings_for_oracle: Vec<OpeningClaim<EF>> = zip(eval_points, &proof.evals)
+    let openings_for_oracle: Vec<OpeningClaim<EF>> = zip(eval_points.iter(), &proof.evals)
         .map(|(&z, evals)| OpeningClaim {
             point: z,
             evals: evals.clone(),
