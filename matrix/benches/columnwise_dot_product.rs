@@ -10,8 +10,8 @@ use p3_field::FieldArray;
 use p3_field::extension::BinomialExtensionField;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
-use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use rand::rngs::SmallRng;
 
 type F = BabyBear;
 type EF = BinomialExtensionField<F, 4>;
