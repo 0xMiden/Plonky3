@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use miden_air::MidenAirBuilder;
+use p3_miden_air::MidenAirBuilder;
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::ViewPair;
 

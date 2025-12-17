@@ -1,7 +1,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use miden_air::{MidenAir, MidenAirBuilder, RowMajorMatrix};
+use p3_miden_air::{MidenAir, MidenAirBuilder, RowMajorMatrix};
 use p3_field::{ExtensionField, Field};
 use p3_util::log2_ceil_usize;
 use tracing::instrument;
@@ -253,7 +253,7 @@ impl<F: Field> MidenAirBuilder for SymbolicAirBuilder<F> {
 
 #[cfg(test)]
 mod tests {
-    use miden_air::MidenAir;
+    use p3_miden_air::MidenAir;
     use p3_goldilocks::Goldilocks;
     use p3_matrix::Matrix;
 

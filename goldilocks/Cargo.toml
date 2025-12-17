@@ -10,6 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+p3-challenger.workspace = true
 p3-dft.workspace = true
 p3-field.workspace = true
 p3-mds.workspace = true
@@ -21,7 +22,6 @@ num-bigint.workspace = true
 paste.workspace = true
 rand.workspace = true
 serde = { workspace = true, features = ["derive"] }
-winter-utils.workspace = true
 
 [dev-dependencies]
 p3-field-testing.workspace = true

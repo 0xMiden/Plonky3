@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use miden_air::{MidenAir, MidenAirBuilder};
+use p3_miden_air::{MidenAir, MidenAirBuilder};
 use p3_field::{BasedVectorSpace, ExtensionField, Field};
 use p3_matrix::Matrix;
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};

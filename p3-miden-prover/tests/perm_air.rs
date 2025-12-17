@@ -1,13 +1,13 @@
 use core::borrow::Borrow;
 
-use miden_air::{MidenAir, MidenAirBuilder};
+use p3_miden_air::{MidenAir, MidenAirBuilder};
 use miden_prover::{StarkConfig, prove, verify};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, PrimeField64};
-use p3_fri::{TwoAdicFriPcs, create_test_fri_params};
+use p3_miden_fri::{TwoAdicFriPcs, create_test_fri_params};
 use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -257,7 +257,7 @@ fn test_public_value_deg5() {
 fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
     use p3_commit::ExtensionMmcs;
     use p3_field::extension::BinomialExtensionField;
-    use p3_fri::TwoAdicFriPcs;
+    use p3_miden_fri::TwoAdicFriPcs;
     use p3_uni_stark::StarkConfig;
 
     type Challenge5 = BinomialExtensionField<Val, 5>;

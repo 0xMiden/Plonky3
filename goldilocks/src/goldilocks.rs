@@ -1,6 +1,5 @@
-use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
-use alloc::{format, vec};
 use core::fmt::{Debug, Display, Formatter};
 use core::hash::{Hash, Hasher};
 use core::iter::{Product, Sum};
@@ -8,6 +7,7 @@ use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAss
 use core::{array, fmt};
 
 use num_bigint::BigUint;
+use p3_challenger::UniformSamplingField;
 use p3_field::exponentiation::exp_10540996611094048183;
 use p3_field::integers::QuotientMap;
 use p3_field::op_assign_macros::{
@@ -22,9 +22,6 @@ use p3_util::{assume, branch_hint, flatten_to_base, gcd_inner};
 use rand::Rng;
 use rand::distr::{Distribution, StandardUniform};
 use serde::{Deserialize, Serialize};
-use winter_utils::{
-    ByteReader, ByteWriter, Deserializable, DeserializationError, Randomizable, Serializable,
-};
 
 /// The Goldilocks prime
 pub(crate) const P: u64 = 0xFFFF_FFFF_0000_0001;
@@ -41,25 +38,8 @@ pub struct Goldilocks {
 }
 
 impl Goldilocks {
-    /// Create a new element from u64;
-    pub const fn new(value: u64) -> Self {
-        Self {
-            value: if value >= P { value - P } else { value },
-        }
-    }
-
-    /// Expose the inner value; does not guarantee the uniqueness of data
-    pub const fn inner(&self) -> u64 {
-        self.value
-    }
-
-    /// Expose the inner value; does guarantee the uniqueness of data
-    pub const fn as_int(&self) -> u64 {
-        if self.value >= P {
-            self.value - P
-        } else {
-            self.value
-        }
+    pub(crate) const fn new(value: u64) -> Self {
+        Self { value }
     }
 
     /// Convert a constant u64 array into a constant Goldilocks array.
@@ -140,67 +120,6 @@ impl Goldilocks {
     };
 }
 
-impl From<Goldilocks> for u64 {
-    fn from(value: Goldilocks) -> Self {
-        value.as_int()
-    }
-}
-
-impl Deserializable for Goldilocks {
-    fn read_from<R: ByteReader>(source: &mut R) -> Result<Self, DeserializationError> {
-        let inner = u64::read_from(source)?;
-        Ok(Self { value: inner })
-    }
-}
-
-impl Serializable for Goldilocks {
-    fn write_into<W: ByteWriter>(&self, target: &mut W) {
-        self.value.write_into(target);
-    }
-
-    fn get_size_hint(&self) -> usize {
-        8
-    }
-}
-
-impl Randomizable for Goldilocks {
-    const VALUE_SIZE: usize = 8;
-
-    fn from_random_bytes(source: &[u8]) -> Option<Self> {
-        let value = u64::from_random_bytes(source)?;
-
-        if value >= P {
-            None
-        } else {
-            Some(Self { value })
-        }
-    }
-}
-
-impl From<u8> for Goldilocks {
-    fn from(value: u8) -> Self {
-        Self {
-            value: value as u64,
-        }
-    }
-}
-
-impl From<u16> for Goldilocks {
-    fn from(value: u16) -> Self {
-        Self {
-            value: value as u64,
-        }
-    }
-}
-
-impl From<u32> for Goldilocks {
-    fn from(value: u32) -> Self {
-        Self {
-            value: value as u64,
-        }
-    }
-}
-
 impl PartialEq for Goldilocks {
     fn eq(&self, other: &Self) -> bool {
         self.as_canonical_u64() == other.as_canonical_u64()
@@ -251,6 +170,26 @@ impl Distribution<Goldilocks> for StandardUniform {
             }
         }
     }
+}
+
+impl UniformSamplingField for Goldilocks {
+    const MAX_SINGLE_SAMPLE_BITS: usize = 24;
+    const SAMPLING_BITS_M: [u64; 64] = {
+        let prime: u64 = P;
+        let mut a = [0u64; 64];
+        let mut k = 0;
+        while k < 64 {
+            if k == 0 {
+                a[k] = prime; // This value is irrelevant in practice. `bits = 0` returns 0 always.
+            } else {
+                // Create a mask to zero out the last k bits
+                let mask = !((1u64 << k) - 1);
+                a[k] = prime & mask;
+            }
+            k += 1;
+        }
+        a
+    };
 }
 
 impl PrimeCharacteristicRing for Goldilocks {
@@ -514,20 +453,6 @@ impl QuotientMap<i64> for Goldilocks {
     #[inline(always)]
     unsafe fn from_canonical_unchecked(int: i64) -> Self {
         Self::from_int(int)
-    }
-}
-
-impl TryFrom<u64> for Goldilocks {
-    type Error = String;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        if value >= P {
-            Err(format!(
-                "invalid field element: value {value} is greater than or equal to the field modulus"
-            ))
-        } else {
-            Ok(Self::new(value))
-        }
     }
 }
 

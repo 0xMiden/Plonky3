@@ -1,6 +1,6 @@
 [package]
-name = "miden-prover"
-description = "A minimal univariate STARK framework providing core components for proof generation and verification."
+name = "p3-miden-fri"
+description = "Miden-specific FRI implementation with configurable folding factor, based on Plonky3's FRI."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,7 +10,6 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-p3-air.workspace = true
 p3-challenger.workspace = true
 p3-commit.workspace = true
 p3-dft.workspace = true
@@ -18,31 +17,28 @@ p3-field.workspace = true
 p3-interpolation.workspace = true
 p3-matrix.workspace = true
 p3-maybe-rayon.workspace = true
-p3-uni-stark.workspace = true
 p3-util.workspace = true
 
-miden-air.workspace = true
-
 itertools.workspace = true
+rand.workspace = true
 serde = { workspace = true, features = ["derive", "alloc"] }
 tracing.workspace = true
 
 [dev-dependencies]
-p3-challenger.workspace = true
-p3-commit = { workspace = true, features = ["test-utils"] }
+p3-baby-bear.workspace = true
+p3-circle.workspace = true
 p3-dft.workspace = true
-p3-fri.workspace = true
 p3-goldilocks.workspace = true
 p3-keccak.workspace = true
-p3-matrix.workspace = true
 p3-merkle-tree.workspace = true
+p3-mersenne-31.workspace = true
 p3-symmetric.workspace = true
 
-postcard = { workspace = true, features = ["alloc"] }
-rand.workspace = true
+criterion.workspace = true
 
-[features]
-parallel = ["p3-maybe-rayon/parallel"]
+[[bench]]
+name = "fold_even_odd"
+harness = false
 
 [lints]
 workspace = true

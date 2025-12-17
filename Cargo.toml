@@ -26,8 +26,9 @@ members = [
     "mds",
     "merkle-tree",
     "mersenne-31",
-    "miden-air",
-    "miden-prover",
+    "p3-miden-fri",
+    "p3-miden-air",
+    "p3-miden-prover",
     "monolith",
     "monty-31",
     "multilinear-util",
@@ -75,7 +76,9 @@ itertools = { version = "0.14.0", default-features = false, features = [
     "use_alloc",
 ] }
 
-miden-air = { path = "miden-air", version = "0.3.0" }
+p3-miden-air = { path = "p3-miden-air", version = "0.3.0" }
+p3-miden-fri = { path = "p3-miden-fri", version = "0.3.0" }
+p3-miden-prover = { path = "p3-miden-prover", version = "0.3.0" }
 num-bigint = { version = "0.4.3", default-features = false }
 paste = "1.0.15"
 postcard = { version = "1.0.0", default-features = false }
@@ -98,7 +101,6 @@ tracing-subscriber = { version = "0.3.17", default-features = false, features = 
     "alloc",
 ] }
 transpose = "0.2.3"
-winter-utils = { version = "0.13", default-features = false }
 
 # Local dependencies
 p3-air = { path = "air", version = "0.3.0" }

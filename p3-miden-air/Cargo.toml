@@ -1,6 +1,6 @@
 [package]
-name = "miden-air"
-description.workspace = true
+name = "p3-miden-air"
+description = "Miden-specific AIR traits and utilities for Plonky3."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

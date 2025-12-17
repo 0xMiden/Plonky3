@@ -9,13 +9,15 @@ use p3_matrix::Matrix;
 pub struct FriParameters<M> {
     pub log_blowup: usize,
     // TODO: This parameter and FRI early stopping are not yet implemented in `CirclePcs`.
+    /// Log of the size of the final polynomial.
+    /// Since we fold `log_folding_factor` bits in each iteration, it must be that
+    ///   log_final_poly_len \equiv log_original_poly_len \pmod log_folding_factor
     pub log_final_poly_len: usize,
     pub num_queries: usize,
-    /// Number of bits for the PoW phase before sampling _each_ batching challenge.
-    pub commit_proof_of_work_bits: usize,
-    /// Number of bits for the PoW phase before sampling the queries.
-    pub query_proof_of_work_bits: usize,
+    pub proof_of_work_bits: usize,
     pub mmcs: M,
+    /// Log of the folding factor (arity). Must be >= 1.
+    pub log_folding_factor: usize,
 }
 
 impl<M> FriParameters<M> {
@@ -27,13 +29,17 @@ impl<M> FriParameters<M> {
         1 << self.log_final_poly_len
     }
 
+    pub const fn folding_factor(&self) -> usize {
+        1 << self.log_folding_factor
+    }
+
     /// Returns the soundness bits of this FRI instance based on the
     /// [ethSTARK](https://eprint.iacr.org/2021/582) conjecture.
     ///
     /// Certain users may instead want to look at proven soundness, a more complex calculation which
     /// isn't currently supported by this crate.
     pub const fn conjectured_soundness_bits(&self) -> usize {
-        self.log_blowup * self.num_queries + self.query_proof_of_work_bits
+        self.log_blowup * self.num_queries + self.proof_of_work_bits
     }
 }
 
@@ -47,9 +53,13 @@ pub trait FriFoldingStrategy<F: Field, EF: ExtensionField<F>> {
     /// They will be passed to our callbacks, but ignored (shifted off) by FRI.
     fn extra_query_index_bits(&self) -> usize;
 
+    /// Log of the folding factor (arity). Defaults to 1 (folding factor of 2).
+    fn log_folding_factor(&self) -> usize {
+        1
+    }
+
     /// Fold a row, returning a single column.
-    /// Right now the input row will always be 2 columns wide,
-    /// but we may support higher folding arity in the future.
+    /// Supporting arbitrary folding width that is a power of 2.
     fn fold_row(
         &self,
         index: usize,
@@ -72,9 +82,9 @@ pub const fn create_test_fri_params<Mmcs>(
         log_blowup: 2,
         log_final_poly_len,
         num_queries: 2,
-        commit_proof_of_work_bits: 1,
-        query_proof_of_work_bits: 1,
+        proof_of_work_bits: 1,
         mmcs,
+        log_folding_factor: 1,
     }
 }
 
@@ -85,9 +95,9 @@ pub const fn create_test_fri_params_zk<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> 
         log_blowup: 2,
         log_final_poly_len: 0,
         num_queries: 2,
-        commit_proof_of_work_bits: 1,
-        query_proof_of_work_bits: 1,
+        proof_of_work_bits: 1,
         mmcs,
+        log_folding_factor: 1,
     }
 }
 
@@ -98,9 +108,9 @@ pub const fn create_benchmark_fri_params<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs
         log_blowup: 1,
         log_final_poly_len: 0,
         num_queries: 100,
-        commit_proof_of_work_bits: 0,
-        query_proof_of_work_bits: 16,
+        proof_of_work_bits: 16,
         mmcs,
+        log_folding_factor: 1,
     }
 }
 
@@ -111,8 +121,32 @@ pub const fn create_benchmark_fri_params_zk<Mmcs>(mmcs: Mmcs) -> FriParameters<M
         log_blowup: 2,
         log_final_poly_len: 0,
         num_queries: 100,
-        commit_proof_of_work_bits: 0,
-        query_proof_of_work_bits: 16,
+        proof_of_work_bits: 16,
         mmcs,
+        log_folding_factor: 1,
+    }
+}
+
+/// Creates a set of `FriParameters` for 96-bit conjectured security suitable for miden VM constraints proving in non-recursive context.
+pub const fn create_regular_miden_fri_params<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> {
+    FriParameters {
+        log_blowup: 3,
+        log_final_poly_len: 8,
+        num_queries: 27,
+        proof_of_work_bits: 16,
+        mmcs,
+        log_folding_factor: 3,
+    }
+}
+
+/// Creates a set of `FriParameters` for 96-bit conjectured security suitable for miden VM constraints proving in recursive context.
+pub const fn create_recursive_miden_fri_params<Mmcs>(mmcs: Mmcs) -> FriParameters<Mmcs> {
+    FriParameters {
+        log_blowup: 3,
+        log_final_poly_len: 7,
+        num_queries: 27,
+        proof_of_work_bits: 16,
+        mmcs,
+        log_folding_factor: 2,
     }
 }

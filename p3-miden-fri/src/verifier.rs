@@ -1,5 +1,4 @@
 use alloc::collections::btree_map::BTreeMap;
-use alloc::vec;
 use alloc::vec::Vec;
 
 use itertools::Itertools;
@@ -10,30 +9,19 @@ use p3_field::{ExtensionField, Field, TwoAdicField};
 use p3_matrix::Dimensions;
 use p3_util::zip_eq::zip_eq;
 use p3_util::{log2_strict_usize, reverse_bits_len};
-use thiserror::Error;
 
 use crate::{
     CommitPhaseProofStep, CommitmentWithOpeningPoints, FriFoldingStrategy, FriParameters, FriProof,
     QueryProof,
 };
 
-#[derive(Debug, Error)]
-pub enum FriError<CommitMmcsErr, InputError>
-where
-    CommitMmcsErr: core::fmt::Debug,
-    InputError: core::fmt::Debug,
-{
-    #[error("invalid proof shape")]
+#[derive(Debug)]
+pub enum FriError<CommitMmcsErr, InputError> {
     InvalidProofShape,
-    #[error("commit phase MMCS error: {0:?}")]
     CommitPhaseMmcsError(CommitMmcsErr),
-    #[error("input error: {0:?}")]
     InputError(InputError),
-    #[error("final polynomial mismatch: evaluation does not match expected value")]
     FinalPolyMismatch,
-    #[error("invalid proof-of-work witness")]
     InvalidPowWitness,
-    #[error("missing input: required input is not present")]
     MissingInput,
 }
 
@@ -83,31 +71,25 @@ where
     // (i.e counting the number (point, claimed_evaluation) pairs).
     let alpha: Challenge = challenger.sample_algebra_element();
 
-    // `commit_phase_commits.len()` is the number of folding steps, so the maximum polynomial degree will be
-    // `commit_phase_commits.len() + self.fri.log_final_poly_len` and so, as the same blow-up is used for all
-    // polynomials, the maximum matrix height over all commit batches is:
-    let log_global_max_height =
-        proof.commit_phase_commits.len() + params.log_blowup + params.log_final_poly_len;
+    // `commit_phase_commits.len()` is the number of folding steps. Each step reduces the height by a factor
+    // of `folding_factor`. So the maximum polynomial degree will be
+    // `commit_phase_commits.len() * log_folding_factor + log_final_poly_len`, and so, as the same blow-up
+    // is used for all polynomials, the maximum matrix height over all commit batches is:
+    let log_global_max_height = proof.commit_phase_commits.len() * params.log_folding_factor
+        + params.log_blowup
+        + params.log_final_poly_len;
 
-    if proof.commit_pow_witnesses.len() != proof.commit_phase_commits.len() {
-        return Err(FriError::InvalidProofShape);
-    }
-
-    // Generate all of the random challenges for the FRI rounds, checking PoW per round.
+    // Generate all of the random challenges for the FRI rounds.
     let betas: Vec<Challenge> = proof
         .commit_phase_commits
         .iter()
-        .zip(&proof.commit_pow_witnesses)
-        .map(|(comm, witness)| {
-            // Observe the commitment, check the PoW witness, then sample the
-            // folding challenge.
+        .map(|comm| {
+            // To match with the prover (and for security purposes),
+            // we observe the commitment before sampling the challenge.
             challenger.observe(comm.clone());
-            if !challenger.check_witness(params.commit_proof_of_work_bits, *witness) {
-                return Err(FriError::InvalidPowWitness);
-            }
-            Ok(challenger.sample_algebra_element())
+            challenger.sample_algebra_element()
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect();
 
     // Ensure that the final polynomial has the expected degree.
     if proof.final_poly.len() != params.final_poly_len() {
@@ -115,7 +97,10 @@ where
     }
 
     // Observe all coefficients of the final polynomial.
-    challenger.observe_algebra_slice(&proof.final_poly);
+    proof
+        .final_poly
+        .iter()
+        .for_each(|x| challenger.observe_algebra_element(*x));
 
     // Ensure that we have the expected number of FRI query proofs.
     if proof.query_proofs.len() != params.num_queries {
@@ -123,7 +108,7 @@ where
     }
 
     // Check PoW.
-    if !challenger.check_witness(params.query_proof_of_work_bits, proof.query_pow_witness) {
+    if !challenger.check_witness(params.proof_of_work_bits, proof.pow_witness) {
         return Err(FriError::InvalidPowWitness);
     }
 
@@ -259,41 +244,63 @@ where
     }
     let mut folded_eval = ro_iter.next().unwrap().1;
 
+    let log_folding_factor = folding.log_folding_factor();
+    let folding_factor = 1 << log_folding_factor;
+
     // We start with evaluations over a domain of size (1 << log_global_max_height). We fold
     // using FRI until the domain size reaches (1 << log_final_height).
-    for (log_folded_height, ((&beta, comm), opening)) in zip_eq(
-        // zip_eq ensures that we have the right number of steps.
-        (log_final_height..log_global_max_height).rev(),
+    // Each iteration reduces the domain by a factor of folding_factor.
+    let num_fold_steps = (log_global_max_height - log_final_height) / log_folding_factor;
+
+    for (fold_step, ((&beta, comm), opening)) in zip_eq(
+        0..num_fold_steps,
         fold_data_iter,
         FriError::InvalidProofShape,
     )? {
-        // Get the index of the other sibling of the current FRI node.
-        let index_sibling = *start_index ^ 1;
+        let log_folded_height = log_global_max_height - (fold_step + 1) * log_folding_factor;
 
-        let mut evals = vec![folded_eval; 2];
-        evals[index_sibling % 2] = opening.sibling_value;
+        // Get the index within the current folding group
+        let index_in_group = *start_index % folding_factor;
+
+        // Reconstruct all evaluations in the folding group.
+        // We have folded_eval at index_in_group, and sibling_values for all other positions.
+        let mut evals = Vec::with_capacity(folding_factor);
+        let mut sibling_iter = opening.sibling_values.iter();
+        for i in 0..folding_factor {
+            if i == index_in_group {
+                evals.push(folded_eval);
+            } else {
+                evals.push(*sibling_iter.next().ok_or(FriError::InvalidProofShape)?);
+            }
+        }
+
+        // Ensure all siblings were consumed
+        if sibling_iter.next().is_some() {
+            return Err(FriError::InvalidProofShape);
+        }
 
         let dims = &[Dimensions {
-            width: 2,
+            width: folding_factor,
             height: 1 << log_folded_height,
         }];
 
         // Replace index with the index of the parent FRI node.
-        *start_index >>= 1;
+        let group_index = *start_index >> log_folding_factor;
+        *start_index = group_index;
 
-        // Verify the commitment to the evaluations of the sibling nodes.
+        // Verify the commitment to the evaluations of all nodes in the folding group.
         params
             .mmcs
             .verify_batch(
                 comm,
                 dims,
-                *start_index,
+                group_index,
                 BatchOpeningRef::new(&[evals.clone()], &opening.opening_proof), // It's possible to remove the clone here but unnecessary as evals is tiny.
             )
             .map_err(FriError::CommitPhaseMmcsError)?;
 
-        // Fold the pair of sibling nodes to get the evaluation of the parent FRI node.
-        folded_eval = folding.fold_row(*start_index, log_folded_height, beta, evals.into_iter());
+        // Fold all evaluations in the group to get the evaluation of the parent FRI node.
+        folded_eval = folding.fold_row(group_index, log_folded_height, beta, evals.into_iter());
 
         // If there are new polynomials to roll in at the folded height, do so.
         //
