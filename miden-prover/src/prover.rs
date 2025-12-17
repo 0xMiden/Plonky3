@@ -1,5 +1,3 @@
-
-
 use std::marker::PhantomData;
 
 use itertools::Itertools;
@@ -18,7 +16,9 @@ use tracing::{debug_span, info_span, instrument};
 use crate::periodic_tables::compute_periodic_on_quotient_eval_domain;
 use crate::util::prover_row_to_ext;
 use crate::{
-    AirWithBoundaryConstraints, Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder, StarkGenericConfig, Val, get_log_quotient_degree, get_symbolic_constraints
+    AirWithBoundaryConstraints, Commitments, Domain, OpenedValues, PackedChallenge, PackedVal,
+    Proof, ProverConstraintFolder, StarkGenericConfig, Val, get_log_quotient_degree,
+    get_symbolic_constraints,
 };
 
 /// Commits the preprocessed trace if present.

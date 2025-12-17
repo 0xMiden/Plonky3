@@ -1,4 +1,3 @@
-
 use std::marker::PhantomData;
 
 use miden_air::{BusType, MidenAir, MidenAirBuilder};
@@ -65,7 +64,7 @@ where
     fn eval<AB: MidenAirBuilder<F = Val<SC>>>(&self, builder: &mut AB) {
         // First, apply the inner AIR's constraints
         self.inner.eval(builder);
-        
+
         if self.inner.num_randomness() > 0 {
             // Then, apply any additional boundary constraints as needed
             let aux = builder.permutation();
@@ -75,13 +74,19 @@ where
             for (idx, bus_type) in self.inner.bus_types().into_iter().enumerate() {
                 match bus_type {
                     BusType::Multiset => {
-                        builder.when_first_row().assert_zero_ext(AB::ExprEF::from(aux_current[idx].clone().into()) - AB::ExprEF::ONE);
-                    },
+                        builder
+                            .when_first_row()
+                            .assert_zero_ext(aux_current[idx].into() - AB::ExprEF::ONE);
+                    }
                     BusType::Logup => {
-                        builder.when_first_row().assert_zero_ext(AB::ExprEF::from(aux_current[idx].clone().into()));
+                        builder
+                            .when_first_row()
+                            .assert_zero_ext(aux_current[idx].into());
                     }
                 }
-                builder.when_last_row().assert_zero_ext(AB::ExprEF::from(aux_current[idx].clone().into()) - aux_bus_boundary_values[idx].into());
+                builder
+                    .when_last_row()
+                    .assert_zero_ext(aux_current[idx].into() - aux_bus_boundary_values[idx].into());
             }
         }
     }

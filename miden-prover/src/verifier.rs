@@ -15,7 +15,10 @@ use tracing::{debug_span, instrument};
 use crate::periodic_tables::evaluate_periodic_at_point;
 use crate::symbolic_builder::get_log_quotient_degree;
 use crate::util::verifier_row_to_ext;
-use crate::{AirWithBoundaryConstraints, Domain, PcsError, Proof, StarkGenericConfig, Val, VerifierConstraintFolder};
+use crate::{
+    AirWithBoundaryConstraints, Domain, PcsError, Proof, StarkGenericConfig, Val,
+    VerifierConstraintFolder,
+};
 
 /// Recomposes the quotient polynomial from its chunks evaluated at a point.
 ///
