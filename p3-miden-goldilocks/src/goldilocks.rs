@@ -100,6 +100,23 @@ impl Goldilocks {
         output
     }
 
+    /// Try to create a field element from a u64, validating that it's canonical.
+    ///
+    /// Returns an error if the value is >= the field modulus.
+    /// Use this when you need validated conversion (instead of `TryFrom`).
+    #[inline]
+    pub fn try_checked(value: u64) -> Result<Self, alloc::string::String> {
+        if value < Self::ORDER_U64 {
+            Ok(Self::new(value))
+        } else {
+            Err(alloc::format!(
+                "value {} is not a valid field element (must be < {})",
+                value,
+                Self::ORDER_U64
+            ))
+        }
+    }
+
     /// Two's complement of `ORDER`, i.e. `2^64 - ORDER = 2^32 - 1`.
     const NEG_ORDER: u64 = Self::ORDER_U64.wrapping_neg();
 
