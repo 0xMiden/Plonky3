@@ -1,6 +1,8 @@
 use core::array;
 use core::iter::{Product, Sum};
-use core::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
+use core::ops::{Add, AddAssign, Div, Index, IndexMut, Mul, MulAssign, Neg, Sub, SubAssign};
+
+use p3_util::{as_base_slice, as_base_slice_mut};
 
 use crate::batch_inverse::batch_multiplicative_inverse_general;
 use crate::{Algebra, Field, PackedValue, PrimeCharacteristicRing};
@@ -11,10 +13,89 @@ use crate::{Algebra, Field, PackedValue, PrimeCharacteristicRing};
 pub struct FieldArray<F: Field, const N: usize>(pub [F; N]);
 
 impl<F: Field, const N: usize> FieldArray<F, N> {
+    /// Compute the element-wise multiplicative inverse using batched inversion.
+    ///
+    /// Uses Montgomery's batch inversion trick to compute all inverses with a
+    /// single field inversion, improving performance when N > 1.
+    #[inline]
     pub(crate) fn inverse(&self) -> Self {
         let mut result = Self::default();
         batch_multiplicative_inverse_general(&self.0, &mut result.0, |x| x.inverse());
         result
+    }
+
+    /// Apply a function to each element, returning a new `FieldArray<U, N>`.
+    #[inline]
+    pub fn map<FF, U: Field>(self, f: FF) -> FieldArray<U, N>
+    where
+        FF: FnMut(F) -> U,
+    {
+        FieldArray(self.map_array(f))
+    }
+
+    /// Apply a function to each element, returning a raw array `[U; N]`.
+    ///
+    /// Unlike [`map`](Self::map), this does not require `U: Field`.
+    #[inline]
+    pub fn map_array<FF, U>(self, f: FF) -> [U; N]
+    where
+        FF: FnMut(F) -> U,
+    {
+        self.0.map(f)
+    }
+
+    /// Reinterpret a slice of `FieldArray<F, N>` as a slice of `[F; N]`.
+    ///
+    /// This is a zero-cost transmute enabled by the `#[repr(transparent)]` layout.
+    #[inline]
+    pub const fn slice_as_arrays(s: &[Self]) -> &[[F; N]] {
+        // SAFETY: `FieldArray<F, N>` is `#[repr(transparent)]` over `[F; N]`,
+        // so `&[FieldArray<F, N>]` and `&[[F; N]]` have identical layouts.
+        unsafe { as_base_slice(s) }
+    }
+
+    /// Reinterpret a mutable slice of `FieldArray<F, N>` as a mutable slice of `[F; N]`.
+    ///
+    /// This is a zero-cost transmute enabled by the `#[repr(transparent)]` layout.
+    #[inline]
+    pub const fn mut_slice_as_mut_arrays(s: &mut [Self]) -> &mut [[F; N]] {
+        // SAFETY: `FieldArray<F, N>` is `#[repr(transparent)]` over `[F; N]`,
+        // so `&mut [FieldArray<F, N>]` and `&mut [[F; N]]` have identical layouts.
+        unsafe { as_base_slice_mut(s) }
+    }
+
+    /// Reinterpret a slice of `[F; N]` as a slice of `FieldArray<F, N>`.
+    ///
+    /// This is a zero-cost transmute enabled by the `#[repr(transparent)]` layout.
+    #[inline]
+    pub const fn arrays_as_slice(s: &[[F; N]]) -> &[Self] {
+        // SAFETY: `FieldArray<F, N>` is `#[repr(transparent)]` over `[F; N]`,
+        // so `&[[F; N]]` and `&[FieldArray<F, N>]` have identical layouts.
+        unsafe { as_base_slice(s) }
+    }
+
+    /// Reinterpret a mutable slice of `[F; N]` as a mutable slice of `FieldArray<F, N>`.
+    ///
+    /// This is a zero-cost transmute enabled by the `#[repr(transparent)]` layout.
+    #[inline]
+    pub const fn mut_arrays_as_mut_slice(s: &mut [[F; N]]) -> &mut [Self] {
+        // SAFETY: `FieldArray<F, N>` is `#[repr(transparent)]` over `[F; N]`,
+        // so `&mut [[F; N]]` and `&mut [FieldArray<F, N>]` have identical layouts.
+        unsafe { as_base_slice_mut(s) }
+    }
+}
+
+impl<F: Field, const N: usize> IndexMut<usize> for FieldArray<F, N> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.0.index_mut(index)
+    }
+}
+
+impl<F: Field, const N: usize> Index<usize> for FieldArray<F, N> {
+    type Output = F;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.0.index(index)
     }
 }
 
