@@ -1,5 +1,7 @@
 //! See `prover.rs` for an overview of the protocol and a more detailed soundness analysis.
 
+use std::marker::PhantomData;
+
 use itertools::Itertools;
 use miden_air::{BusType, MidenAir};
 use p3_challenger::{CanObserve, FieldChallenger};
@@ -13,7 +15,7 @@ use tracing::{debug_span, instrument};
 use crate::periodic_tables::evaluate_periodic_at_point;
 use crate::symbolic_builder::get_log_quotient_degree;
 use crate::util::verifier_row_to_ext;
-use crate::{Domain, PcsError, Proof, StarkGenericConfig, Val, VerifierConstraintFolder};
+use crate::{AirWithBoundaryConstraints, Domain, PcsError, Proof, StarkGenericConfig, Val, VerifierConstraintFolder};
 
 /// Recomposes the quotient polynomial from its chunks evaluated at a point.
 ///
@@ -83,7 +85,7 @@ pub fn verify_constraints<SC, A, PcsErr>(
     quotient: SC::Challenge,
 ) -> Result<(), VerificationError<PcsErr>>
 where
-    SC: StarkGenericConfig,
+    SC: StarkGenericConfig + Sync,
     A: MidenAir<Val<SC>, SC::Challenge>,
     Val<SC>: TwoAdicField,
 {
@@ -231,10 +233,15 @@ pub fn verify<SC, A>(
     var_length_public_inputs: &[&[&[Val<SC>]]],
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
-    SC: StarkGenericConfig,
+    SC: StarkGenericConfig + Sync,
     A: MidenAir<Val<SC>, SC::Challenge>,
     Val<SC>: TwoAdicField,
 {
+    let air = &AirWithBoundaryConstraints {
+        inner: air,
+        phantom: PhantomData::<SC>,
+    };
+
     let Proof {
         commitments,
         opened_values,
@@ -251,9 +258,9 @@ where
     let trace_domain = pcs.natural_domain_for_degree(degree);
     // TODO: allow moving preprocessed commitment to preprocess time, if known in advance
     let (preprocessed_width, preprocessed_commit) =
-        process_preprocessed_trace::<SC, A>(air, opened_values, pcs, trace_domain, config.is_zk())?;
+        process_preprocessed_trace::<SC, _>(air, opened_values, pcs, trace_domain, config.is_zk())?;
 
-    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, SC::Challenge, A>(
+    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, SC::Challenge, _>(
         air,
         preprocessed_width,
         public_values.len(),
@@ -301,8 +308,8 @@ where
     // begin processing aux trace (optional)
     let num_randomness = air.num_randomness();
 
-    let air_width = A::width(air);
-    let bus_types = A::bus_types(air);
+    let air_width = air.width();
+    let bus_types = air.bus_types();
     let valid_shape = opened_values.trace_local.len() == air_width
         && opened_values.trace_next.len() == air_width
         && opened_values.quotient_chunks.len() == quotient_degree
@@ -489,7 +496,7 @@ where
         }
     }
 
-    verify_constraints::<SC, A, PcsError<SC>>(
+    verify_constraints::<SC, _, PcsError<SC>>(
         air,
         &opened_values.trace_local,
         &opened_values.trace_next,

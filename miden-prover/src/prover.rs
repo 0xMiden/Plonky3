@@ -1,3 +1,7 @@
+
+
+use std::marker::PhantomData;
+
 use itertools::Itertools;
 use miden_air::MidenAir;
 use p3_challenger::{CanObserve, FieldChallenger};
@@ -14,8 +18,7 @@ use tracing::{debug_span, info_span, instrument};
 use crate::periodic_tables::compute_periodic_on_quotient_eval_domain;
 use crate::util::prover_row_to_ext;
 use crate::{
-    Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
-    StarkGenericConfig, Val, get_log_quotient_degree, get_symbolic_constraints,
+    AirWithBoundaryConstraints, Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder, StarkGenericConfig, Val, get_log_quotient_degree, get_symbolic_constraints
 };
 
 /// Commits the preprocessed trace if present.
@@ -45,10 +48,15 @@ pub fn prove<SC, A>(
     public_values: &[Val<SC>],
 ) -> Proof<SC>
 where
-    SC: StarkGenericConfig,
+    SC: StarkGenericConfig + Sync,
     A: MidenAir<Val<SC>, SC::Challenge>,
     Val<SC>: TwoAdicField,
 {
+    let air = &AirWithBoundaryConstraints {
+        inner: air,
+        phantom: PhantomData::<SC>,
+    };
+
     // Compute the height `N = 2^n` and `log_2(height)`, `n`, of the trace.
     let degree = trace.height();
     let log_degree = log2_strict_usize(degree);
@@ -105,7 +113,7 @@ where
     // From the degree of the constraint polynomial, compute the number
     // of quotient polynomials we will split Q(x) into. This is chosen to
     // always be a power of 2.
-    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, SC::Challenge, A>(
+    let log_quotient_degree = get_log_quotient_degree::<Val<SC>, SC::Challenge, _>(
         air,
         preprocessed_width,
         public_values.len(),
@@ -266,7 +274,7 @@ where
     //          `C(T_1(x), ..., T_w(x), T_1(hx), ..., T_w(hx), selectors(x)) / Z_H(x)`
     // at every point in the quotient domain. The degree of `Q(x)` is `<= deg(C(x)) - N = 2N - 2` in the case
     // where `deg(C) = 3`. (See the discussion above constraint_degree for more details.)
-    let quotient_values: Vec<SC::Challenge> = quotient_values::<SC, A, _>(
+    let quotient_values: Vec<SC::Challenge> = quotient_values::<SC, _, _>(
         air,
         public_values,
         trace_domain,
@@ -451,7 +459,7 @@ pub fn quotient_values<SC, A, Mat>(
     constraint_count: usize,
 ) -> Vec<SC::Challenge>
 where
-    SC: StarkGenericConfig,
+    SC: StarkGenericConfig + Sync,
     A: MidenAir<Val<SC>, SC::Challenge>,
     Mat: Matrix<Val<SC>> + Sync,
     Val<SC>: TwoAdicField,
@@ -605,6 +613,7 @@ where
                 packed_randomness,
                 aux_bus_boundary_values: &packed_aux_bus_boundary_values,
             };
+
             air.eval(&mut folder);
 
             // quotient(x) = constraints(x) / Z_H(x)

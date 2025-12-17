@@ -1,3 +1,4 @@
+mod air_wrapper_bus_boundary;
 #[cfg(debug_assertions)]
 mod check_constraints;
 mod config;
@@ -12,6 +13,7 @@ mod symbolic_variable;
 mod util;
 mod verifier;
 
+pub use air_wrapper_bus_boundary::*;
 #[cfg(debug_assertions)]
 pub use check_constraints::*;
 pub use config::*;
