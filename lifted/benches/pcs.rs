@@ -133,16 +133,14 @@ fn bench_pcs(c: &mut Criterion) {
             let commits_and_data: Vec<_> = matrix_groups
                 .iter()
                 .map(|matrices| {
-                    let domains_and_evals = matrices
-                        .iter()
-                        .map(|m| {
-                            let domain =
-                                <WorkspacePcs as Pcs<EF, Challenger>>::natural_domain_for_degree(
-                                    &workspace_pcs,
-                                    m.height(),
-                                );
-                            (domain, m.clone())
-                        });
+                    let domains_and_evals = matrices.iter().map(|m| {
+                        let domain =
+                            <WorkspacePcs as Pcs<EF, Challenger>>::natural_domain_for_degree(
+                                &workspace_pcs,
+                                m.height(),
+                            );
+                        (domain, m.clone())
+                    });
                     <WorkspacePcs as Pcs<EF, Challenger>>::commit(
                         &workspace_pcs,
                         domains_and_evals.into_iter(),
@@ -197,17 +195,15 @@ fn bench_pcs(c: &mut Criterion) {
             let fri_mmcs = LiftedFriMmcs::new(lmcs.clone());
 
             // Compute LDEs and bit-reverse for each group
-            let lde_groups = matrix_groups
-                .iter()
-                .map(|matrices| {
-                    matrices
-                        .iter()
-                        .map(|m| {
-                            let lde = dft.coset_lde_batch(m.clone(), LOG_BLOWUP, shift);
-                            lde.bit_reverse_rows().to_row_major_matrix()
-                        })
-                        .collect()
-                });
+            let lde_groups = matrix_groups.iter().map(|matrices| {
+                matrices
+                    .iter()
+                    .map(|m| {
+                        let lde = dft.coset_lde_batch(m.clone(), LOG_BLOWUP, shift);
+                        lde.bit_reverse_rows().to_row_major_matrix()
+                    })
+                    .collect()
+            });
 
             // Commit each group
             let commits_and_data: Vec<_> = lde_groups

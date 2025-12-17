@@ -34,7 +34,7 @@ pub mod verifier;
 
 use alloc::vec::Vec;
 
-pub use interpolate::SinglePointQuotient;
+pub use interpolate::{MultiPointQuotient, SinglePointQuotient};
 use p3_commit::{BatchOpening, Mmcs};
 use p3_field::Field;
 pub use verifier::DeepError;

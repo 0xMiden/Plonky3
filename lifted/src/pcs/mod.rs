@@ -24,7 +24,6 @@ use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::Mmcs;
 use p3_field::{ExtensionField, TwoAdicField};
 use p3_matrix::{Dimensions, Matrix};
-use p3_maybe_rayon::prelude::ParallelIterator;
 use p3_util::log2_strict_usize;
 
 pub use self::config::PcsConfig;

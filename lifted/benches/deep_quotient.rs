@@ -1,8 +1,11 @@
 //! DEEP quotient benchmarks.
 //!
 //! Benchmarks:
-//! 1. `batch_eval_lifted` - Barycentric evaluation at out-of-domain points
-//! 2. Combined (batch_eval + DeepPoly::new) - Full quotient computation
+//! 1. `batch_eval` - Barycentric evaluation only (SinglePointQuotient)
+//! 2. `single_point` - SinglePointQuotient + DeepPoly::new (1 point)
+//! 3. `multi_point_1` - MultiPointQuotient<1> + DeepPoly::new_batched (1 point)
+//! 4. `single_point_x2` - 2x SinglePointQuotient + DeepPoly::new (2 points)
+//! 5. `multi_point_2` - MultiPointQuotient<2> + DeepPoly::new_batched (2 points)
 //!
 //! Note: This benchmark requires Poseidon2 hash (not Keccak) because it uses
 //! a DuplexChallenger which needs a permutation-based hash.
@@ -26,8 +29,9 @@ use std::time::Duration;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use p3_challenger::DuplexChallenger;
 use p3_commit::Mmcs;
-use p3_lifted::deep::SinglePointQuotient;
+use p3_field::FieldArray;
 use p3_lifted::deep::prover::DeepPoly;
+use p3_lifted::deep::{MultiPointQuotient, SinglePointQuotient};
 use p3_lifted::merkle_tree::MerkleTreeLmcs;
 use p3_lifted::utils::bit_reversed_coset_points;
 use p3_symmetric::CryptographicPermutation;
@@ -74,9 +78,8 @@ fn bench_deep_quotient(c: &mut Criterion) {
             .collect();
         let prover_data: Vec<_> = committed.iter().map(|(_, pd)| pd).collect();
 
-        // Precompute coset points
-        let log_n = log_max_height + LOG_BLOWUP;
-        let coset_points = bit_reversed_coset_points::<F>(log_n);
+        // Precompute coset points (LDE domain matches max matrix height)
+        let coset_points = bit_reversed_coset_points::<F>(log_max_height);
 
         let matrices_refs: Vec<Vec<_>> = matrix_groups.iter().map(|g| g.iter().collect()).collect();
 
@@ -84,7 +87,7 @@ fn bench_deep_quotient(c: &mut Criterion) {
         // Benchmark 1: batch_eval_lifted only
         // ---------------------------------------------------------------------
         group.bench_function(BenchmarkId::from_parameter("batch_eval"), |b| {
-            let mut rng = SmallRng::seed_from_u64(456);
+            let mut rng = SmallRng::seed_from_u64(789);
             b.iter(|| {
                 let z: EF = rng.sample(StandardUniform);
                 let quotient = SinglePointQuotient::<F, EF>::new(z, &coset_points);
@@ -93,19 +96,65 @@ fn bench_deep_quotient(c: &mut Criterion) {
         });
 
         // ---------------------------------------------------------------------
-        // Benchmark 2: Combined (batch_eval + DeepPoly::new)
+        // Benchmark 2: Single point with SinglePointQuotient + DeepPoly::new
         // ---------------------------------------------------------------------
         let perm = create_perm();
         let base_challenger =
             DuplexChallenger::<F, hash::Perm, { hash::WIDTH }, { hash::RATE }>::new(perm);
-        group.bench_function(BenchmarkId::from_parameter("combined"), |b| {
+        group.bench_function(BenchmarkId::from_parameter("single_point"), |b| {
+            let mut rng = SmallRng::seed_from_u64(789);
+            b.iter(|| {
+                let z: EF = rng.sample(StandardUniform);
+
+                let quotient = SinglePointQuotient::<F, EF>::new(z, &coset_points);
+                let evals = quotient.batch_eval_lifted(&matrices_refs, &coset_points, LOG_BLOWUP);
+
+                let mut challenger = base_challenger.clone();
+                black_box(DeepPoly::new(
+                    &lmcs,
+                    &[quotient],
+                    &[evals],
+                    prover_data.clone(),
+                    &mut challenger,
+                    hash::RATE,
+                ))
+            });
+        });
+
+        // ---------------------------------------------------------------------
+        // Benchmark 3: Single point with MultiPointQuotient<1> + DeepPoly::new_batched
+        // ---------------------------------------------------------------------
+        group.bench_function(BenchmarkId::from_parameter("multi_point_1"), |b| {
+            let mut rng = SmallRng::seed_from_u64(789);
+            b.iter(|| {
+                let z: EF = rng.sample(StandardUniform);
+
+                let quotient = MultiPointQuotient::<F, EF, 1>::new(FieldArray([z]), &coset_points);
+                let evals = quotient.batch_eval_lifted(&matrices_refs, &coset_points, LOG_BLOWUP);
+
+                let mut challenger = base_challenger.clone();
+                black_box(DeepPoly::new_batched(
+                    &lmcs,
+                    &quotient,
+                    &evals,
+                    prover_data.clone(),
+                    &mut challenger,
+                    hash::RATE,
+                ))
+            });
+        });
+
+        // ---------------------------------------------------------------------
+        // Benchmark 4: Two points with 2x SinglePointQuotient + DeepPoly::new
+        // ---------------------------------------------------------------------
+        group.bench_function(BenchmarkId::from_parameter("single_point_x2"), |b| {
             let mut rng = SmallRng::seed_from_u64(789);
             b.iter(|| {
                 // Generate fresh points for each iteration
                 let z1: EF = rng.sample(StandardUniform);
                 let z2: EF = rng.sample(StandardUniform);
 
-                // Batch eval
+                // Batch eval using separate calls (baseline for comparison)
                 let q1 = SinglePointQuotient::<F, EF>::new(z1, &coset_points);
                 let q2 = SinglePointQuotient::<F, EF>::new(z2, &coset_points);
                 let evals1 = q1.batch_eval_lifted(&matrices_refs, &coset_points, LOG_BLOWUP);
@@ -119,6 +168,34 @@ fn bench_deep_quotient(c: &mut Criterion) {
                 black_box(DeepPoly::new(
                     &lmcs,
                     &quotients,
+                    &evals,
+                    prover_data.clone(),
+                    &mut challenger,
+                    hash::RATE,
+                ))
+            });
+        });
+
+        // ---------------------------------------------------------------------
+        // Benchmark 5: Two points with MultiPointQuotient<2> + DeepPoly::new_batched
+        // ---------------------------------------------------------------------
+        group.bench_function(BenchmarkId::from_parameter("multi_point_2"), |b| {
+            let mut rng = SmallRng::seed_from_u64(789);
+            b.iter(|| {
+                // Generate fresh points for each iteration
+                let z1: EF = rng.sample(StandardUniform);
+                let z2: EF = rng.sample(StandardUniform);
+
+                // Batched eval with MultiPointQuotient
+                let quotient =
+                    MultiPointQuotient::<F, EF, 2>::new(FieldArray([z1, z2]), &coset_points);
+                let evals = quotient.batch_eval_lifted(&matrices_refs, &coset_points, LOG_BLOWUP);
+
+                // DeepPoly::new_batched
+                let mut challenger = base_challenger.clone();
+                black_box(DeepPoly::new_batched(
+                    &lmcs,
+                    &quotient,
                     &evals,
                     prover_data.clone(),
                     &mut challenger,

@@ -83,12 +83,13 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use p3_field::{
-    ExtensionField, TwoAdicField, batch_multiplicative_inverse, scale_slice_in_place_single_core,
+    ExtensionField, FieldArray, TwoAdicField, batch_multiplicative_inverse,
+    scale_slice_in_place_single_core,
 };
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 use p3_util::linear_map::LinearMap;
-use p3_util::log2_strict_usize;
+use p3_util::{flatten_to_base, log2_strict_usize, reconstitute_from_base};
 
 use super::MatrixGroupEvals;
 
@@ -207,12 +208,156 @@ impl<F: TwoAdicField, EF: ExtensionField<F>> SinglePointQuotient<F, EF> {
     }
 }
 
+/// Precomputed `1/(zⱼ - xᵢ)` for N evaluation points, enabling batched O(n) barycentric
+/// evaluation and DEEP quotient construction.
+///
+/// Unlike [`SinglePointQuotient`] which handles one point at a time, this struct batches
+/// N evaluation points together, sharing a single batch inversion across all points.
+/// This is more efficient when opening at multiple points (e.g., z₁ and z₂ in DEEP).
+pub struct MultiPointQuotient<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> {
+    /// The evaluation points `[z₀, z₁, ..., z_{N-1}]`.
+    points: FieldArray<EF, N>,
+    /// Batched quotients: `point_quotient[i][j] = 1/(zⱼ - xᵢ)` for domain point xᵢ and eval point zⱼ.
+    point_quotient: Vec<FieldArray<EF, N>>,
+    _marker: PhantomData<F>,
+}
+
+impl<F: TwoAdicField, EF: ExtensionField<F>, const N: usize> MultiPointQuotient<F, EF, N> {
+    /// Create precomputation for N evaluation points.
+    ///
+    /// Computes `1/(zⱼ - xᵢ)` for all domain points xᵢ and evaluation points zⱼ
+    /// using a single batched inversion via Montgomery's trick.
+    ///
+    /// The differences are stored as `Vec<[EF; N]>`, flattened for batch inversion,
+    /// then reconstituted back to the array layout.
+    pub fn new(points: FieldArray<EF, N>, coset_points: &[F]) -> Self {
+        let n_points = coset_points.len();
+
+        // Compute differences in parallel: for each domain point x, compute [z₀ - x, z₁ - x, ...]
+        let diffs: Vec<FieldArray<EF, N>> = coset_points
+            .par_iter()
+            .map(|&x| points.map(|z| z - x))
+            .collect();
+
+        // Flatten to Vec<EF> for batch inversion, invert, then reconstitute
+        // SAFETY: [EF; N] has same alignment as EF and size is N * size_of::<EF>()
+        let diffs_flat: Vec<EF> = unsafe { flatten_to_base(diffs) };
+        let invs_flat: Vec<EF> = batch_multiplicative_inverse(&diffs_flat);
+        let point_quotient: Vec<FieldArray<EF, N>> = unsafe { reconstitute_from_base(invs_flat) };
+
+        debug_assert_eq!(point_quotient.len(), n_points);
+
+        Self {
+            points,
+            point_quotient,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Returns the evaluation points `[z₀, z₁, ..., z_{N-1}]`.
+    pub const fn points(&self) -> &FieldArray<EF, N> {
+        &self.points
+    }
+
+    /// Returns the precomputed point quotients `1/(zⱼ - xᵢ)` for each domain point.
+    ///
+    /// `point_quotient[i][j]` is `1/(zⱼ - xᵢ)` where xᵢ is the i-th domain point
+    /// and zⱼ is the j-th evaluation point.
+    pub fn point_quotient(&self) -> &[FieldArray<EF, N>] {
+        &self.point_quotient
+    }
+
+    /// Evaluate all matrix columns at `[z₀ʳ, z₁ʳ, ..., z_{N-1}ʳ]` where `r = domain_size / matrix_height`.
+    ///
+    /// Returns evaluations grouped by commitment: `result[group_idx][matrix_idx][col_idx]`
+    /// where each element is a `FieldArray<EF, N>` containing evaluations at all N points.
+    /// This batches N evaluation points together, using `columnwise_dot_product_batched<N>`
+    /// for better cache utilization than N separate calls.
+    pub fn batch_eval_lifted<M: Matrix<F>>(
+        &self,
+        matrices_groups: &[Vec<&M>],
+        coset_points: &[F],
+        log_blowup: usize,
+    ) -> Vec<MatrixGroupEvals<FieldArray<EF, N>>> {
+        let n = coset_points.len();
+        let d = n >> log_blowup;
+        let log_d = log2_strict_usize(d);
+
+        let shift = coset_points[0]; // g in bit-reversed order
+        let shift_inverse = shift.inverse();
+
+        // Compute barycentric scaling factors for each point:
+        // s_j(z_j) = ((z_j/g)^d - 1) / d
+        let barycentric_scalings = self.points.map(|point| {
+            let z_over_shift = point * shift_inverse;
+            let t = z_over_shift.exp_power_of_2(log_d) - EF::ONE;
+            t.div_2exp_u64(log_d as u64)
+        });
+
+        let used_degrees: BTreeSet<usize> = matrices_groups
+            .iter()
+            .flat_map(|g| g.iter().map(|m| m.height() >> log_blowup))
+            .collect();
+
+        // Compute barycentric weights for each point at each height:
+        // w_{i,j}(z_j) = x_i / (z_j - x_i) = x_i · point_quotient[i][j]
+        // For smaller domains, sum chunks (weight folding).
+        let barycentric_weights: LinearMap<usize, Vec<FieldArray<EF, N>>> = {
+            assert_eq!(*used_degrees.last().unwrap(), d);
+            // Initial weights at full domain size
+            let top_weights: Vec<FieldArray<EF, N>> = coset_points[..d]
+                .par_iter()
+                .zip(self.point_quotient[..d].par_iter())
+                .map(|(&x, invs)| (*invs).map(|inv| inv * x))
+                .collect();
+
+            let mut weights = Vec::with_capacity(used_degrees.len());
+            weights.push(top_weights);
+
+            // Descending order: progressively sum chunks to shrink weights
+            for &next_degree in used_degrees.iter().rev().skip(1) {
+                let prev_weights = weights.last().unwrap();
+                let chunk_size = prev_weights.len() / next_degree;
+                let next_weights = prev_weights
+                    .par_chunks_exact(chunk_size)
+                    .map(|chunk| chunk.iter().copied().sum())
+                    .collect();
+                weights.push(next_weights);
+            }
+
+            weights.into_iter().map(|w| (w.len(), w)).collect()
+        };
+
+        // f(z_j^r) = s_j(z_j) · Σ w_{i,j}(z_j) · f(x_i)
+        // For each group, evaluate at all N points using columnwise_dot_product_batched
+        // Returns Vec<[EF; N]> where result[col][point] = eval of column col at point point
+        matrices_groups
+            .iter()
+            .map(|group| {
+                // Evaluate each matrix in the group at all N points
+                let group_evals: Vec<_> = group
+                    .iter()
+                    .map(|m| {
+                        let weights = &barycentric_weights[&(m.height() >> log_blowup)];
+                        let mut results = m.columnwise_dot_product_batched(weights);
+                        for batch_evals in results.iter_mut() {
+                            *batch_evals *= barycentric_scalings;
+                        }
+                        results
+                    })
+                    .collect();
+                MatrixGroupEvals::new(group_evals)
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;
 
     use p3_dft::{NaiveDft, TwoAdicSubgroupDft};
-    use p3_field::{Field, PrimeCharacteristicRing};
+    use p3_field::{Field, FieldArray, PrimeCharacteristicRing};
     use p3_interpolation::{interpolate_coset, interpolate_coset_with_precomputation};
     use p3_matrix::bitrev::BitReversibleMatrix;
     use p3_matrix::dense::RowMajorMatrix;
@@ -221,7 +366,7 @@ mod tests {
     use rand::prelude::SmallRng;
     use rand::{Rng, SeedableRng};
 
-    use super::SinglePointQuotient;
+    use super::{MultiPointQuotient, SinglePointQuotient};
     use crate::tests::{EF, F};
     use crate::utils::bit_reversed_coset_points;
 
@@ -345,6 +490,113 @@ mod tests {
         assert_eq!(our_evals.len(), expected_evals.len(), "length mismatch");
         for (col, (our, expected)) in our_evals.iter().zip(expected_evals.iter()).enumerate() {
             assert_eq!(our, expected, "col={col}: evaluation mismatch");
+        }
+    }
+
+    /// Verify `MultiPointQuotient` produces the same results as separate `SinglePointQuotient` calls.
+    #[test]
+    fn multi_point_matches_single_point() {
+        use alloc::vec::Vec;
+
+        use p3_matrix::Matrix;
+
+        let rng = &mut SmallRng::seed_from_u64(999);
+        let log_blowup = 2;
+        let log_n = 8;
+        let n = 1 << log_n;
+        let shift = F::GENERATOR;
+
+        // Coset points in bit-reversed order
+        let coset_points_br = bit_reversed_coset_points::<F>(log_n);
+
+        // Two random out-of-domain evaluation points
+        let z1: EF = rng.sample(StandardUniform);
+        let z2: EF = rng.sample(StandardUniform);
+
+        // Generate test matrices of varying heights
+        let poly_degree_1 = n >> log_blowup; // Full size
+        let poly_degree_2 = poly_degree_1 >> 1; // Half size
+        let width = 3;
+
+        let lifted_shift_1 = shift;
+        let lifted_shift_2 = shift.square();
+
+        let mut coeffs1 = RowMajorMatrix::<F>::rand(rng, poly_degree_1, width).values;
+        coeffs1.resize(n * width, F::ZERO);
+        let evals1_std =
+            NaiveDft.coset_dft_batch(RowMajorMatrix::new(coeffs1, width), lifted_shift_1);
+        let evals1_br: RowMajorMatrix<F> = evals1_std.bit_reverse_rows().to_row_major_matrix();
+
+        let mut coeffs2 = RowMajorMatrix::<F>::rand(rng, poly_degree_2, width).values;
+        coeffs2.resize((n >> 1) * width, F::ZERO);
+        let evals2_std =
+            NaiveDft.coset_dft_batch(RowMajorMatrix::new(coeffs2, width), lifted_shift_2);
+        let evals2_br: RowMajorMatrix<F> = evals2_std.bit_reverse_rows().to_row_major_matrix();
+
+        let matrices_groups: Vec<Vec<&RowMajorMatrix<F>>> = vec![vec![&evals1_br, &evals2_br]];
+
+        // --- Single-point evaluation (baseline) ---
+        let sq1 = SinglePointQuotient::<F, EF>::new(z1, &coset_points_br);
+        let sq2 = SinglePointQuotient::<F, EF>::new(z2, &coset_points_br);
+        let single_evals1 = sq1.batch_eval_lifted(&matrices_groups, &coset_points_br, log_blowup);
+        let single_evals2 = sq2.batch_eval_lifted(&matrices_groups, &coset_points_br, log_blowup);
+
+        // --- Multi-point evaluation ---
+        let mq = MultiPointQuotient::<F, EF, 2>::new(FieldArray([z1, z2]), &coset_points_br);
+        let multi_evals = mq.batch_eval_lifted(&matrices_groups, &coset_points_br, log_blowup);
+
+        // Verify point_quotient matches
+        for (i, (sq1_q, sq2_q)) in sq1
+            .point_quotient()
+            .iter()
+            .zip(sq2.point_quotient().iter())
+            .enumerate()
+        {
+            let mq_q = &mq.point_quotient()[i];
+            assert_eq!(*sq1_q, mq_q[0], "point_quotient mismatch at {i} for z1");
+            assert_eq!(*sq2_q, mq_q[1], "point_quotient mismatch at {i} for z2");
+        }
+
+        // Verify batch_eval_lifted results match
+        // multi_evals[group][point] vs single_evals[point][group]
+        for (group_idx, multi_group) in multi_evals.iter().enumerate() {
+            // multi_group is [MatrixGroupEvals; 2] - one per point
+            let single_group1 = &single_evals1[group_idx];
+            let single_group2 = &single_evals2[group_idx];
+
+            // Compare point 0 (z1)
+            for (matrix_idx, (multi_mat, single_mat)) in
+                multi_group.0.iter().zip(single_group1.0.iter()).enumerate()
+            {
+                assert_eq!(
+                    multi_mat.len(),
+                    single_mat.len(),
+                    "length mismatch for z1 at group {group_idx}, matrix {matrix_idx}"
+                );
+                for (col, (m, s)) in multi_mat.iter().zip(single_mat.iter()).enumerate() {
+                    assert_eq!(
+                        m[0], *s,
+                        "mismatch at group {group_idx}, matrix {matrix_idx}, col {col} for z1"
+                    );
+                }
+            }
+
+            // Compare point 1 (z2)
+            for (matrix_idx, (multi_mat, single_mat)) in
+                multi_group.0.iter().zip(single_group2.0.iter()).enumerate()
+            {
+                assert_eq!(
+                    multi_mat.len(),
+                    single_mat.len(),
+                    "length mismatch for z2 at group {group_idx}, matrix {matrix_idx}"
+                );
+                for (col, (m, s)) in multi_mat.iter().zip(single_mat.iter()).enumerate() {
+                    assert_eq!(
+                        m[1], *s,
+                        "mismatch at group {group_idx}, matrix {matrix_idx}, col {col} for z2"
+                    );
+                }
+            }
         }
     }
 }

@@ -5,12 +5,12 @@ use core::marker::PhantomData;
 use p3_challenger::FieldChallenger;
 use p3_commit::Mmcs;
 use p3_field::{
-    ExtensionField, Field, PackedFieldExtension, PackedValue, TwoAdicField, dot_product,
+    ExtensionField, Field, FieldArray, PackedFieldExtension, PackedValue, TwoAdicField, dot_product,
 };
 use p3_matrix::Matrix;
 use p3_maybe_rayon::prelude::*;
 
-use super::interpolate::SinglePointQuotient;
+use super::interpolate::{MultiPointQuotient, SinglePointQuotient};
 use super::{DeepQuery, MatrixGroupEvals};
 
 /// The DEEP quotient `Q(X)` evaluated over the LDE domain.
@@ -134,6 +134,157 @@ impl<'a, F: TwoAdicField, EF: ExtensionField<F>, M: Matrix<F>, Commit: Mmcs<F>>
                     res_p.to_ext_slice(acc_chunk);
                 });
             point_coeff *= challenge_points;
+        }
+
+        Self {
+            matrices: prover_data,
+            deep_poly,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Construct `Q(X)` from committed matrices and batched evaluations at N opening points.
+    ///
+    /// This is an optimized version of [`Self::new`] that uses [`MultiPointQuotient`] to batch
+    /// N evaluation points together, sharing batch inversion and using `columnwise_dot_product_batched`.
+    ///
+    /// # Arguments
+    /// - `c`: The MMCS used for commitment (extracts matrices from prover data)
+    /// - `quotient`: Precomputed `1/(zⱼ - X)` for all N opening points
+    /// - `evals`: Evaluations at all N points, indexed as `evals[group_idx][point_idx]`
+    /// - `prover_data`: References to committed matrix data
+    /// - `challenger`: Fiat-Shamir challenger for sampling batching challenges
+    /// - `alignment`: Width for coefficient alignment (must match commitment)
+    pub fn new_batched<const N: usize, Challenger: FieldChallenger<F>>(
+        c: &Commit,
+        quotient: &MultiPointQuotient<F, EF, N>,
+        evals: &[MatrixGroupEvals<FieldArray<EF, N>>],
+        prover_data: Vec<&'a Commit::ProverData<M>>,
+        challenger: &mut Challenger,
+        alignment: usize,
+    ) -> Self {
+        assert_eq!(
+            evals.len(),
+            prover_data.len(),
+            "evals and prover_data must have the same length"
+        );
+
+        let matrices_groups: Vec<Vec<&M>> = prover_data
+            .iter()
+            .map(|data| c.get_matrices(*data))
+            .collect();
+
+        let challenge_columns: EF = challenger.sample_algebra_element();
+        let challenge_points: EF = challenger.sample_algebra_element();
+
+        let w = F::Packing::WIDTH;
+        let point_quotient = quotient.point_quotient();
+        let n = point_quotient.len();
+
+        let group_sizes: Vec<usize> = matrices_groups.iter().map(|g| g.len()).collect();
+        let widths: Vec<usize> = matrices_groups
+            .iter()
+            .flat_map(|g| g.iter().map(|m| m.width()))
+            .collect();
+
+        let coeffs_columns: Vec<Vec<EF>> =
+            derive_coeffs_from_challenge(&widths, challenge_columns, alignment);
+
+        // Negate coefficients so inner loop computes f_reduced(z) - f_reduced(X) via addition
+        let neg_column_coeffs: Vec<Vec<EF>> = coeffs_columns
+            .iter()
+            .map(|c| c.iter().copied().map(EF::neg).collect())
+            .collect();
+
+        // Compute -f_reduced(X) = -Σᵢ αⁱ · fᵢ(X) over the LDE domain.
+        let mut neg_column_coeffs_iter = neg_column_coeffs.iter();
+        let neg_f_reduced = zip(&matrices_groups, &group_sizes)
+            .map(|(matrices_group, &size)| {
+                let group_coeffs: Vec<&Vec<EF>> =
+                    neg_column_coeffs_iter.by_ref().take(size).collect();
+                accumulate_matrices(matrices_group, &group_coeffs)
+            })
+            .reduce(|mut acc, next| {
+                debug_assert_eq!(acc.len(), next.len());
+                acc.par_chunks_mut(w).zip(next.par_chunks(w)).for_each(
+                    |(acc_chunk, next_chunk)| {
+                        EF::add_slices(acc_chunk, next_chunk);
+                    },
+                );
+                acc
+            })
+            .unwrap_or_else(|| EF::zero_vec(n));
+
+        // Pre-compute f_reduced(zⱼ) for all N points
+        // Structure: evals[group_idx][point_idx].0[matrix_idx][col_idx]
+        let f_reduced_at_points: FieldArray<EF, N> = {
+            let coeffs_flat = coeffs_columns
+                .iter()
+                .flatten()
+                .copied()
+                .map(FieldArray::from);
+            let evals_flat = evals.iter().flat_map(|group| group.iter_evals()).copied();
+            dot_product(coeffs_flat, evals_flat)
+        };
+
+        // Pre-compute βʲ for all N points
+        let point_coeffs: [EF; N] = core::array::from_fn(|j| {
+            if j == 0 {
+                EF::ONE
+            } else {
+                challenge_points.exp_u64(j as u64)
+            }
+        });
+
+        // Q(X) = Σⱼ βʲ · (f_reduced(zⱼ) - f_reduced(X)) · 1/(zⱼ - X)
+        let mut deep_poly = EF::zero_vec(n);
+
+        if w == 1 {
+            // Scalar path: use par_iter directly to avoid chunking overhead
+            deep_poly
+                .par_iter_mut()
+                .zip(neg_f_reduced.par_iter())
+                .zip(point_quotient.par_iter())
+                .for_each(|((acc, &neg), q)| {
+                    // First point (j=0) has coefficient β⁰ = 1
+                    let mut result = q[0] * (f_reduced_at_points[0] + neg);
+                    // Remaining points multiply by βʲ
+                    for j in 1..N {
+                        result += point_coeffs[j] * q[j] * (f_reduced_at_points[j] + neg);
+                    }
+                    *acc = result;
+                });
+        } else {
+            // Packed path: use chunks for SIMD vectorization
+            // Pre-broadcast scalars to packed values (done once, outside hot loop)
+            let f_reduced_packed: [EF::ExtensionPacking; N] =
+                f_reduced_at_points.0.map(EF::ExtensionPacking::from);
+            let point_coeffs_packed: [EF::ExtensionPacking; N] =
+                point_coeffs.map(EF::ExtensionPacking::from);
+
+            deep_poly
+                .par_chunks_exact_mut(w)
+                .zip(neg_f_reduced.par_chunks_exact(w))
+                .zip(point_quotient.par_chunks_exact(w))
+                .for_each(|((acc_chunk, neg_chunk), q_chunk)| {
+                    let neg_p = EF::ExtensionPacking::from_ext_slice(neg_chunk);
+
+                    // Transpose quotients: q_chunk[lane][point] -> q_packed[point] packs all lanes
+                    let q_packed: [EF::ExtensionPacking; N] =
+                        EF::ExtensionPacking::pack_ext_columns(FieldArray::slice_as_arrays(
+                            q_chunk,
+                        ));
+
+                    // First point (j=0) has coefficient β⁰ = 1, compute directly
+                    let mut result_p = q_packed[0] * (f_reduced_packed[0] + neg_p);
+
+                    // Remaining points (j>0) multiply by βʲ
+                    for j in 1..N {
+                        result_p +=
+                            point_coeffs_packed[j] * q_packed[j] * (f_reduced_packed[j] + neg_p);
+                    }
+                    result_p.to_ext_slice(acc_chunk);
+                });
         }
 
         Self {
