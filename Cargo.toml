@@ -28,6 +28,7 @@ members = [
     "mersenne-31",
     "p3-miden-fri",
     "p3-miden-air",
+    "p3-miden-goldilocks",
     "p3-miden-prover",
     "monolith",
     "monty-31",
@@ -78,6 +79,7 @@ itertools = { version = "0.14.0", default-features = false, features = [
 
 p3-miden-air = { path = "p3-miden-air", version = "0.4.0" }
 p3-miden-fri = { path = "p3-miden-fri", version = "0.4.0" }
+p3-miden-goldilocks = { path = "p3-miden-goldilocks", version = "0.4.0" }
 p3-miden-prover = { path = "p3-miden-prover", version = "0.4.0" }
 num-bigint = { version = "0.4.3", default-features = false }
 paste = "1.0.15"
