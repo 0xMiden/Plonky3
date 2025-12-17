@@ -1,3 +1,4 @@
+use p3_challenger::UniformSamplingField;
 use p3_field::exponentiation::exp_1420470955;
 use p3_field::{Algebra, PrimeCharacteristicRing};
 use p3_monty_31::{
@@ -21,6 +22,28 @@ impl MontyParameters for KoalaBearParameters {
 
     const MONTY_BITS: u32 = 32;
     const MONTY_MU: u32 = 0x81000001;
+}
+
+impl UniformSamplingField for KoalaBearParameters {
+    const MAX_SINGLE_SAMPLE_BITS: usize = 24;
+    // NOTE: We only include `0` to not have to deal with one-off indexing. `k` must be > 0.
+    // Also, we don't care about k > 30 for KoalaBear.
+    const SAMPLING_BITS_M: [u64; 64] = {
+        let prime: u64 = Self::PRIME as u64;
+        let mut a = [0u64; 64];
+        let mut k = 0;
+        while k < 64 {
+            if k == 0 {
+                a[k] = prime; // This value is irrelevant in practice. `bits = 0` returns 0 always.
+            } else {
+                // Create a mask to zero out the last k bits
+                let mask = !((1u64 << k) - 1);
+                a[k] = prime & mask;
+            }
+            k += 1;
+        }
+        a
+    };
 }
 
 impl PackedMontyParameters for KoalaBearParameters {}
@@ -109,8 +132,8 @@ mod tests {
     use p3_field::extension::BinomialExtensionField;
     use p3_field::{InjectiveMonomial, PermutationMonomial, PrimeField64, TwoAdicField};
     use p3_field_testing::{
-        test_field, test_field_dft, test_prime_field, test_prime_field_32, test_prime_field_64,
-        test_two_adic_field,
+        test_field, test_field_dft, test_field_json_serialization, test_prime_field,
+        test_prime_field_32, test_prime_field_64, test_two_adic_field,
     };
 
     use super::*;
@@ -147,36 +170,7 @@ mod tests {
         assert_eq!(m2.injective_exp_n().injective_exp_root_n(), m2);
         assert_eq!(f_2.injective_exp_n().injective_exp_root_n(), f_2);
 
-        let f_serialized = serde_json::to_string(&f).unwrap();
-        let f_deserialized: F = serde_json::from_str(&f_serialized).unwrap();
-        assert_eq!(f, f_deserialized);
-
-        let f_1_serialized = serde_json::to_string(&f_1).unwrap();
-        let f_1_deserialized: F = serde_json::from_str(&f_1_serialized).unwrap();
-        let f_1_serialized_again = serde_json::to_string(&f_1_deserialized).unwrap();
-        let f_1_deserialized_again: F = serde_json::from_str(&f_1_serialized_again).unwrap();
-        assert_eq!(f_1, f_1_deserialized);
-        assert_eq!(f_1, f_1_deserialized_again);
-
-        let f_2_serialized = serde_json::to_string(&f_2).unwrap();
-        let f_2_deserialized: F = serde_json::from_str(&f_2_serialized).unwrap();
-        assert_eq!(f_2, f_2_deserialized);
-
-        let f_p_minus_1_serialized = serde_json::to_string(&f_p_minus_1).unwrap();
-        let f_p_minus_1_deserialized: F = serde_json::from_str(&f_p_minus_1_serialized).unwrap();
-        assert_eq!(f_p_minus_1, f_p_minus_1_deserialized);
-
-        let f_p_minus_2_serialized = serde_json::to_string(&f_p_minus_2).unwrap();
-        let f_p_minus_2_deserialized: F = serde_json::from_str(&f_p_minus_2_serialized).unwrap();
-        assert_eq!(f_p_minus_2, f_p_minus_2_deserialized);
-
-        let m1_serialized = serde_json::to_string(&m1).unwrap();
-        let m1_deserialized: F = serde_json::from_str(&m1_serialized).unwrap();
-        assert_eq!(m1, m1_deserialized);
-
-        let m2_serialized = serde_json::to_string(&m2).unwrap();
-        let m2_deserialized: F = serde_json::from_str(&m2_serialized).unwrap();
-        assert_eq!(m2, m2_deserialized);
+        test_field_json_serialization(&[f, f_1, f_2, f_p_minus_1, f_p_minus_2, m1, m2]);
     }
 
     // MontyField31's have no redundant representations.

@@ -5,7 +5,7 @@ use p3_air::{
     Air, AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder,
     PermutationAirBuilder,
 };
-use p3_field::{Algebra, ExtensionField, Field};
+use p3_field::{ExtensionField, Field};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_util::log2_ceil_usize;
 use tracing::instrument;
@@ -26,29 +26,6 @@ where
     A: Air<SymbolicAirBuilder<F>>,
 {
     get_log_quotient_degree_extension(air, preprocessed_width, num_public_values, 0, 0, is_zk)
-}
-
-/// Alias for backward compatibility - computes log quotient degree
-pub fn get_log_quotient_degree<F, A>(
-    air: &A,
-    preprocessed_width: usize,
-    num_public_values: usize,
-    is_zk: usize,
-    aux_width: usize,
-    num_randomness: usize,
-) -> usize
-where
-    F: Field,
-    A: Air<SymbolicAirBuilder<F>>,
-{
-    get_log_quotient_degree_extension(
-        air,
-        preprocessed_width,
-        num_public_values,
-        aux_width,
-        num_randomness,
-        is_zk,
-    )
 }
 
 #[instrument(name = "infer log of base and extension constraint degree", skip_all)]
@@ -275,11 +252,6 @@ impl<F: Field, EF: ExtensionField<F>> SymbolicAirBuilder<F, EF> {
     pub fn base_constraints(&self) -> Vec<SymbolicExpression<F>> {
         self.base_constraints.clone()
     }
-
-    /// Alias for base_constraints() for backward compatibility
-    pub fn constraints(self) -> Vec<SymbolicExpression<F>> {
-        self.base_constraints
-    }
 }
 
 impl<F: Field, EF: ExtensionField<F>> AirBuilder for SymbolicAirBuilder<F, EF> {
@@ -330,7 +302,7 @@ impl<F: Field, EF: ExtensionField<F>> PairBuilder for SymbolicAirBuilder<F, EF> 
 
 impl<F: Field, EF: ExtensionField<F>> ExtensionBuilder for SymbolicAirBuilder<F, EF>
 where
-    SymbolicExpression<EF>: From<SymbolicExpression<F>> + Algebra<SymbolicExpression<F>>,
+    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
 {
     type EF = EF;
     type ExprEF = SymbolicExpression<EF>;
@@ -346,7 +318,7 @@ where
 
 impl<F: Field, EF: ExtensionField<F>> PermutationAirBuilder for SymbolicAirBuilder<F, EF>
 where
-    SymbolicExpression<EF>: From<SymbolicExpression<F>> + Algebra<SymbolicExpression<F>>,
+    SymbolicExpression<EF>: From<SymbolicExpression<F>>,
 {
     type MP = RowMajorMatrix<Self::VarEF>;
 
