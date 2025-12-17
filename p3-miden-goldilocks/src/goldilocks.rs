@@ -57,10 +57,14 @@ impl Goldilocks {
 
     /// Returns the canonical u64 representation of this field element.
     ///
-    /// This is an alias for `as_canonical_u64()` for compatibility.
+    /// This is a const version of `as_canonical_u64()` for compatibility.
     #[inline]
-    pub fn as_int(&self) -> u64 {
-        PrimeField64::as_canonical_u64(self)
+    pub const fn as_int(&self) -> u64 {
+        if self.value >= Self::ORDER_U64 {
+            self.value - Self::ORDER_U64
+        } else {
+            self.value
+        }
     }
 
     /// Create a field element from a u64 value in a const context.
