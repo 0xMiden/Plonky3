@@ -5,7 +5,7 @@ use p3_commit::{ExtensionMmcs, Pcs, PolynomialSpace};
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{ExtensionField, Field};
-use p3_fri::{FriParameters, TwoAdicFriPcs};
+use p3_miden_fri::{FriParameters, TwoAdicFriPcs};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
@@ -204,79 +204,6 @@ mod babybear_fri_pcs {
 
         let pcs = MyPcs::new(Dft::default(), val_mmcs, fri_params);
         (pcs, Challenger::new(perm))
-    }
-
-    mod blowup_1 {
-        mod folding_2 {
-            make_tests_for_pcs!(super::super::get_pcs(1, 1), 1);
-        }
-        mod folding_4 {
-            make_tests_for_pcs!(super::super::get_pcs(1, 2), 2);
-        }
-        mod folding_8 {
-            make_tests_for_pcs!(super::super::get_pcs(1, 3), 3);
-        }
-    }
-    mod blowup_2 {
-        mod folding_2 {
-            make_tests_for_pcs!(super::super::get_pcs(2, 1), 1);
-        }
-        mod folding_4 {
-            make_tests_for_pcs!(super::super::get_pcs(2, 2), 2);
-        }
-        mod folding_8 {
-            make_tests_for_pcs!(super::super::get_pcs(2, 3), 3);
-        }
-    }
-}
-
-mod m31_fri_pcs {
-    use core::marker::PhantomData;
-
-    use p3_challenger::{HashChallenger, SerializingChallenger32};
-    use p3_circle::CirclePcs;
-    use p3_keccak::Keccak256Hash;
-    use p3_mersenne_31::Mersenne31;
-    use p3_symmetric::{CompressionFunctionFromHasher, SerializingHasher};
-
-    use super::*;
-
-    type Val = Mersenne31;
-    type Challenge = BinomialExtensionField<Mersenne31, 3>;
-
-    type ByteHash = Keccak256Hash;
-    type FieldHash = SerializingHasher<ByteHash>;
-
-    type MyCompress = CompressionFunctionFromHasher<ByteHash, 2, 32>;
-
-    type ValMmcs = MerkleTreeMmcs<Val, u8, FieldHash, MyCompress, 32>;
-
-    type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
-
-    type Challenger = SerializingChallenger32<Val, HashChallenger<u8, ByteHash, 32>>;
-
-    type Pcs = CirclePcs<Val, ValMmcs, ChallengeMmcs>;
-
-    fn get_pcs(log_blowup: usize, log_folding_factor: usize) -> (Pcs, Challenger) {
-        let byte_hash = ByteHash {};
-        let field_hash = FieldHash::new(byte_hash);
-        let compress = MyCompress::new(byte_hash);
-        let val_mmcs = ValMmcs::new(field_hash, compress);
-        let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
-        let fri_params = FriParameters {
-            log_blowup,
-            log_final_poly_len: 0,
-            num_queries: 10,
-            proof_of_work_bits: 8,
-            mmcs: challenge_mmcs,
-            log_folding_factor,
-        };
-        let pcs = Pcs {
-            mmcs: val_mmcs,
-            fri_params,
-            _phantom: PhantomData,
-        };
-        (pcs, Challenger::from_hasher(vec![], byte_hash))
     }
 
     mod blowup_1 {

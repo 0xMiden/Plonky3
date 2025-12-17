@@ -253,9 +253,10 @@ impl<F: Field> MidenAirBuilder for SymbolicAirBuilder<F> {
 
 #[cfg(test)]
 mod tests {
-    use p3_miden_air::MidenAir;
+    use p3_field::PrimeCharacteristicRing;
     use p3_goldilocks::Goldilocks;
     use p3_matrix::Matrix;
+    use p3_miden_air::MidenAir;
 
     use super::*;
 
@@ -421,7 +422,7 @@ mod tests {
     #[test]
     fn test_symbolic_air_builder_assert_zero() {
         let mut builder = SymbolicAirBuilder::<Goldilocks>::new(2, 4, 0, 0, 3);
-        let expr = SymbolicExpression::Constant(Goldilocks::new(5));
+        let expr = SymbolicExpression::Constant(Goldilocks::from_u64(5));
         builder.assert_zero(expr);
 
         let constraints = builder.constraints();
@@ -429,7 +430,7 @@ mod tests {
 
         assert!(
             constraints.iter().any(
-                |x| matches!(x, SymbolicExpression::Constant(val) if *val == Goldilocks::new(5))
+                |x| matches!(x, SymbolicExpression::Constant(val) if *val == Goldilocks::from_u64(5))
             ),
             "Constraint should match the asserted one"
         );

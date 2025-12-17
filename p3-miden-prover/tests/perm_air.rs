@@ -1,7 +1,7 @@
 use core::borrow::Borrow;
 
 use p3_miden_air::{MidenAir, MidenAirBuilder};
-use miden_prover::{StarkConfig, prove, verify};
+use p3_miden_prover::{StarkConfig, prove, verify};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
@@ -230,7 +230,7 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
 
     let mut air = FibPermAir::new();
     air.with_aux_builder(|main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
-        miden_prover::generate_logup_trace::<Challenge, _>(main, &challenges[0])
+        p3_miden_prover::generate_logup_trace::<Challenge, _>(main, &challenges[0])
     });
 
     let proof = prove(&config, &air, &trace, &pis);
@@ -282,7 +282,7 @@ fn test_public_value_impl_deg5(n: usize, x: u64, log_final_poly_len: usize) {
 
     let mut air = FibPermAir::<Goldilocks, BinomialExtensionField<Goldilocks, 5>>::new();
     air.with_aux_builder(|main: &RowMajorMatrix<Val>, challenges: &[Challenge5]| {
-        miden_prover::generate_logup_trace::<Challenge5, _>(main, &challenges[0])
+        p3_miden_prover::generate_logup_trace::<Challenge5, _>(main, &challenges[0])
     });
 
     let proof = prove(&config, &air, &trace, &pis);
@@ -314,7 +314,7 @@ fn test_incorrect_public_value() {
 
     let mut air = FibPermAir::new();
     air.with_aux_builder(|main: &RowMajorMatrix<Val>, challenges: &[Challenge]| {
-        miden_prover::generate_logup_trace::<Challenge, _>(main, &challenges[0])
+        p3_miden_prover::generate_logup_trace::<Challenge, _>(main, &challenges[0])
     });
     let proof = prove(&config, &air, &trace, &pis);
     verify(&config, &air, &proof, &pis).expect("verification failed");

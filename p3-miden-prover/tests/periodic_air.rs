@@ -1,7 +1,7 @@
 use core::borrow::Borrow;
 
 use p3_miden_air::{MidenAir, MidenAirBuilder};
-use miden_prover::{StarkConfig, prove, verify};
+use p3_miden_prover::{StarkConfig, prove, verify};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;

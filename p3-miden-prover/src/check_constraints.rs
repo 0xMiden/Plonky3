@@ -409,9 +409,9 @@ mod tests {
         let air = RowLogicAir { with_aux: false };
         let values = vec![
             Goldilocks::ONE,    // Row 0
-            Goldilocks::new(2), // Row 1
-            Goldilocks::new(3), // Row 2
-            Goldilocks::new(4), // Row 3 (last)
+            Goldilocks::from_u64(2), // Row 1
+            Goldilocks::from_u64(3), // Row 2
+            Goldilocks::from_u64(4), // Row 3 (last)
         ];
         let main = gen_main(&values);
         check_constraints::<_, BinomialExtensionField<Goldilocks, 2>, _>(
@@ -419,7 +419,7 @@ mod tests {
             &main,
             &None,
             &[],
-            &vec![Goldilocks::new(4), Goldilocks::new(1)],
+            &vec![Goldilocks::from_u64(4), Goldilocks::from_u64(1)],
         );
     }
 
@@ -436,12 +436,12 @@ mod tests {
         // | 3  | 2  | 1/(r-3) | 1/(r-2) | .. |
         // | 4  | 1  | 1/(r-4) | 1/(r-1) | .. |
         let air = RowLogicAir { with_aux: true };
-        let main_col: Vec<_> = (1..=len).map(Goldilocks::new).collect();
+        let main_col: Vec<_> = (1..=len).map(Goldilocks::from_u64).collect();
         let main = gen_main(&main_col);
 
         let aux_randomness =
             BinomialExtensionField::<Goldilocks, 2>::from_basis_coefficients_slice(
-                [Goldilocks::new(1005), Goldilocks::new(10010)].as_ref(),
+                [Goldilocks::from_u64(1005), Goldilocks::from_u64(10010)].as_ref(),
             )
             .unwrap();
 
@@ -452,7 +452,7 @@ mod tests {
             &main,
             &Some(aux),
             aux_randomness.as_basis_coefficients_slice(),
-            &vec![Goldilocks::new(len), Goldilocks::new(1)],
+            &vec![Goldilocks::from_u64(len), Goldilocks::from_u64(1)],
         );
     }
 
@@ -464,12 +464,12 @@ mod tests {
         let values = vec![
             Goldilocks::ONE,
             Goldilocks::ONE, // Row 0
-            Goldilocks::new(2),
-            Goldilocks::new(2), // Row 1
-            Goldilocks::new(5),
-            Goldilocks::new(5), // Row 2 (wrong)
-            Goldilocks::new(6),
-            Goldilocks::new(6), // Row 3
+            Goldilocks::from_u64(2),
+            Goldilocks::from_u64(2), // Row 1
+            Goldilocks::from_u64(5),
+            Goldilocks::from_u64(5), // Row 2 (wrong)
+            Goldilocks::from_u64(6),
+            Goldilocks::from_u64(6), // Row 3
         ];
         let main = RowMajorMatrix::new(values, 2);
         check_constraints::<_, BinomialExtensionField<Goldilocks, 2>, _>(
@@ -477,7 +477,7 @@ mod tests {
             &main,
             &None,
             &[],
-            &vec![Goldilocks::new(6); 2],
+            &vec![Goldilocks::from_u64(6); 2],
         );
     }
 
@@ -489,12 +489,12 @@ mod tests {
         let values = vec![
             Goldilocks::ONE,
             Goldilocks::ONE, // Row 0
-            Goldilocks::new(2),
-            Goldilocks::new(2), // Row 1
-            Goldilocks::new(3),
-            Goldilocks::new(3), // Row 2
-            Goldilocks::new(4),
-            Goldilocks::new(4), // Row 3
+            Goldilocks::from_u64(2),
+            Goldilocks::from_u64(2), // Row 1
+            Goldilocks::from_u64(3),
+            Goldilocks::from_u64(3), // Row 2
+            Goldilocks::from_u64(4),
+            Goldilocks::from_u64(4), // Row 3
         ];
         let main = RowMajorMatrix::new(values, 2);
         // Wrong public value on column 1
@@ -503,7 +503,7 @@ mod tests {
             &main,
             &None,
             &[],
-            &vec![Goldilocks::new(4), Goldilocks::new(5)],
+            &vec![Goldilocks::from_u64(4), Goldilocks::from_u64(5)],
         );
     }
 
@@ -514,8 +514,8 @@ mod tests {
         // Here: is_transition == false ⇒ so no assertions are enforced.
         let air = RowLogicAir { with_aux: false };
         let values = vec![
-            Goldilocks::new(99),
-            Goldilocks::new(77), // Row 0
+            Goldilocks::from_u64(99),
+            Goldilocks::from_u64(77), // Row 0
         ];
         let main = RowMajorMatrix::new(values, 2);
         check_constraints::<_, BinomialExtensionField<Goldilocks, 2>, _>(
@@ -523,7 +523,7 @@ mod tests {
             &main,
             &None,
             &[],
-            &vec![Goldilocks::new(99), Goldilocks::new(77)],
+            &vec![Goldilocks::from_u64(99), Goldilocks::from_u64(77)],
         );
     }
 }
