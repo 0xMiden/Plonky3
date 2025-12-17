@@ -9,7 +9,7 @@ use p3_field_testing::bench_func::{
 use p3_field_testing::{
     benchmark_dot_array, benchmark_mul_latency, benchmark_mul_throughput, benchmark_sum_array,
 };
-use p3_goldilocks::Goldilocks;
+use p3_miden_goldilocks::Goldilocks;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 

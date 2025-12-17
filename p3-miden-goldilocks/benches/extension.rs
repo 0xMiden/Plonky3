@@ -4,7 +4,7 @@ use p3_field_testing::bench_func::{
     benchmark_inv, benchmark_mul_latency, benchmark_mul_throughput, benchmark_square,
 };
 use p3_field_testing::benchmark_mul;
-use p3_goldilocks::Goldilocks;
+use p3_miden_goldilocks::Goldilocks;
 
 type EF2 = BinomialExtensionField<Goldilocks, 2>;
 type EF5 = BinomialExtensionField<Goldilocks, 5>;
