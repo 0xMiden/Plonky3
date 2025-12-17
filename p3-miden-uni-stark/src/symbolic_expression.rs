@@ -225,6 +225,15 @@ impl<F: Field> Algebra<F> for SymbolicExpression<F> {}
 
 impl<F: Field> Algebra<SymbolicVariable<F>> for SymbolicExpression<F> {}
 
+// Algebra impl for BinomialExtensionField - this works because we have From<SymbolicExpression<F>>
+// and all the arithmetic operations are implemented via Into
+impl<F: Field, const D: usize> Algebra<SymbolicExpression<F>>
+    for SymbolicExpression<BinomialExtensionField<F, D>>
+where
+    BinomialExtensionField<F, D>: ExtensionField<F>,
+{
+}
+
 // Note we cannot implement PermutationMonomial due to the degree_multiple part which makes
 // operations non invertible.
 impl<F: Field + InjectiveMonomial<N>, const N: u64> InjectiveMonomial<N> for SymbolicExpression<F> {}

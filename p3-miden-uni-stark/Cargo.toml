@@ -1,6 +1,6 @@
 [package]
-name = "p3-miden-prover"
-description = "Miden-specific STARK prover built on Plonky3."
+name = "p3-miden-uni-stark"
+description = "A minimal univariate STARK framework providing core components for proof generation and verification."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,27 +15,27 @@ p3-challenger.workspace = true
 p3-commit.workspace = true
 p3-dft.workspace = true
 p3-field.workspace = true
-p3-interpolation.workspace = true
 p3-matrix.workspace = true
 p3-maybe-rayon.workspace = true
-p3-miden-uni-stark.workspace = true
+p3-uni-stark.workspace = true
 p3-util.workspace = true
-
-p3-miden-air.workspace = true
 
 itertools.workspace = true
 serde = { workspace = true, features = ["derive", "alloc"] }
+thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+p3-baby-bear.workspace = true
 p3-challenger.workspace = true
+p3-circle.workspace = true
 p3-commit = { workspace = true, features = ["test-utils"] }
 p3-dft.workspace = true
-p3-miden-fri.workspace = true
-p3-goldilocks.workspace = true
+p3-fri.workspace = true
 p3-keccak.workspace = true
 p3-matrix.workspace = true
 p3-merkle-tree.workspace = true
+p3-mersenne-31.workspace = true
 p3-symmetric.workspace = true
 
 postcard = { workspace = true, features = ["alloc"] }
