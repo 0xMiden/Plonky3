@@ -84,7 +84,8 @@ type LiftedFriMmcs = ExtensionMmcs<F, EF, LiftedLmcs>;
 // =============================================================================
 
 fn bench_pcs(c: &mut Criterion) {
-    let (sponge, compress) = hash::components();
+    let (lmcs_sponge, lmcs_compress) = hash::lmcs_components();
+    let (mmcs_sponge, mmcs_compress) = hash::mmcs_components();
     let perm = create_perm();
     let dft = Dft::default();
     let shift = F::GENERATOR;
@@ -115,7 +116,7 @@ fn bench_pcs(c: &mut Criterion) {
         // Workspace TwoAdicFriPcs
         // ---------------------------------------------------------------------
         {
-            let val_mmcs = ValMmcs::new(sponge.clone(), compress.clone());
+            let val_mmcs = ValMmcs::new(mmcs_sponge.clone(), mmcs_compress.clone());
             let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
 
             let fri_params = FriParameters {
@@ -191,7 +192,7 @@ fn bench_pcs(c: &mut Criterion) {
         // Lifted PCS
         // ---------------------------------------------------------------------
         {
-            let lmcs = LiftedLmcs::new(sponge.clone(), compress.clone());
+            let lmcs = LiftedLmcs::new(lmcs_sponge.clone(), lmcs_compress.clone());
             let fri_mmcs = LiftedFriMmcs::new(lmcs.clone());
 
             // Compute LDEs and bit-reverse for each group

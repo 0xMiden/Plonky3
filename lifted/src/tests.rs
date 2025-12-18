@@ -15,7 +15,7 @@ use p3_field::{BasedVectorSpace, Field, PackedValue, PrimeCharacteristicRing};
 use p3_matrix::bitrev::BitReversibleMatrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::{Dimensions, Matrix};
-use p3_symmetric::{PaddingFreeSponge, StatefulHasher, TruncatedPermutation};
+use p3_symmetric::{StatefulHasher, StatefulSponge, TruncatedPermutation};
 use rand::SeedableRng;
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::SmallRng;
@@ -58,8 +58,8 @@ pub(crate) const TEST_SEED: u64 = 2025;
 /// Poseidon2 permutation over BabyBear.
 pub(crate) type Perm = Poseidon2BabyBear<WIDTH>;
 
-/// Padding-free sponge for hashing.
-pub(crate) type Sponge = PaddingFreeSponge<Perm, WIDTH, RATE, DIGEST>;
+/// Stateful sponge for hashing.
+pub(crate) type Sponge = StatefulSponge<Perm, WIDTH, RATE, DIGEST>;
 
 /// Truncated permutation for 2-to-1 compression.
 pub(crate) type Compress = TruncatedPermutation<Perm, 2, DIGEST, WIDTH>;

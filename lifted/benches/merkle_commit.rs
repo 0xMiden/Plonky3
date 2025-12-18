@@ -59,7 +59,7 @@ fn bench_merkle_commit(c: &mut Criterion) {
         // Scalar LMCS
         // ---------------------------------------------------------------------
         {
-            let (sponge, compress) = hash::components();
+            let (sponge, compress) = hash::lmcs_components();
             let lmcs = hash::ScalarLmcs::new(sponge, compress);
 
             let id = BenchmarkId::from_parameter("scalar");
@@ -76,7 +76,7 @@ fn bench_merkle_commit(c: &mut Criterion) {
         // Packed LMCS
         // ---------------------------------------------------------------------
         {
-            let (sponge, compress) = hash::components();
+            let (sponge, compress) = hash::lmcs_components();
             let lmcs = hash::PackedLmcs::new(sponge, compress);
 
             let id = BenchmarkId::from_parameter("packed");
@@ -93,7 +93,7 @@ fn bench_merkle_commit(c: &mut Criterion) {
         // ExtensionMmcs with width-2 matrix (simulates FRI arity-2 commit)
         // ---------------------------------------------------------------------
         {
-            let (sponge, compress) = hash::components();
+            let (sponge, compress) = hash::lmcs_components();
             let lmcs = hash::PackedLmcs::new(sponge, compress);
             let ext_mmcs = ExtensionMmcs::<F, EF, _>::new(lmcs);
 
@@ -110,7 +110,7 @@ fn bench_merkle_commit(c: &mut Criterion) {
         // ExtensionMmcs with width-4 matrix (simulates FRI arity-4 commit)
         // ---------------------------------------------------------------------
         {
-            let (sponge, compress) = hash::components();
+            let (sponge, compress) = hash::lmcs_components();
             let lmcs = hash::PackedLmcs::new(sponge, compress);
             let ext_mmcs = ExtensionMmcs::<F, EF, _>::new(lmcs);
 

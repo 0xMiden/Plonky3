@@ -45,11 +45,18 @@ compile_error!("Features `bench-babybear` and `bench-goldilocks` are mutually ex
 #[cfg(not(any(feature = "bench-babybear", feature = "bench-goldilocks")))]
 compile_error!("One of `bench-babybear` or `bench-goldilocks` must be enabled");
 
-#[cfg(all(feature = "bench-poseidon2", feature = "bench-keccak"))]
-compile_error!("Features `bench-poseidon2` and `bench-keccak` are mutually exclusive");
+// Hash features are mutually exclusive
+#[cfg(any(
+    all(feature = "bench-poseidon2", feature = "bench-keccak"),
+    all(feature = "bench-poseidon2", feature = "bench-blake3"),
+    all(feature = "bench-keccak", feature = "bench-blake3")
+))]
+compile_error!(
+    "Hash features `bench-poseidon2`, `bench-keccak`, and `bench-blake3` are mutually exclusive"
+);
 
-#[cfg(not(any(feature = "bench-poseidon2", feature = "bench-keccak")))]
-compile_error!("One of `bench-poseidon2` or `bench-keccak` must be enabled");
+#[cfg(not(any(feature = "bench-poseidon2", feature = "bench-keccak", feature = "bench-blake3")))]
+compile_error!("One of `bench-poseidon2`, `bench-keccak`, or `bench-blake3` must be enabled");
 
 // =============================================================================
 // Field type aliases (selected via feature flag)
@@ -87,7 +94,7 @@ pub mod hash {
     use p3_baby_bear::Poseidon2BabyBear;
     use p3_lifted::merkle_tree::MerkleTreeLmcs;
     use p3_merkle_tree::MerkleTreeMmcs;
-    use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
+    use p3_symmetric::{PaddingFreeSponge, StatefulSponge, TruncatedPermutation};
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
@@ -99,21 +106,29 @@ pub mod hash {
     pub const HASH_NAME: &str = "poseidon2";
 
     pub type Perm = Poseidon2BabyBear<WIDTH>;
-    pub type Sponge = PaddingFreeSponge<Perm, WIDTH, RATE, DIGEST>;
     pub type Compress = TruncatedPermutation<Perm, 2, DIGEST, WIDTH>;
 
-    // Scalar LMCS
-    pub type ScalarLmcs = MerkleTreeLmcs<F, F, Sponge, Compress, WIDTH, DIGEST>;
-    pub type ScalarMmcs = MerkleTreeMmcs<F, F, Sponge, Compress, DIGEST>;
+    // LMCS uses StatefulSponge (StatefulHasher)
+    pub type LmcsSponge = StatefulSponge<Perm, WIDTH, RATE, DIGEST>;
+    pub type ScalarLmcs = MerkleTreeLmcs<F, F, LmcsSponge, Compress, WIDTH, DIGEST>;
+    pub type PackedLmcs = MerkleTreeLmcs<P, P, LmcsSponge, Compress, WIDTH, DIGEST>;
 
-    // Packed LMCS
-    pub type PackedLmcs = MerkleTreeLmcs<P, P, Sponge, Compress, WIDTH, DIGEST>;
-    pub type PackedMmcs = MerkleTreeMmcs<P, P, Sponge, Compress, DIGEST>;
+    // MMCS uses PaddingFreeSponge (CryptographicHasher)
+    pub type MmcsSponge = PaddingFreeSponge<Perm, WIDTH, RATE, DIGEST>;
+    pub type PackedMmcs = MerkleTreeMmcs<P, P, MmcsSponge, Compress, DIGEST>;
 
-    pub fn components() -> (Sponge, Compress) {
+    pub fn lmcs_components() -> (LmcsSponge, Compress) {
         let mut rng = SmallRng::seed_from_u64(2025);
         let perm = Perm::new_from_rng_128(&mut rng);
-        let sponge = Sponge::new(perm.clone());
+        let sponge = LmcsSponge::new(perm.clone());
+        let compress = Compress::new(perm);
+        (sponge, compress)
+    }
+
+    pub fn mmcs_components() -> (MmcsSponge, Compress) {
+        let mut rng = SmallRng::seed_from_u64(2025);
+        let perm = Perm::new_from_rng_128(&mut rng);
+        let sponge = MmcsSponge::new(perm.clone());
         let compress = Compress::new(perm);
         (sponge, compress)
     }
@@ -125,7 +140,7 @@ pub mod hash {
     use p3_goldilocks::Poseidon2Goldilocks;
     use p3_lifted::merkle_tree::MerkleTreeLmcs;
     use p3_merkle_tree::MerkleTreeMmcs;
-    use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
+    use p3_symmetric::{PaddingFreeSponge, StatefulSponge, TruncatedPermutation};
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
@@ -137,21 +152,29 @@ pub mod hash {
     pub const HASH_NAME: &str = "poseidon2";
 
     pub type Perm = Poseidon2Goldilocks<WIDTH>;
-    pub type Sponge = PaddingFreeSponge<Perm, WIDTH, RATE, DIGEST>;
     pub type Compress = TruncatedPermutation<Perm, 2, DIGEST, WIDTH>;
 
-    // Scalar LMCS
-    pub type ScalarLmcs = MerkleTreeLmcs<F, F, Sponge, Compress, WIDTH, DIGEST>;
-    pub type ScalarMmcs = MerkleTreeMmcs<F, F, Sponge, Compress, DIGEST>;
+    // LMCS uses StatefulSponge (StatefulHasher)
+    pub type LmcsSponge = StatefulSponge<Perm, WIDTH, RATE, DIGEST>;
+    pub type ScalarLmcs = MerkleTreeLmcs<F, F, LmcsSponge, Compress, WIDTH, DIGEST>;
+    pub type PackedLmcs = MerkleTreeLmcs<P, P, LmcsSponge, Compress, WIDTH, DIGEST>;
 
-    // Packed LMCS
-    pub type PackedLmcs = MerkleTreeLmcs<P, P, Sponge, Compress, WIDTH, DIGEST>;
-    pub type PackedMmcs = MerkleTreeMmcs<P, P, Sponge, Compress, DIGEST>;
+    // MMCS uses PaddingFreeSponge (CryptographicHasher)
+    pub type MmcsSponge = PaddingFreeSponge<Perm, WIDTH, RATE, DIGEST>;
+    pub type PackedMmcs = MerkleTreeMmcs<P, P, MmcsSponge, Compress, DIGEST>;
 
-    pub fn components() -> (Sponge, Compress) {
+    pub fn lmcs_components() -> (LmcsSponge, Compress) {
         let mut rng = SmallRng::seed_from_u64(2025);
         let perm = Perm::new_from_rng_128(&mut rng);
-        let sponge = Sponge::new(perm.clone());
+        let sponge = LmcsSponge::new(perm.clone());
+        let compress = Compress::new(perm);
+        (sponge, compress)
+    }
+
+    pub fn mmcs_components() -> (MmcsSponge, Compress) {
+        let mut rng = SmallRng::seed_from_u64(2025);
+        let perm = Perm::new_from_rng_128(&mut rng);
+        let sponge = MmcsSponge::new(perm.clone());
         let compress = Compress::new(perm);
         (sponge, compress)
     }
@@ -162,33 +185,30 @@ pub mod hash {
 pub mod hash {
     use p3_keccak::KeccakF;
     use p3_lifted::merkle_tree::MerkleTreeLmcs;
-    use p3_symmetric::{ChainingHasher, PaddingFreeSponge, TruncatedPermutation};
+    use p3_symmetric::{SerializingStatefulSponge, StatefulSponge, TruncatedPermutation};
 
     use super::F;
 
-    pub const WIDTH: usize = 4;
-    pub const RATE: usize = 16; // Alignment for row hashing
+    pub const WIDTH: usize = 25;
+    pub const RATE: usize = 17;
     pub const DIGEST: usize = 4;
     pub const HASH_NAME: &str = "keccak";
 
     // Keccak uses u64 digests
-    type KInner = PaddingFreeSponge<KeccakF, 25, 17, DIGEST>;
-    pub type Sponge = ChainingHasher<KInner>;
-    pub type Compress = TruncatedPermutation<KeccakF, 2, DIGEST, 25>;
+    type Inner = StatefulSponge<KeccakF, WIDTH, RATE, DIGEST>;
+    pub type Sponge = SerializingStatefulSponge<Inner>;
+    pub type Compress = TruncatedPermutation<KeccakF, 2, DIGEST, WIDTH>;
 
     // Scalar LMCS (F -> u64 digest)
     pub type ScalarLmcs = MerkleTreeLmcs<F, u64, Sponge, Compress, WIDTH, DIGEST>;
-    // Note: MerkleTreeMmcs with keccak doesn't work with field elements directly
-    // because ChainingHasher doesn't implement CryptographicHasher<F, [u64; N]>
 
     // Packed LMCS (vectorized keccak)
     pub const K_VEC: usize = p3_keccak::VECTOR_LEN;
     pub type PackedLmcs = MerkleTreeLmcs<[F; K_VEC], [u64; K_VEC], Sponge, Compress, WIDTH, DIGEST>;
 
-    static K_INNER: KInner = PaddingFreeSponge::new(KeccakF);
-
-    pub fn components() -> (Sponge, Compress) {
-        let sponge = ChainingHasher::new(K_INNER);
+    pub fn lmcs_components() -> (Sponge, Compress) {
+        let inner = StatefulSponge::new(KeccakF);
+        let sponge = SerializingStatefulSponge::new(inner);
         let compress = TruncatedPermutation::new(KeccakF);
         (sponge, compress)
     }
@@ -199,34 +219,87 @@ pub mod hash {
 pub mod hash {
     use p3_keccak::KeccakF;
     use p3_lifted::merkle_tree::MerkleTreeLmcs;
-    use p3_symmetric::{ChainingHasher, PaddingFreeSponge, TruncatedPermutation};
+    use p3_symmetric::{SerializingStatefulSponge, StatefulSponge, TruncatedPermutation};
 
     use super::F;
 
-    pub const WIDTH: usize = 4;
-    pub const RATE: usize = 8; // Alignment for row hashing
+    pub const WIDTH: usize = 25;
+    pub const RATE: usize = 17;
     pub const DIGEST: usize = 4;
     pub const HASH_NAME: &str = "keccak";
 
     // Keccak uses u64 digests
-    type KInner = PaddingFreeSponge<KeccakF, 25, 17, DIGEST>;
-    pub type Sponge = ChainingHasher<KInner>;
-    pub type Compress = TruncatedPermutation<KeccakF, 2, DIGEST, 25>;
+    type Inner = StatefulSponge<KeccakF, WIDTH, RATE, DIGEST>;
+    pub type Sponge = SerializingStatefulSponge<Inner>;
+    pub type Compress = TruncatedPermutation<KeccakF, 2, DIGEST, WIDTH>;
 
     // Scalar LMCS (F -> u64 digest)
     pub type ScalarLmcs = MerkleTreeLmcs<F, u64, Sponge, Compress, WIDTH, DIGEST>;
-    // Note: MerkleTreeMmcs with keccak doesn't work with field elements directly
-    // because ChainingHasher doesn't implement CryptographicHasher<F, [u64; N]>
 
     // Packed LMCS (vectorized keccak)
     pub const K_VEC: usize = p3_keccak::VECTOR_LEN;
     pub type PackedLmcs = MerkleTreeLmcs<[F; K_VEC], [u64; K_VEC], Sponge, Compress, WIDTH, DIGEST>;
 
-    static K_INNER: KInner = PaddingFreeSponge::new(KeccakF);
-
-    pub fn components() -> (Sponge, Compress) {
-        let sponge = ChainingHasher::new(K_INNER);
+    pub fn lmcs_components() -> (Sponge, Compress) {
+        let inner = StatefulSponge::new(KeccakF);
+        let sponge = SerializingStatefulSponge::new(inner);
         let compress = TruncatedPermutation::new(KeccakF);
+        (sponge, compress)
+    }
+}
+
+// --- Blake3 for BabyBear ---
+// Note: Blake3 is not vectorized, so PackedLmcs is the same as ScalarLmcs
+#[cfg(all(feature = "bench-babybear", feature = "bench-blake3"))]
+pub mod hash {
+    use p3_blake3::Blake3;
+    use p3_lifted::merkle_tree::MerkleTreeLmcs;
+    use p3_symmetric::{ChainingHasher, CompressionFunctionFromHasher};
+
+    use super::F;
+
+    pub const DIGEST: usize = 32;
+    pub const HASH_NAME: &str = "blake3";
+
+    // Blake3 outputs [u8; 32], use ChainingHasher for StatefulHasher impl
+    pub type Sponge = ChainingHasher<Blake3>;
+    pub type Compress = CompressionFunctionFromHasher<Blake3, 2, DIGEST>;
+
+    // LMCS types (F -> u8 digest) - Blake3 doesn't support packed fields
+    pub type ScalarLmcs = MerkleTreeLmcs<F, u8, Sponge, Compress, DIGEST, DIGEST>;
+    pub type PackedLmcs = ScalarLmcs; // Alias for compatibility
+
+    pub fn lmcs_components() -> (Sponge, Compress) {
+        let sponge = ChainingHasher::new(Blake3);
+        let compress = CompressionFunctionFromHasher::new(Blake3);
+        (sponge, compress)
+    }
+}
+
+// --- Blake3 for Goldilocks ---
+// Note: Blake3 is not vectorized, so PackedLmcs is the same as ScalarLmcs
+#[cfg(all(feature = "bench-goldilocks", feature = "bench-blake3"))]
+pub mod hash {
+    use p3_blake3::Blake3;
+    use p3_lifted::merkle_tree::MerkleTreeLmcs;
+    use p3_symmetric::{ChainingHasher, CompressionFunctionFromHasher};
+
+    use super::F;
+
+    pub const DIGEST: usize = 32;
+    pub const HASH_NAME: &str = "blake3";
+
+    // Blake3 outputs [u8; 32], use ChainingHasher for StatefulHasher impl
+    pub type Sponge = ChainingHasher<Blake3>;
+    pub type Compress = CompressionFunctionFromHasher<Blake3, 2, DIGEST>;
+
+    // LMCS types (F -> u8 digest) - Blake3 doesn't support packed fields
+    pub type ScalarLmcs = MerkleTreeLmcs<F, u8, Sponge, Compress, DIGEST, DIGEST>;
+    pub type PackedLmcs = ScalarLmcs; // Alias for compatibility
+
+    pub fn lmcs_components() -> (Sponge, Compress) {
+        let sponge = ChainingHasher::new(Blake3);
+        let compress = CompressionFunctionFromHasher::new(Blake3);
         (sponge, compress)
     }
 }

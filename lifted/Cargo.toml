@@ -25,6 +25,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 p3-baby-bear.workspace = true
+p3-blake3.workspace = true
 p3-fri.workspace = true
 p3-goldilocks.workspace = true
 p3-interpolation.workspace = true
@@ -43,8 +44,9 @@ bench-babybear = []
 bench-goldilocks = []
 
 # Benchmark hash selection (mutually exclusive)
-bench-poseidon2 = []
+bench-blake3 = []
 bench-keccak = []
+bench-poseidon2 = []
 
 [[bench]]
 name = "fri_fold"

@@ -4,7 +4,6 @@
 
 extern crate alloc;
 
-mod chaining_hasher;
 mod compression;
 mod hash;
 mod hasher;
@@ -13,7 +12,9 @@ mod serializing_hasher;
 mod sponge;
 mod stateful;
 
-pub use chaining_hasher::*;
+#[cfg(test)]
+mod testing;
+
 pub use compression::*;
 pub use hash::*;
 pub use hasher::*;

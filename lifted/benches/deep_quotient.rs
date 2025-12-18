@@ -49,7 +49,7 @@ use p3_lifted::deep::interpolate::PointQuotients;
 const LOG_BLOWUP: usize = 3;
 
 fn bench_deep_quotient(c: &mut Criterion) {
-    let (sponge, compress) = hash::components();
+    let (sponge, compress) = hash::lmcs_components();
 
     for &log_max_height in LOG_HEIGHTS {
         let n_leaves = 1usize << log_max_height;

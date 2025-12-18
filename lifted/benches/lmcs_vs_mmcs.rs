@@ -57,9 +57,12 @@ fn bench_lmcs_vs_mmcs(c: &mut Criterion) {
         group.throughput(Throughput::Elements(total_elems));
 
         // Packed mode for Poseidon2
-        let (sponge, compress) = hash::components();
-        let lmcs = hash::PackedLmcs::new(sponge.clone(), compress.clone());
-        let mmcs = hash::PackedMmcs::new(sponge, compress);
+        // LMCS uses StatefulSponge, MMCS uses PaddingFreeSponge
+        let (lmcs_sponge, lmcs_compress) = hash::lmcs_components();
+        let lmcs = hash::PackedLmcs::new(lmcs_sponge, lmcs_compress);
+
+        let (mmcs_sponge, mmcs_compress) = hash::mmcs_components();
+        let mmcs = hash::PackedMmcs::new(mmcs_sponge, mmcs_compress);
 
         let id_lmcs = BenchmarkId::from_parameter("lmcs");
         group.bench_with_input(id_lmcs, &matrix_groups, |b, groups| {
