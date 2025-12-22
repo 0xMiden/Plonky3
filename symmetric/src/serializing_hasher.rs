@@ -104,108 +104,51 @@ where
 mod tests {
     use core::array;
 
+    use p3_bn254::Bn254;
+    use p3_goldilocks::Goldilocks;
     use p3_koala_bear::KoalaBear;
+    use p3_mersenne_31::Mersenne31;
 
-    use crate::{CryptographicHasher, SerializingHasher};
+    use super::*;
+    use crate::testing::MockHasher;
 
-    #[derive(Clone)]
-    struct MockHasher;
+    /// Generic test that parallel hashing matches scalar hashing for all binary types.
+    ///
+    /// Tests u8, u32, and u64 serialization paths.
+    fn test_parallel_matches_scalar_generic<F: Field>() {
+        let hasher = SerializingHasher::new(MockHasher);
 
-    impl CryptographicHasher<u8, [u8; 4]> for MockHasher {
-        fn hash_iter<I: IntoIterator<Item = u8>>(&self, iter: I) -> [u8; 4] {
-            let sum: u8 = iter.into_iter().fold(0, |acc, x| acc.wrapping_add(x));
-            // Simplest impl: set every element to the sum
-            [sum; 4]
-        }
-    }
+        // Create 64 field elements with distinct values
+        let input: [F; 64] = array::from_fn(|i| F::from_usize(i * 7 + 3));
 
-    impl CryptographicHasher<[u8; 4], [[u8; 4]; 4]> for MockHasher {
-        fn hash_iter<I: IntoIterator<Item = [u8; 4]>>(&self, iter: I) -> [[u8; 4]; 4] {
-            let sum: [u8; 4] = iter.into_iter().fold([0, 0, 0, 0], |acc, x| {
-                [
-                    acc[0].wrapping_add(x[0]),
-                    acc[1].wrapping_add(x[1]),
-                    acc[2].wrapping_add(x[2]),
-                    acc[3].wrapping_add(x[3]),
-                ]
-            });
-            // Simplest impl: set every element to the sum
-            [sum; 4]
-        }
-    }
+        // Reshape to [[F; 4]; 16] for parallel processing
+        let parallel_input: [[F; 4]; 16] = array::from_fn(|i| array::from_fn(|j| input[i * 4 + j]));
+        let unzipped_input: [[F; 16]; 4] = array::from_fn(|i| parallel_input.map(|x| x[i]));
 
-    impl CryptographicHasher<u32, [u32; 4]> for MockHasher {
-        fn hash_iter<I: IntoIterator<Item = u32>>(&self, iter: I) -> [u32; 4] {
-            let sum: u32 = iter.into_iter().fold(0, |acc, x| acc.wrapping_add(x));
-            // Simplest impl: set every element to the sum
-            [sum; 4]
-        }
-    }
+        // Test u8 path
+        let u8_parallel: [[u8; 4]; 4] = hasher.hash_iter(parallel_input);
+        let u8_scalar: [[u8; 4]; 4] = unzipped_input.map(|lane| hasher.hash_iter(lane));
+        let u8_scalar_transposed: [[u8; 4]; 4] = array::from_fn(|i| u8_scalar.map(|x| x[i]));
+        assert_eq!(u8_parallel, u8_scalar_transposed, "u8 path mismatch");
 
-    impl CryptographicHasher<[u32; 4], [[u32; 4]; 4]> for MockHasher {
-        fn hash_iter<I: IntoIterator<Item = [u32; 4]>>(&self, iter: I) -> [[u32; 4]; 4] {
-            let sum: [u32; 4] = iter.into_iter().fold([0, 0, 0, 0], |acc, x| {
-                [
-                    acc[0].wrapping_add(x[0]),
-                    acc[1].wrapping_add(x[1]),
-                    acc[2].wrapping_add(x[2]),
-                    acc[3].wrapping_add(x[3]),
-                ]
-            });
-            // Simplest impl: set every element to the sum
-            [sum; 4]
-        }
-    }
+        // Test u32 path
+        let u32_parallel: [[u32; 4]; 4] = hasher.hash_iter(parallel_input);
+        let u32_scalar: [[u32; 4]; 4] = unzipped_input.map(|lane| hasher.hash_iter(lane));
+        let u32_scalar_transposed: [[u32; 4]; 4] = array::from_fn(|i| u32_scalar.map(|x| x[i]));
+        assert_eq!(u32_parallel, u32_scalar_transposed, "u32 path mismatch");
 
-    impl CryptographicHasher<u64, [u64; 4]> for MockHasher {
-        fn hash_iter<I: IntoIterator<Item = u64>>(&self, iter: I) -> [u64; 4] {
-            let sum: u64 = iter.into_iter().fold(0, |acc, x| acc.wrapping_add(x));
-            // Simplest impl: set every element to the sum
-            [sum; 4]
-        }
-    }
-
-    impl CryptographicHasher<[u64; 4], [[u64; 4]; 4]> for MockHasher {
-        fn hash_iter<I: IntoIterator<Item = [u64; 4]>>(&self, iter: I) -> [[u64; 4]; 4] {
-            let sum: [u64; 4] = iter.into_iter().fold([0, 0, 0, 0], |acc, x| {
-                [
-                    acc[0].wrapping_add(x[0]),
-                    acc[1].wrapping_add(x[1]),
-                    acc[2].wrapping_add(x[2]),
-                    acc[3].wrapping_add(x[3]),
-                ]
-            });
-            // Simplest impl: set every element to the sum
-            [sum; 4]
-        }
+        // Test u64 path
+        let u64_parallel: [[u64; 4]; 4] = hasher.hash_iter(parallel_input);
+        let u64_scalar: [[u64; 4]; 4] = unzipped_input.map(|lane| hasher.hash_iter(lane));
+        let u64_scalar_transposed: [[u64; 4]; 4] = array::from_fn(|i| u64_scalar.map(|x| x[i]));
+        assert_eq!(u64_parallel, u64_scalar_transposed, "u64 path mismatch");
     }
 
     #[test]
-    fn test_parallel_hashers() {
-        let mock_hash = MockHasher {};
-        let hasher = SerializingHasher::new(mock_hash);
-        let input: [KoalaBear; 256] = KoalaBear::new_array(array::from_fn(|x| x as u32));
-
-        let parallel_input: [[KoalaBear; 4]; 64] = unsafe { core::mem::transmute(input) };
-        let unzipped_input: [[KoalaBear; 64]; 4] = array::from_fn(|i| parallel_input.map(|x| x[i]));
-
-        let u8_output_parallel: [[u8; 4]; 4] = hasher.hash_iter(parallel_input);
-        let u8_output_individual: [[u8; 4]; 4] = unzipped_input.map(|x| hasher.hash_iter(x));
-        let u8_output_individual_transposed =
-            array::from_fn(|i| u8_output_individual.map(|x| x[i]));
-
-        let u32_output_parallel: [[u32; 4]; 4] = hasher.hash_iter(parallel_input);
-        let u32_output_individual: [[u32; 4]; 4] = unzipped_input.map(|x| hasher.hash_iter(x));
-        let u32_output_individual_transposed =
-            array::from_fn(|i| u32_output_individual.map(|x| x[i]));
-
-        let u64_output_parallel: [[u64; 4]; 4] = hasher.hash_iter(parallel_input);
-        let u64_output_individual: [[u64; 4]; 4] = unzipped_input.map(|x| hasher.hash_iter(x));
-        let u64_output_individual_transposed =
-            array::from_fn(|i| u64_output_individual.map(|x| x[i]));
-
-        assert_eq!(u8_output_parallel, u8_output_individual_transposed);
-        assert_eq!(u32_output_parallel, u32_output_individual_transposed);
-        assert_eq!(u64_output_parallel, u64_output_individual_transposed);
+    fn parallel_matches_scalar() {
+        test_parallel_matches_scalar_generic::<KoalaBear>();
+        test_parallel_matches_scalar_generic::<Goldilocks>();
+        test_parallel_matches_scalar_generic::<Mersenne31>();
+        test_parallel_matches_scalar_generic::<Bn254>();
     }
 }

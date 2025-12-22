@@ -208,15 +208,16 @@ where
     }
 
     #[inline]
-    fn to_ext_iter(
-        iter: impl IntoIterator<Item = Self>,
-    ) -> impl Iterator<Item = BinomialExtensionField<F, D>> {
+    fn pack_ext_columns<const N: usize>(rows: &[[BinomialExtensionField<F, D>; N]]) -> [Self; N] {
         let width = F::Packing::WIDTH;
-        iter.into_iter().flat_map(move |x| {
-            (0..width).map(move |i| {
-                let values = array::from_fn(|j| x.value[j].as_slice()[i]);
-                BinomialExtensionField::new(values)
-            })
+        assert_eq!(rows.len(), width);
+        array::from_fn(|i| {
+            // Pack column i: rows[0][i], rows[1][i], ..., rows[WIDTH-1][i]
+            // Each BinomialExtensionField<F, D> has D coefficients in `value`
+            Self::new(array::from_fn(|k| {
+                // Pack the k-th coefficient from each row's i-th element
+                F::Packing::from_fn(|j| rows[j][i].value[k])
+            }))
         })
     }
 

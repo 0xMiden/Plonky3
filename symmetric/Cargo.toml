@@ -16,7 +16,10 @@ itertools.workspace = true
 serde = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
+p3-bn254.workspace = true
+p3-goldilocks.workspace = true
 p3-koala-bear.workspace = true
+p3-mersenne-31.workspace = true
 
 [lints]
 workspace = true

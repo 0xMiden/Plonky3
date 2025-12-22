@@ -124,26 +124,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Permutation;
-
-    #[derive(Clone)]
-    struct MockPermutation;
-
-    impl<T, const WIDTH: usize> Permutation<[T; WIDTH]> for MockPermutation
-    where
-        T: Copy + core::ops::Add<Output = T> + Default,
-    {
-        fn permute_mut(&self, input: &mut [T; WIDTH]) {
-            let sum: T = input.iter().copied().fold(T::default(), |acc, x| acc + x);
-            // Set every element to the sum
-            *input = [sum; WIDTH];
-        }
-    }
-
-    impl<T, const WIDTH: usize> CryptographicPermutation<[T; WIDTH]> for MockPermutation where
-        T: Copy + core::ops::Add<Output = T> + Default
-    {
-    }
+    use crate::testing::MockPermutation;
 
     #[test]
     fn test_padding_free_sponge_basic() {

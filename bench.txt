@@ -1,0 +1,156 @@
+# PCS Benchmark Baseline Results
+# Machine: Apple M2 Pro
+# Date: Before PointQuotients refactoring
+# Baseline: critcmp "base"
+
+## Summary
+These are the baseline benchmark results before consolidating on PointQuotients<N>.
+The refactoring removed SinglePointQuotient and renamed MultiPointQuotient to PointQuotients,
+making N a const generic for the PCS.
+
+## Results
+
+critcmp base | grep PCS:
+
+PCS_Open/65536/babybear/poseidon2/parallel/lifted/arity2                         1.00     42.1±0.49ms 173.8 MElem/sec
+PCS_Open/65536/babybear/poseidon2/parallel/lifted/arity4                         1.00     24.8±0.75ms 295.7 MElem/sec
+PCS_Open/65536/babybear/poseidon2/parallel/workspace                             1.00     42.0±1.12ms 174.2 MElem/sec
+PCS_Open/65536/babybear/poseidon2/single/lifted/arity2                           1.00    216.8±0.38ms 33.8 MElem/sec
+PCS_Open/65536/babybear/poseidon2/single/lifted/arity4                           1.00    110.2±0.11ms 66.5 MElem/sec
+PCS_Open/65536/babybear/poseidon2/single/workspace                               1.00    223.5±0.49ms 32.7 MElem/sec
+PCS_Open/65536/goldilocks/poseidon2/parallel/lifted/arity2                       1.00     89.8±2.00ms 81.5 MElem/sec
+PCS_Open/65536/goldilocks/poseidon2/parallel/lifted/arity4                       1.00     45.7±1.67ms 160.1 MElem/sec
+PCS_Open/65536/goldilocks/poseidon2/parallel/workspace                           1.00     92.0±1.74ms 79.6 MElem/sec
+PCS_Open/65536/goldilocks/poseidon2/single/lifted/arity2                         1.00    639.9±6.85ms 11.4 MElem/sec
+PCS_Open/65536/goldilocks/poseidon2/single/lifted/arity4                         1.00    287.8±2.03ms 25.4 MElem/sec
+PCS_Open/65536/goldilocks/poseidon2/single/workspace                             1.00    647.4±2.68ms 11.3 MElem/sec
+
+PCS_Open/262144/babybear/poseidon2/parallel/lifted/arity2                        1.00    136.0±0.69ms 215.2 MElem/sec
+PCS_Open/262144/babybear/poseidon2/parallel/lifted/arity4                        1.00     76.4±1.01ms 383.2 MElem/sec
+PCS_Open/262144/babybear/poseidon2/parallel/workspace                            1.00    134.1±1.69ms 218.3 MElem/sec
+PCS_Open/262144/babybear/poseidon2/single/lifted/arity2                          1.00    866.6±2.43ms 33.8 MElem/sec
+PCS_Open/262144/babybear/poseidon2/single/lifted/arity4                          1.00    439.2±1.07ms 66.7 MElem/sec
+PCS_Open/262144/babybear/poseidon2/single/workspace                              1.00    897.5±2.79ms 32.6 MElem/sec
+PCS_Open/262144/goldilocks/poseidon2/parallel/lifted/arity2                      1.00    318.2±1.38ms 92.0 MElem/sec
+PCS_Open/262144/goldilocks/poseidon2/parallel/lifted/arity4                      1.00    154.0±1.68ms 190.2 MElem/sec
+PCS_Open/262144/goldilocks/poseidon2/parallel/workspace                          1.00    326.8±5.73ms 89.6 MElem/sec
+PCS_Open/262144/goldilocks/poseidon2/single/lifted/arity2                        1.00       2.6±0.03s 11.4 MElem/sec
+PCS_Open/262144/goldilocks/poseidon2/single/lifted/arity4                        1.00  1166.0±11.23ms 25.1 MElem/sec
+PCS_Open/262144/goldilocks/poseidon2/single/workspace                            1.00       2.6±0.03s 11.3 MElem/sec
+
+PCS_Open/1048576/babybear/poseidon2/parallel/lifted/arity2                       1.00    495.8±3.52ms 236.3 MElem/sec
+PCS_Open/1048576/babybear/poseidon2/parallel/lifted/arity4                       1.00    271.4±2.53ms 431.6 MElem/sec
+PCS_Open/1048576/babybear/poseidon2/parallel/workspace                           1.00    490.1±3.41ms 239.0 MElem/sec
+PCS_Open/1048576/babybear/poseidon2/single/lifted/arity2                         1.00       3.5±0.03s 33.7 MElem/sec
+PCS_Open/1048576/babybear/poseidon2/single/lifted/arity4                         1.00   1747.4±7.45ms 67.0 MElem/sec
+PCS_Open/1048576/babybear/poseidon2/single/workspace                             1.00       3.6±0.08s 32.4 MElem/sec
+PCS_Open/1048576/goldilocks/poseidon2/parallel/lifted/arity2                     1.00  1240.1±16.00ms 94.4 MElem/sec
+PCS_Open/1048576/goldilocks/poseidon2/parallel/lifted/arity4                     1.00    572.4±2.36ms 204.6 MElem/sec
+PCS_Open/1048576/goldilocks/poseidon2/parallel/workspace                         1.00  1273.7±21.43ms 92.0 MElem/sec
+PCS_Open/1048576/goldilocks/poseidon2/single/lifted/arity2                       1.00      10.1±0.04s 11.6 MElem/sec
+PCS_Open/1048576/goldilocks/poseidon2/single/lifted/arity4                       1.00       4.5±0.02s 25.8 MElem/sec
+PCS_Open/1048576/goldilocks/poseidon2/single/workspace                           1.00      10.7±0.41s 11.0 MElem/sec
+
+PCS_Open/4194304/goldilocks/poseidon2/parallel/lifted/arity2                     1.00  1096.6±32.32ms  3.6 MElem/sec
+PCS_Open/4194304/goldilocks/poseidon2/parallel/lifted/arity4                     1.00   441.2±10.35ms  9.1 MElem/sec
+PCS_Open/4194304/goldilocks/poseidon2/parallel/workspace                         1.00  1079.9±16.55ms  3.7 MElem/sec
+
+## DEEP Quotient Results (for reference)
+
+critcmp base | grep DEEP:
+
+DEEP_Quotient/262144/babybear/parallel/batch_eval                                1.00      2.1±0.02ms 13.7 GElem/sec
+DEEP_Quotient/262144/babybear/parallel/combined                                  1.00     11.6±0.08ms  2.5 GElem/sec
+DEEP_Quotient/262144/babybear/parallel/combined_batched                          1.00      9.6±0.26ms  3.0 GElem/sec
+DEEP_Quotient/262144/babybear/parallel/multi_point_1                             1.00      8.5±0.15ms  3.3 GElem/sec
+DEEP_Quotient/262144/babybear/parallel/multi_point_2                             1.00      9.6±0.10ms  3.0 GElem/sec
+DEEP_Quotient/262144/babybear/parallel/single_point                              1.00      8.7±0.11ms  3.3 GElem/sec
+DEEP_Quotient/262144/babybear/parallel/single_point_x2                           1.00     11.2±0.29ms  2.5 GElem/sec
+DEEP_Quotient/262144/babybear/single/batch_eval                                  1.00     38.3±0.15ms 764.1 MElem/sec
+DEEP_Quotient/262144/babybear/single/combined                                    1.00    122.4±4.60ms 239.3 MElem/sec
+DEEP_Quotient/262144/babybear/single/combined_batched                            1.00    154.7±1.09ms 189.3 MElem/sec
+DEEP_Quotient/262144/goldilocks/parallel/batch_eval                              1.00      2.7±0.02ms 10.7 GElem/sec
+DEEP_Quotient/262144/goldilocks/parallel/combined                                1.00     17.0±0.14ms 1720.6 MElem/sec
+DEEP_Quotient/262144/goldilocks/parallel/combined_batched                        1.00     15.8±0.65ms 1858.9 MElem/sec
+
+DEEP_Quotient/1048576/babybear/parallel/batch_eval                               1.00      5.1±0.06ms 22.3 GElem/sec
+DEEP_Quotient/1048576/babybear/parallel/combined                                 1.00     35.1±2.27ms  3.3 GElem/sec
+DEEP_Quotient/1048576/babybear/parallel/combined_batched                         1.00     33.1±1.75ms  3.5 GElem/sec
+DEEP_Quotient/1048576/babybear/parallel/multi_point_1                            1.00     26.7±0.36ms  4.3 GElem/sec
+DEEP_Quotient/1048576/babybear/parallel/multi_point_2                            1.00     30.6±0.38ms  3.7 GElem/sec
+DEEP_Quotient/1048576/babybear/parallel/single_point                             1.00     27.8±0.75ms  4.1 GElem/sec
+DEEP_Quotient/1048576/babybear/parallel/single_point_x2                          1.00     33.5±0.23ms  3.4 GElem/sec
+DEEP_Quotient/1048576/babybear/single/batch_eval                                 1.00    153.4±0.48ms 763.3 MElem/sec
+DEEP_Quotient/1048576/babybear/single/combined                                   1.00   490.9±18.39ms 238.6 MElem/sec
+DEEP_Quotient/1048576/babybear/single/combined_batched                           1.00    632.9±4.97ms 185.1 MElem/sec
+DEEP_Quotient/1048576/goldilocks/parallel/batch_eval                             1.00      7.3±0.12ms 15.8 GElem/sec
+DEEP_Quotient/1048576/goldilocks/parallel/combined                               1.00     55.2±0.64ms  2.1 GElem/sec
+DEEP_Quotient/1048576/goldilocks/parallel/combined_batched                       1.00     51.7±1.18ms  2.2 GElem/sec
+DEEP_Quotient/1048576/goldilocks/parallel/multi_point_1                          1.00     44.6±0.31ms  2.6 GElem/sec
+DEEP_Quotient/1048576/goldilocks/parallel/multi_point_2                          1.00     51.1±1.26ms  2.2 GElem/sec
+DEEP_Quotient/1048576/goldilocks/parallel/single_point                           1.00     45.7±1.40ms  2.5 GElem/sec
+DEEP_Quotient/1048576/goldilocks/parallel/single_point_x2                        1.00     53.5±0.36ms  2.1 GElem/sec
+
+## Key Observations from Baseline
+
+- `multi_point_2` (now PointQuotients<2>) vs `single_point_x2` (two separate SinglePointQuotient calls):
+  - BabyBear parallel 1M: 30.6ms vs 33.5ms (8.7% faster)
+  - Goldilocks parallel 1M: 51.1ms vs 53.5ms (4.5% faster)
+
+- `combined_batched` (DeepPoly::new_batched) vs `combined` (DeepPoly::new with SinglePointQuotient):
+  - BabyBear parallel 1M: 33.1ms vs 35.1ms (5.7% faster)
+  - Goldilocks parallel 1M: 51.7ms vs 55.2ms (6.3% faster)
+
+The batched approach is consistently faster, justifying the consolidation on PointQuotients<N>.
+
+## Post-Refactoring Comparison
+
+After refactoring to consolidate on PointQuotients<N> with const generic N:
+
+```
+critcmp base after-refactor | grep PCS
+```
+
+| Benchmark | After | Base | Change |
+|-----------|-------|------|--------|
+| BabyBear/parallel/1M/lifted/arity2 | 485.1ms | 495.8ms | -2% (faster) |
+| BabyBear/parallel/1M/lifted/arity4 | 265.2ms | 271.4ms | -2% (faster) |
+| BabyBear/parallel/1M/workspace | 482.5ms | 490.1ms | -2% (faster) |
+| BabyBear/single/1M/lifted/arity2 | 3.5s | 3.5s | ~0% |
+| BabyBear/single/1M/lifted/arity4 | 1738.6ms | 1747.4ms | -1% |
+| Goldilocks/parallel/1M/lifted/arity2 | 1240.6ms | 1240.1ms | ~0% |
+| Goldilocks/parallel/1M/lifted/arity4 | 576.6ms | 572.4ms | +1% |
+| Goldilocks/single/1M/lifted/arity2 | 9.7s | 10.1s | -4% (faster) |
+| Goldilocks/single/1M/lifted/arity4 | 4.3s | 4.5s | -4% (faster) |
+
+### Summary
+
+The refactoring shows **no performance regression** - results are within measurement noise (~2-5%).
+Some configurations show slight improvements (BabyBear parallel, Goldilocks single-threaded).
+
+Key changes made:
+1. Removed SinglePointQuotient (consolidated into PointQuotients<1>)
+2. Renamed MultiPointQuotient → PointQuotients
+3. Made N a const generic parameter for the PCS
+4. Renamed DeepPoly::new_batched → DeepPoly::new
+
+The const generic approach provides compile-time specialization while maintaining the same
+performance characteristics as the previous implementation.
+
+
+
+  | Config              | Workspace | Arity2 | Arity4 | Arity4 Speedup |
+  |---------------------|-----------|--------|--------|----------------|
+  | BabyBear/parallel   | 482ms     | 485ms  | 265ms  | 1.8x           |
+  | BabyBear/single     | 3.6s      | 3.5s   | 1.74s  | 2.1x           |
+  | Goldilocks/parallel | 1.22s     | 1.24s  | 577ms  | 2.1x           |
+  | Goldilocks/single   | 10.3s     | 9.7s   | 4.3s   | 2.4x           |
+
+  Key observations:
+
+  1. Workspace ≈ Arity2 - They're essentially the same speed (within noise). The lifted PCS with arity-2 FRI has no overhead vs the workspace PCS.
+  2. Arity4 is consistently ~2x faster - This is expected: arity-4 FRI folds 2 bits per round vs 1 bit for arity-2, halving the number of rounds.
+  3. The arity4 advantage is larger for single-threaded (2.1-2.4x) than parallel (1.8-2.1x). This suggests FRI folding is more parallelizable at arity-2, so arity-4's round reduction matters less when you have many cores.
+  4. Goldilocks sees slightly better arity4 gains than BabyBear - possibly because the 64-bit field arithmetic is more expensive, so reducing rounds helps more.
+
+  Bottom line: Arity4 is the clear winner. The lifted PCS matches workspace at arity2 and beats it by 2x at arity4.

@@ -8,9 +8,10 @@ use alloc::vec::Vec;
 use core::fmt::{Debug, Display, Formatter};
 use core::ops::Deref;
 
-use itertools::{Itertools, izip};
+use itertools::Itertools;
 use p3_field::{
-    BasedVectorSpace, ExtensionField, Field, PackedValue, PrimeCharacteristicRing, dot_product,
+    BasedVectorSpace, ExtensionField, Field, FieldArray, PackedFieldExtension, PackedValue,
+    PrimeCharacteristicRing, dot_product,
 };
 use p3_maybe_rayon::prelude::*;
 use strided::{VerticallyStridedMatrixView, VerticallyStridedRowIndexMap};
@@ -429,32 +430,78 @@ pub trait Matrix<T: Send + Sync + Clone>: Send + Sync {
     {
         let packed_width = self.width().div_ceil(T::Packing::WIDTH);
 
-        let packed_result = self
+        let packed_result: Vec<EF::ExtensionPacking> = self
             .par_padded_horizontally_packed_rows::<T::Packing>()
             .zip(v)
             .par_fold_reduce(
                 || EF::ExtensionPacking::zero_vec(packed_width),
                 |mut acc, (row, &scale)| {
-                    let scale = EF::ExtensionPacking::from_basis_coefficients_fn(|i| {
-                        T::Packing::from(scale.as_basis_coefficients_slice()[i])
-                    });
-                    izip!(&mut acc, row).for_each(|(l, r)| *l += scale * r);
+                    let scale: EF::ExtensionPacking = scale.into();
+                    acc.iter_mut().zip(row).for_each(|(l, r)| *l += scale * r);
                     acc
                 },
                 |mut acc_l, acc_r| {
-                    izip!(&mut acc_l, acc_r).for_each(|(l, r)| *l += r);
+                    acc_l.iter_mut().zip(&acc_r).for_each(|(l, r)| *l += *r);
                     acc_l
                 },
             );
 
-        packed_result
-            .into_iter()
-            .flat_map(|p| {
-                (0..T::Packing::WIDTH).map(move |i| {
-                    EF::from_basis_coefficients_fn(|j| {
-                        p.as_basis_coefficients_slice()[j].as_slice()[i]
-                    })
-                })
+        EF::ExtensionPacking::to_ext_iter(packed_result.into_iter())
+            .take(self.width())
+            .collect()
+    }
+
+    /// Compute Mᵀ · [v₀, v₁, ..., vₙ₋₁] for N weight vectors simultaneously.
+    ///
+    /// Computes `result[col][j] = Σᵣ M[r, col] · vⱼ[r]` for all columns and all j ∈ [0, N).
+    ///
+    /// Batching N weight vectors reduces memory bandwidth: each matrix row is loaded once
+    /// instead of N times. Uses SIMD packing (width W) to process W columns in parallel.
+    #[instrument(level = "debug", skip_all, fields(dims = %self.dimensions()))]
+    fn columnwise_dot_product_batched<EF, const N: usize>(
+        &self,
+        vs: &[FieldArray<EF, N>],
+    ) -> Vec<FieldArray<EF, N>>
+    where
+        T: Field,
+        EF: ExtensionField<T>,
+    {
+        let packed_width = self.width().div_ceil(T::Packing::WIDTH);
+
+        let packed_results: Vec<EF::ExtensionPacking> = self
+            .par_padded_horizontally_packed_rows::<T::Packing>()
+            .zip(vs)
+            .par_fold_reduce(
+                || EF::ExtensionPacking::zero_vec(packed_width * N),
+                |mut acc, (packed_row, scales)| {
+                    let (acc_chunks, _) = acc.as_chunks_mut::<N>();
+                    // Broadcast each scalar scale to all SIMD lanes
+                    let packed_scales: [EF::ExtensionPacking; N] =
+                        scales.map_array(EF::ExtensionPacking::from);
+
+                    // acc[c][j] += scales[j] · row[c] for column batch c, point j
+                    acc_chunks
+                        .iter_mut()
+                        .zip(packed_row)
+                        .for_each(|(acc_c, row_c)| {
+                            for j in 0..N {
+                                acc_c[j] += packed_scales[j] * row_c;
+                            }
+                        });
+                    acc
+                },
+                |mut acc_l, acc_r| {
+                    acc_l.iter_mut().zip(&acc_r).for_each(|(lj, rj)| *lj += *rj);
+                    acc_l
+                },
+            );
+
+        // Unpack: chunk[j].lane(i) → result[c·W + i][j] for column batch c
+        packed_results
+            .chunks(N)
+            .flat_map(|chunk| {
+                (0..T::Packing::WIDTH)
+                    .map(move |lane| FieldArray::from_fn(|j| chunk[j].extract_lane(lane)))
             })
             .take(self.width())
             .collect()
@@ -499,6 +546,221 @@ pub trait Matrix<T: Send + Sync + Clone>: Send + Sync {
     }
 }
 
+// Allow creating matrix views over references by forwarding `Matrix` methods to the underlying
+// matrix implementation. This enables using `&M` anywhere an `M: Matrix<T>` is expected,
+// which is useful for lightweight views like lifted/strided without moving or cloning.
+impl<T, M> Matrix<T> for &M
+where
+    T: Send + Sync + Clone,
+    M: Matrix<T> + ?Sized,
+{
+    #[inline]
+    fn width(&self) -> usize {
+        (*self).width()
+    }
+
+    #[inline]
+    fn height(&self) -> usize {
+        (*self).height()
+    }
+
+    #[inline]
+    fn get(&self, r: usize, c: usize) -> Option<T> {
+        (*self).get(r, c)
+    }
+
+    #[inline]
+    unsafe fn get_unchecked(&self, r: usize, c: usize) -> T {
+        // Safety: Follows the contract of the underlying matrix method.
+        unsafe { (*self).get_unchecked(r, c) }
+    }
+
+    #[inline]
+    fn row(
+        &self,
+        r: usize,
+    ) -> Option<impl IntoIterator<Item = T, IntoIter = impl Iterator<Item = T> + Send + Sync>> {
+        (*self).row(r)
+    }
+
+    #[inline]
+    unsafe fn row_unchecked(
+        &self,
+        r: usize,
+    ) -> impl IntoIterator<Item = T, IntoIter = impl Iterator<Item = T> + Send + Sync> {
+        // Safety: Follows the contract of the underlying matrix method.
+        unsafe { (*self).row_unchecked(r) }
+    }
+
+    #[inline]
+    unsafe fn row_subseq_unchecked(
+        &self,
+        r: usize,
+        start: usize,
+        end: usize,
+    ) -> impl IntoIterator<Item = T, IntoIter = impl Iterator<Item = T> + Send + Sync> {
+        // Safety: Follows the contract of the underlying matrix method.
+        unsafe { (*self).row_subseq_unchecked(r, start, end) }
+    }
+
+    #[inline]
+    fn row_slice(&self, r: usize) -> Option<impl Deref<Target = [T]>> {
+        (*self).row_slice(r)
+    }
+    #[inline]
+    unsafe fn row_slice_unchecked(&self, r: usize) -> impl Deref<Target = [T]> {
+        // Safety: Follows the contract of the underlying matrix method.
+        unsafe { (*self).row_slice_unchecked(r) }
+    }
+
+    #[inline]
+    unsafe fn row_subslice_unchecked(
+        &self,
+        r: usize,
+        start: usize,
+        end: usize,
+    ) -> impl Deref<Target = [T]> {
+        // Safety: Follows the contract of the underlying matrix method.
+        unsafe { (*self).row_subslice_unchecked(r, start, end) }
+    }
+
+    #[inline]
+    fn rows(&self) -> impl Iterator<Item = impl Iterator<Item = T>> + Send + Sync {
+        (*self).rows()
+    }
+
+    #[inline]
+    fn par_rows(
+        &self,
+    ) -> impl IndexedParallelIterator<Item = impl Iterator<Item = T>> + Send + Sync {
+        (*self).par_rows()
+    }
+
+    #[inline]
+    fn wrapping_row_slices(&self, r: usize, c: usize) -> Vec<impl Deref<Target = [T]>> {
+        (*self).wrapping_row_slices(r, c)
+    }
+
+    #[inline]
+    fn first_row(
+        &self,
+    ) -> Option<impl IntoIterator<Item = T, IntoIter = impl Iterator<Item = T> + Send + Sync>> {
+        (*self).first_row()
+    }
+
+    #[inline]
+    fn last_row(
+        &self,
+    ) -> Option<impl IntoIterator<Item = T, IntoIter = impl Iterator<Item = T> + Send + Sync>> {
+        (*self).last_row()
+    }
+
+    #[inline]
+    fn horizontally_packed_row<'b, P>(
+        &'b self,
+        r: usize,
+    ) -> (
+        impl Iterator<Item = P> + Send + Sync,
+        impl Iterator<Item = T> + Send + Sync,
+    )
+    where
+        P: PackedValue<Value = T>,
+        T: Clone + 'b,
+    {
+        (*self).horizontally_packed_row::<P>(r)
+    }
+
+    #[inline]
+    fn padded_horizontally_packed_row<'b, P>(
+        &'b self,
+        r: usize,
+    ) -> impl Iterator<Item = P> + Send + Sync
+    where
+        P: PackedValue<Value = T>,
+        T: Clone + Default + 'b,
+    {
+        (*self).padded_horizontally_packed_row::<P>(r)
+    }
+
+    #[inline]
+    fn par_horizontally_packed_rows<'b, P>(
+        &'b self,
+    ) -> impl IndexedParallelIterator<
+        Item = (
+            impl Iterator<Item = P> + Send + Sync,
+            impl Iterator<Item = T> + Send + Sync,
+        ),
+    >
+    where
+        P: PackedValue<Value = T>,
+        T: Clone + 'b,
+    {
+        (*self).par_horizontally_packed_rows::<P>()
+    }
+
+    #[inline]
+    fn par_padded_horizontally_packed_rows<'b, P>(
+        &'b self,
+    ) -> impl IndexedParallelIterator<Item = impl Iterator<Item = P> + Send + Sync>
+    where
+        P: PackedValue<Value = T>,
+        T: Clone + Default + 'b,
+    {
+        (*self).par_padded_horizontally_packed_rows::<P>()
+    }
+
+    #[inline]
+    fn vertically_packed_row<P>(&self, r: usize) -> impl Iterator<Item = P>
+    where
+        T: Copy,
+        P: PackedValue<Value = T>,
+    {
+        (*self).vertically_packed_row::<P>(r)
+    }
+
+    #[inline]
+    fn vertically_packed_row_pair<P>(&self, r: usize, step: usize) -> Vec<P>
+    where
+        T: Copy,
+        P: PackedValue<Value = T>,
+    {
+        (*self).vertically_packed_row_pair::<P>(r, step)
+    }
+
+    #[inline]
+    fn columnwise_dot_product<EF>(&self, v: &[EF]) -> Vec<EF>
+    where
+        T: Field,
+        EF: ExtensionField<T>,
+    {
+        (*self).columnwise_dot_product::<EF>(v)
+    }
+
+    #[inline]
+    fn columnwise_dot_product_batched<EF, const N: usize>(
+        &self,
+        vs: &[FieldArray<EF, N>],
+    ) -> Vec<FieldArray<EF, N>>
+    where
+        T: Field,
+        EF: ExtensionField<T>,
+    {
+        (*self).columnwise_dot_product_batched::<EF, N>(vs)
+    }
+
+    #[inline]
+    fn rowwise_packed_dot_product<EF>(
+        &self,
+        vec: &[<EF as ExtensionField<T>>::ExtensionPacking],
+    ) -> impl IndexedParallelIterator<Item = EF>
+    where
+        T: Field,
+        EF: ExtensionField<T>,
+    {
+        (*self).rowwise_packed_dot_product::<EF>(vec)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
@@ -530,6 +792,36 @@ mod tests {
         }
 
         assert_eq!(m.columnwise_dot_product(&v), expected);
+    }
+
+    #[test]
+    fn test_columnwise_dot_product_batched() {
+        type F = BabyBear;
+        type EF = BinomialExtensionField<BabyBear, 4>;
+
+        let mut rng = SmallRng::seed_from_u64(1);
+        let m = RowMajorMatrix::<F>::rand(&mut rng, 1 << 8, 1 << 4);
+        let v1 = RowMajorMatrix::<EF>::rand(&mut rng, 1 << 8, 1).values;
+        let v2 = RowMajorMatrix::<EF>::rand(&mut rng, 1 << 8, 1).values;
+
+        // Compute expected via two separate calls
+        let expected1 = m.columnwise_dot_product(&v1);
+        let expected2 = m.columnwise_dot_product(&v2);
+
+        // Compute via batched call - returns Vec<[EF; 2]> where result[col] = [dot1, dot2]
+        let vs: Vec<FieldArray<EF, 2>> = v1
+            .into_iter()
+            .zip(v2)
+            .map(|(a, b)| FieldArray([a, b]))
+            .collect();
+        let results = m.columnwise_dot_product_batched::<EF, 2>(&vs);
+
+        // Extract each point's results
+        let result1: Vec<EF> = results.iter().map(|r| r[0]).collect();
+        let result2: Vec<EF> = results.iter().map(|r| r[1]).collect();
+
+        assert_eq!(result1, expected1);
+        assert_eq!(result2, expected2);
     }
 
     // Mock implementation for testing purposes
