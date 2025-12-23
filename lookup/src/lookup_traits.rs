@@ -222,3 +222,98 @@ where
         }
     }
 }
+
+/// Wrapper around AIRs for AIRs that do not use lookups.
+#[derive(Clone)]
+pub struct AirNoLookup<A> {
+    air: A,
+}
+
+impl<A> AirNoLookup<A> {
+    pub const fn new(air: A) -> Self {
+        Self { air }
+    }
+}
+
+impl<F, A: BaseAir<F>> BaseAir<F> for AirNoLookup<A> {
+    fn width(&self) -> usize {
+        self.air.width()
+    }
+
+    fn preprocessed_trace(&self) -> Option<RowMajorMatrix<F>> {
+        self.air.preprocessed_trace()
+    }
+
+    fn periodic_table(&self) -> Vec<Vec<F>> {
+        self.air.periodic_table()
+    }
+}
+
+impl<AB: AirBuilder, A: Air<AB>> Air<AB> for AirNoLookup<A> {
+    fn eval(&self, builder: &mut AB) {
+        self.air.eval(builder);
+    }
+}
+
+impl<AB: AirBuilderWithPublicValues + PairBuilder + PermutationAirBuilder, A: Air<AB>>
+    AirLookupHandler<AB> for AirNoLookup<A>
+{
+    fn add_lookup_columns(&mut self) -> Vec<usize> {
+        vec![]
+    }
+
+    fn get_lookups(&mut self) -> Vec<Lookup<AB::F>> {
+        vec![]
+    }
+}
+
+/// Empty lookup gadget for AIRs that do not use lookups.
+pub struct EmptyLookupGadget;
+impl LookupGadget for EmptyLookupGadget {
+    fn num_aux_cols(&self) -> usize {
+        0
+    }
+
+    fn num_challenges(&self) -> usize {
+        0
+    }
+
+    fn eval_local_lookup<AB>(&self, _builder: &mut AB, _context: &Lookup<AB::F>)
+    where
+        AB: PermutationAirBuilder + PairBuilder + AirBuilderWithPublicValues,
+    {
+    }
+
+    fn eval_global_update<AB>(
+        &self,
+        _builder: &mut AB,
+        _context: &Lookup<AB::F>,
+        _expected_cumulated: AB::ExprEF,
+    ) where
+        AB: PermutationAirBuilder + PairBuilder + AirBuilderWithPublicValues,
+    {
+    }
+
+    fn verify_global_final_value<EF: Field>(
+        &self,
+        _all_expected_cumulated: &[EF],
+    ) -> Result<(), LookupError> {
+        Ok(())
+    }
+
+    fn constraint_degree<F: Field>(&self, _context: Lookup<F>) -> usize {
+        0
+    }
+
+    fn generate_permutation<SC: StarkGenericConfig>(
+        &self,
+        _main: &RowMajorMatrix<Val<SC>>,
+        _preprocessed: &Option<RowMajorMatrix<Val<SC>>>,
+        _public_values: &[Val<SC>],
+        _lookups: &[Lookup<Val<SC>>],
+        _lookup_data: &mut [LookupData<SC::Challenge>],
+        _permutation_challenges: &[SC::Challenge],
+    ) -> RowMajorMatrix<SC::Challenge> {
+        RowMajorMatrix::new(vec![], 0)
+    }
+}
