@@ -8,6 +8,7 @@ use p3_air::{
 use p3_field::{ExtensionField, Field};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_util::log2_ceil_usize;
+
 use tracing::instrument;
 
 use crate::Entry;
