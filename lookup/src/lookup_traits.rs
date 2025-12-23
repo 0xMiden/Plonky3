@@ -452,6 +452,10 @@ impl<F, A: BaseAir<F>> BaseAir<F> for AirNoLookup<A> {
     fn preprocessed_trace(&self) -> Option<RowMajorMatrix<F>> {
         self.air.preprocessed_trace()
     }
+
+    fn periodic_table(&self) -> Vec<Vec<F>> {
+        self.air.periodic_table()
+    }
 }
 
 impl<AB: AirBuilder, A: Air<AB>> Air<AB> for AirNoLookup<A> {
