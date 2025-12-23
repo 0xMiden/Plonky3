@@ -2,7 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_air::{
-    Air, AirBuilder, AirBuilderWithPublicValues, Entry, ExtensionBuilder, PairBuilder,
+    Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, Entry, ExtensionBuilder, PairBuilder,
     PeriodicAirBuilder, PermutationAirBuilder, SymbolicExpression, SymbolicVariable,
 };
 use p3_field::{ExtensionField, Field};
@@ -19,7 +19,7 @@ pub fn get_log_num_quotient_chunks<F, A>(
 ) -> usize
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>>,
+    A: BaseAir<F> + Air<SymbolicAirBuilder<F>>,
 {
     get_log_quotient_degree_extension(air, preprocessed_width, num_public_values, 0, 0, is_zk)
 }
@@ -36,7 +36,7 @@ pub fn get_log_quotient_degree_extension<F, EF, A>(
 where
     F: Field,
     EF: ExtensionField<F>,
-    A: Air<SymbolicAirBuilder<F, EF>>,
+    A: BaseAir<F> + Air<SymbolicAirBuilder<F, EF>>,
 {
     assert!(is_zk <= 1, "is_zk must be either 0 or 1");
     // We pad to at least degree 2, since a quotient argument doesn't make sense with smaller degrees.
@@ -63,7 +63,7 @@ pub fn get_max_constraint_degree<F, A>(
 ) -> usize
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>>,
+    A: BaseAir<F> + Air<SymbolicAirBuilder<F>>,
 {
     get_max_constraint_degree_extension(air, preprocessed_width, num_public_values, 0, 0)
 }
@@ -83,7 +83,7 @@ pub fn get_max_constraint_degree_extension<F, EF, A>(
 where
     F: Field,
     EF: ExtensionField<F>,
-    A: Air<SymbolicAirBuilder<F, EF>>,
+    A: BaseAir<F> + Air<SymbolicAirBuilder<F, EF>>,
 {
     let (base_constraints, extension_constraints) = get_all_symbolic_constraints(
         air,
@@ -119,10 +119,17 @@ pub fn get_symbolic_constraints<F, A>(
 ) -> Vec<SymbolicExpression<F>>
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>>,
+    A: BaseAir<F> + Air<SymbolicAirBuilder<F>>,
 {
-    let mut builder =
-        SymbolicAirBuilder::new(preprocessed_width, air.width(), num_public_values, 0, 0);
+    let num_periodic = air.periodic_table().len();
+    let mut builder = SymbolicAirBuilder::new_with_periodic(
+        preprocessed_width,
+        air.width(),
+        num_public_values,
+        0,
+        0,
+        num_periodic,
+    );
     air.eval(&mut builder);
     builder.base_constraints()
 }
@@ -142,14 +149,16 @@ pub fn get_symbolic_constraints_extension<F, EF, A>(
 where
     F: Field,
     EF: ExtensionField<F>,
-    A: Air<SymbolicAirBuilder<F, EF>>,
+    A: BaseAir<F> + Air<SymbolicAirBuilder<F, EF>>,
 {
-    let mut builder = SymbolicAirBuilder::new(
+    let num_periodic = air.periodic_table().len();
+    let mut builder = SymbolicAirBuilder::new_with_periodic(
         preprocessed_width,
         air.width(),
         num_public_values,
         permutation_width,
         num_permutation_challenges,
+        num_periodic,
     );
     air.eval(&mut builder);
     builder.extension_constraints()
@@ -170,14 +179,16 @@ pub fn get_all_symbolic_constraints<F, EF, A>(
 where
     F: Field,
     EF: ExtensionField<F>,
-    A: Air<SymbolicAirBuilder<F, EF>>,
+    A: BaseAir<F> + Air<SymbolicAirBuilder<F, EF>>,
 {
-    let mut builder = SymbolicAirBuilder::new(
+    let num_periodic = air.periodic_table().len();
+    let mut builder = SymbolicAirBuilder::new_with_periodic(
         preprocessed_width,
         air.width(),
         num_public_values,
         permutation_width,
         num_permutation_challenges,
+        num_periodic,
     );
     air.eval(&mut builder);
     (builder.base_constraints(), builder.extension_constraints())
