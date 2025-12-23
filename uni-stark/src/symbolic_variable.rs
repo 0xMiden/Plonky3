@@ -10,6 +10,7 @@ pub enum Entry {
     Preprocessed { offset: usize },
     Main { offset: usize },
     Permutation { offset: usize },
+    Periodic,
     Public,
     Challenge,
 }
@@ -34,7 +35,7 @@ impl<F> SymbolicVariable<F> {
     pub const fn degree_multiple(&self) -> usize {
         match self.entry {
             Entry::Preprocessed { .. } | Entry::Main { .. } | Entry::Permutation { .. } => 1,
-            Entry::Public | Entry::Challenge => 0,
+            Entry::Periodic | Entry::Public | Entry::Challenge => 0,
         }
     }
 }
