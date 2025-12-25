@@ -7,6 +7,7 @@ use itertools::Itertools;
 use p3_air::Air;
 use p3_air::lookup::LookupError;
 use p3_challenger::{CanObserve, FieldChallenger};
+use p3_commit::PeriodicEvaluator;
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing};
 use p3_matrix::dense::RowMajorMatrixView;
@@ -79,6 +80,7 @@ pub fn verify_constraints<SC, A, PcsErr>(
     preprocessed_local: Option<&[SC::Challenge]>,
     preprocessed_next: Option<&[SC::Challenge]>,
     public_values: &[Val<SC>],
+    periodic_values: Vec<SC::Challenge>,
     trace_domain: Domain<SC>,
     zeta: SC::Challenge,
     alpha: SC::Challenge,
@@ -113,7 +115,7 @@ where
         is_transition: sels.is_transition,
         alpha,
         accumulator: SC::Challenge::ZERO,
-        periodic_values: vec![],
+        periodic_values,
     };
     air.eval(&mut folder);
     let folded_constraints = folder.accumulator;
@@ -186,6 +188,11 @@ where
     }
 }
 
+/// Verify a STARK proof for an AIR without preprocessed or periodic columns.
+///
+/// This is the simplest entry point. For AIRs with preprocessed columns,
+/// use [`verify_with_preprocessed`]. For AIRs with periodic columns,
+/// use [`verify_with_periodic`].
 #[instrument(skip_all)]
 pub fn verify<SC, A>(
     config: &SC,
@@ -197,9 +204,33 @@ where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
 {
-    verify_with_preprocessed(config, air, proof, public_values, None)
+    verify_with_preprocessed_and_periodic::<SC, A, ()>(config, air, proof, public_values, None)
 }
 
+/// Verify a STARK proof for an AIR with periodic columns (but no preprocessed columns).
+///
+/// The type parameter `PE` specifies how to evaluate periodic columns at the query point.
+/// Use [`TwoAdicPeriodicEvaluator`](p3_fri::TwoAdicPeriodicEvaluator) for two-adic STARKs
+/// or [`CirclePeriodicEvaluator`](p3_circle::CirclePeriodicEvaluator) for Circle STARKs.
+#[instrument(skip_all)]
+pub fn verify_with_periodic<SC, A, PE>(
+    config: &SC,
+    air: &A,
+    proof: &Proof<SC>,
+    public_values: &[Val<SC>],
+) -> Result<(), VerificationError<PcsError<SC>>>
+where
+    SC: StarkGenericConfig,
+    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+    PE: PeriodicEvaluator<Val<SC>, Domain<SC>>,
+{
+    verify_with_preprocessed_and_periodic::<SC, A, PE>(config, air, proof, public_values, None)
+}
+
+/// Verify a STARK proof for an AIR with preprocessed columns (but no periodic columns).
+///
+/// Use this when your AIR has preprocessed columns but no periodic columns.
+/// For AIRs with both, use [`verify_with_preprocessed_and_periodic`].
 #[instrument(skip_all)]
 pub fn verify_with_preprocessed<SC, A>(
     config: &SC,
@@ -211,6 +242,32 @@ pub fn verify_with_preprocessed<SC, A>(
 where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+{
+    verify_with_preprocessed_and_periodic::<SC, A, ()>(
+        config,
+        air,
+        proof,
+        public_values,
+        preprocessed_vk,
+    )
+}
+
+/// Verify a STARK proof for an AIR with both preprocessed and periodic columns.
+///
+/// This is the most general verification function. The type parameter `PE` specifies
+/// how to evaluate periodic columns at the query point.
+#[instrument(skip_all)]
+pub fn verify_with_preprocessed_and_periodic<SC, A, PE>(
+    config: &SC,
+    air: &A,
+    proof: &Proof<SC>,
+    public_values: &[Val<SC>],
+    preprocessed_vk: Option<&PreprocessedVerifierKey<SC>>,
+) -> Result<(), VerificationError<PcsError<SC>>>
+where
+    SC: StarkGenericConfig,
+    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<VerifierConstraintFolder<'a, SC>>,
+    PE: PeriodicEvaluator<Val<SC>, Domain<SC>>,
 {
     let Proof {
         commitments,
@@ -371,6 +428,10 @@ where
         zeta,
     );
 
+    // Evaluate periodic columns at zeta
+    let periodic_table = air.periodic_table();
+    let periodic_values = PE::eval_at_point(&periodic_table, &init_trace_domain, zeta);
+
     verify_constraints::<SC, A, PcsError<SC>>(
         air,
         &opened_values.trace_local,
@@ -378,6 +439,7 @@ where
         opened_values.preprocessed_local.as_deref(),
         opened_values.preprocessed_next.as_deref(),
         public_values,
+        periodic_values,
         init_trace_domain,
         zeta,
         alpha,
