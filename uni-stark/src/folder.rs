@@ -61,7 +61,7 @@ pub struct VerifierConstraintFolder<'a, SC: StarkGenericConfig> {
     pub alpha: SC::Challenge,
     /// Running accumulator for all constraints
     pub accumulator: SC::Challenge,
-    /// Evaluations of periodic columns at the current row
+    /// Evaluations of periodic columns
     pub periodic_values: Vec<SC::Challenge>,
 }
 

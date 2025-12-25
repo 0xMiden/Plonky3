@@ -34,8 +34,13 @@ impl<F> SymbolicVariable<F> {
 
     pub const fn degree_multiple(&self) -> usize {
         match self.entry {
-            Entry::Preprocessed { .. } | Entry::Main { .. } | Entry::Permutation { .. } => 1,
-            Entry::Periodic | Entry::Public | Entry::Challenge => 0,
+            Entry::Preprocessed { .. }
+            | Entry::Main { .. }
+            | Entry::Permutation { .. }
+            // Degree 1 is an approximation; see Winterfell's TransitionConstraintDegree for
+            // a more precise model: https://github.com/facebook/winterfell/blob/main/air/src/air/transition/degree.rs
+            | Entry::Periodic => 1,
+            Entry::Public | Entry::Challenge => 0,
         }
     }
 }
