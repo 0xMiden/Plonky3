@@ -1,16 +1,32 @@
+use alloc::vec;
+use alloc::vec::Vec;
 use core::ops::{Add, Mul, Sub};
 
 use p3_field::{Algebra, ExtensionField, Field, PrimeCharacteristicRing};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 
+use crate::lookup::{Kind, Lookup, LookupData, LookupEvaluator, LookupInput};
+
 /// The underlying structure of an AIR.
 pub trait BaseAir<F>: Sync {
     /// The number of columns (a.k.a. registers) in this AIR.
     fn width(&self) -> usize;
+
     /// Return an optional preprocessed trace matrix to be included in the prover's trace.
     fn preprocessed_trace(&self) -> Option<RowMajorMatrix<F>> {
         None
+    }
+
+    /// Return the periodic table data.
+    ///
+    /// Periodic columns are columns whose values repeat with a period that divides the trace
+    /// length. Each inner `Vec<F>` represents one periodic column. The length of the inner
+    /// vector is the period of that column (must be a power of 2 that divides the trace length).
+    ///
+    /// By default returns an empty table (no periodic columns).
+    fn periodic_table(&self) -> Vec<Vec<F>> {
+        vec![]
     }
 }
 
@@ -29,15 +45,89 @@ pub trait BaseAirWithPublicValues<F>: BaseAir<F> {
 /// constraint will compute a particular value or it can be applied symbolically
 /// with each constraint computing a symbolic expression.
 pub trait Air<AB: AirBuilder>: BaseAir<AB::F> {
+    /// Update the number of auxiliary columns to account for a new lookup column,
+    /// and return its index (or indices).
+    ///
+    /// Default implementation returns an empty vector, indicating no lookup columns.
+    /// Override this method for AIRs that use lookups.
+    fn add_lookup_columns(&mut self) -> Vec<usize> {
+        vec![]
+    }
+
+    /// Register all lookups for the current AIR and return them.
+    ///
+    /// Default implementation returns an empty vector, indicating no lookups.
+    /// Override this method for AIRs that use lookups.
+    fn get_lookups(&mut self) -> Vec<Lookup<AB::F>>
+    where
+        AB: PermutationAirBuilder + PairBuilder + AirBuilderWithPublicValues,
+    {
+        vec![]
+    }
+
+    /// Register a lookup to be used in this AIR.
+    /// This method can be used before proving or verifying, as the resulting
+    /// data is shared between the prover and the verifier.
+    fn register_lookup(&mut self, kind: Kind, lookup_inputs: &[LookupInput<AB::F>]) -> Lookup<AB::F>
+    where
+        AB: PermutationAirBuilder + PairBuilder + AirBuilderWithPublicValues,
+    {
+        let (element_exprs, multiplicities_exprs) = lookup_inputs
+            .iter()
+            .map(|(elems, mult, dir)| {
+                let multiplicity = dir.multiplicity(mult.clone());
+                (elems.clone(), multiplicity)
+            })
+            .unzip();
+
+        Lookup {
+            kind,
+            element_exprs,
+            multiplicities_exprs,
+            columns: self.add_lookup_columns(),
+        }
+    }
+
     /// Evaluate all AIR constraints using the provided builder.
     ///
     /// The builder provides both the trace on which the constraints
     /// are evaluated on as well as the method of accumulating the
     /// constraint evaluations.
     ///
+    /// **Note**: Users do not need to specify lookup constraints evaluation in this method,
+    /// but instead only specify the AIR constraints and rely on `eval_with_lookups` to evaluate
+    /// both AIR and lookup constraints.
+    ///
     /// # Arguments
     /// - `builder`: Mutable reference to an `AirBuilder` for defining constraints.
     fn eval(&self, builder: &mut AB);
+
+    /// Evaluate all AIR and lookup constraints using the provided builder.
+    ///
+    /// The default implementation calls `eval` and then evaluates lookups if any are provided,
+    /// using the provided lookup evaluator.
+    /// Users typically don't need to override this method unless they need a custom behavior.
+    ///
+    /// # Arguments
+    /// - `builder`: Mutable reference to an `AirBuilder` for defining constraints.
+    /// - `lookups`: References to the lookups to be evaluated.
+    /// - `lookup_data`: References to the lookup data to be used for evaluation.
+    /// - `lookup_evaluator`: Reference to the lookup evaluator to be used for evaluation.
+    fn eval_with_lookups<LE: LookupEvaluator>(
+        &self,
+        builder: &mut AB,
+        lookups: &[Lookup<AB::F>],
+        lookup_data: &[LookupData<AB::ExprEF>],
+        lookup_evaluator: &LE,
+    ) where
+        AB: PermutationAirBuilder + PairBuilder + AirBuilderWithPublicValues,
+    {
+        self.eval(builder);
+
+        if !lookups.is_empty() {
+            lookup_evaluator.eval_lookups(builder, lookups, lookup_data);
+        }
+    }
 }
 
 /// A builder which contains both a trace on which AIR constraints can be evaluated as well as a method of accumulating the AIR constraint evaluations.
@@ -232,6 +322,20 @@ pub trait PermutationAirBuilder: ExtensionBuilder {
     fn permutation_randomness(&self) -> &[Self::RandomVar];
 }
 
+/// Trait for builders supporting periodic columns.
+///
+/// Periodic columns are columns whose values repeat with a period dividing the trace length.
+/// They are never committed to the proof - instead, both prover and verifier compute them
+/// from the periodic table data provided by the AIR.
+pub trait PeriodicAirBuilder: AirBuilder {
+    /// Variable type for periodic column values.
+    /// For the prover, this is base field; for the verifier, this is extension field.
+    type PeriodicVar: Into<Self::Expr> + Copy;
+
+    /// Return the evaluations of periodic columns at the current row.
+    fn periodic_values(&self) -> &[Self::PeriodicVar];
+}
+
 /// A wrapper around an [`AirBuilder`] that enforces constraints only when a specified condition is met.
 ///
 /// This struct allows selectively applying constraints to certain rows or under certain conditions in the AIR,
@@ -287,6 +391,14 @@ impl<AB: PairBuilder> PairBuilder for FilteredAirBuilder<'_, AB> {
     }
 }
 
+impl<AB: AirBuilderWithPublicValues> AirBuilderWithPublicValues for FilteredAirBuilder<'_, AB> {
+    type PublicVar = AB::PublicVar;
+
+    fn public_values(&self) -> &[Self::PublicVar] {
+        self.inner.public_values()
+    }
+}
+
 impl<AB: ExtensionBuilder> ExtensionBuilder for FilteredAirBuilder<'_, AB> {
     type EF = AB::EF;
     type ExprEF = AB::ExprEF;
@@ -314,5 +426,13 @@ impl<AB: PermutationAirBuilder> PermutationAirBuilder for FilteredAirBuilder<'_,
 
     fn permutation_randomness(&self) -> &[Self::RandomVar] {
         self.inner.permutation_randomness()
+    }
+}
+
+impl<AB: PeriodicAirBuilder> PeriodicAirBuilder for FilteredAirBuilder<'_, AB> {
+    type PeriodicVar = AB::PeriodicVar;
+
+    fn periodic_values(&self) -> &[Self::PeriodicVar] {
+        self.inner.periodic_values()
     }
 }

@@ -1,4 +1,6 @@
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, PairBuilder};
+use alloc::vec::Vec;
+
+use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, PairBuilder, PeriodicAirBuilder};
 use p3_field::Field;
 use p3_matrix::Matrix;
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
@@ -16,6 +18,7 @@ use tracing::instrument;
 /// - `main`: The [`RowMajorMatrix`] containing witness rows.
 /// - `public_values`: Public values provided to the builder.
 #[instrument(skip_all)]
+#[allow(unused)]
 pub(crate) fn check_constraints<F, A>(air: &A, main: &RowMajorMatrix<F>, public_values: &[F])
 where
     F: Field,
@@ -23,6 +26,7 @@ where
 {
     let height = main.height();
     let preprocessed = air.preprocessed_trace();
+    let periodic_table = air.periodic_table();
 
     (0..height).for_each(|row_index| {
         let row_index_next = (row_index + 1) % height;
@@ -49,11 +53,21 @@ where
             None
         };
 
+        // Compute periodic values for this row
+        let periodic_values: Vec<F> = periodic_table
+            .iter()
+            .map(|col| {
+                let period = col.len();
+                col[row_index % period]
+            })
+            .collect();
+
         let mut builder = DebugConstraintBuilder {
             row_index,
             main,
             preprocessed: preprocessed_pair,
             public_values,
+            periodic_values,
             is_first_row: F::from_bool(row_index == 0),
             is_last_row: F::from_bool(row_index == height - 1),
             is_transition: F::from_bool(row_index != height - 1),
@@ -77,6 +91,8 @@ pub struct DebugConstraintBuilder<'a, F: Field> {
     preprocessed: Option<ViewPair<'a, F>>,
     /// The public values provided for constraint validation (e.g. inputs or outputs).
     public_values: &'a [F],
+    /// The periodic column values at the current row.
+    periodic_values: Vec<F>,
     /// A flag indicating whether this is the first row.
     is_first_row: F,
     /// A flag indicating whether this is the last row.
@@ -148,6 +164,14 @@ impl<'a, F: Field> PairBuilder for DebugConstraintBuilder<'a, F> {
     fn preprocessed(&self) -> Self::M {
         self.preprocessed
             .expect("DebugConstraintBuilder requires preprocessed columns when used as PairBuilder")
+    }
+}
+
+impl<F: Field> PeriodicAirBuilder for DebugConstraintBuilder<'_, F> {
+    type PeriodicVar = F;
+
+    fn periodic_values(&self) -> &[Self::PeriodicVar] {
+        &self.periodic_values
     }
 }
 

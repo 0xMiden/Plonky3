@@ -5,6 +5,7 @@ use itertools::Itertools;
 use p3_air::Air;
 use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
+use p3_commit::{PeriodicEvaluator, PeriodicLdeTable};
 use p3_field::{BasedVectorSpace, PackedFieldExtension, PackedValue, PrimeCharacteristicRing};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -18,8 +19,12 @@ use crate::{
     get_log_num_quotient_chunks, get_symbolic_constraints,
 };
 
+/// Prove a STARK for an AIR with preprocessed columns (but no periodic columns).
+///
+/// Use this when your AIR has preprocessed columns but no periodic columns.
+/// For AIRs with both, use [`prove_with_preprocessed_and_periodic`].
 #[instrument(skip_all)]
-#[allow(clippy::multiple_bound_locations, clippy::type_repetition_in_bounds)] // cfg not supported in where clauses?
+#[allow(clippy::multiple_bound_locations, clippy::type_repetition_in_bounds)]
 pub fn prove_with_preprocessed<
     SC,
     #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
@@ -34,6 +39,38 @@ pub fn prove_with_preprocessed<
 where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
+{
+    prove_with_preprocessed_and_periodic::<SC, A, ()>(
+        config,
+        air,
+        trace,
+        public_values,
+        preprocessed,
+    )
+}
+
+/// Prove a STARK for an AIR with both preprocessed and periodic columns.
+///
+/// This is the most general proving function. The type parameter `PE` specifies
+/// how to evaluate periodic columns on the LDE domain.
+#[instrument(skip_all)]
+#[allow(clippy::multiple_bound_locations, clippy::type_repetition_in_bounds)]
+pub fn prove_with_preprocessed_and_periodic<
+    SC,
+    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    #[cfg(not(debug_assertions))] A,
+    PE,
+>(
+    config: &SC,
+    air: &A,
+    trace: RowMajorMatrix<Val<SC>>,
+    public_values: &[Val<SC>],
+    preprocessed: Option<&PreprocessedProverData<SC>>,
+) -> Proof<SC>
+where
+    SC: StarkGenericConfig,
+    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
+    PE: PeriodicEvaluator<Val<SC>, Domain<SC>>,
 {
     #[cfg(debug_assertions)]
     crate::check_constraints::check_constraints(air, &trace, public_values);
@@ -65,12 +102,6 @@ where
             0
         },
         |pp| {
-            // Preprocessed columns are currently only supported in non-ZK mode.
-            assert_eq!(
-                config.is_zk(),
-                0,
-                "preprocessed columns are not supported in zk mode"
-            );
             assert_eq!(
                 pp.degree_bits, log_ext_degree,
                 "PreprocessedProverData degree_bits does not match trace degree_bits"
@@ -208,14 +239,14 @@ where
     // This only works if the trace domain is `gH'` and the quotient domain is `gK` for some subgroup `K` contained in `H'`.
     // TODO: Make this explicit in `get_evaluations_on_domain` or otherwise fix this.
     let trace_on_quotient_domain = pcs.get_evaluations_on_domain(&trace_data, 0, quotient_domain);
-    let preprocessed_on_quotient_domain =
-        preprocessed_data_ref.map(|data| pcs.get_evaluations_on_domain(data, 0, quotient_domain));
+    let preprocessed_on_quotient_domain = preprocessed_data_ref
+        .map(|data| pcs.get_evaluations_on_domain_no_random(data, 0, quotient_domain));
 
     // Compute the quotient polynomial `Q(x)` by evaluating
     //          `C(T_1(x), ..., T_w(x), T_1(hx), ..., T_w(hx), selectors(x)) / Z_H(x)`
     // at every point in the quotient domain. The degree of `Q(x)` is `<= deg(C(x)) - N = 2N - 2` in the case
     // where `deg(C) = 3`. (See the discussion above constraint_degree for more details.)
-    let quotient_values = quotient_values(
+    let quotient_values = quotient_values::<SC, A, _, PE>(
         air,
         public_values,
         trace_domain,
@@ -259,15 +290,15 @@ where
 
     // If zk is enabled, we generate random extension field values of the size of the randomized trace. If `n` is the degree of the initial trace,
     // then the randomized trace has degree `2n`. To randomize the FRI batch polynomial, we then need an extension field random polynomial of degree `2n -1`.
-    // So we can generate a random polynomial  of degree `2n`, and provide it to `open` as is.
+    // So we can generate a random polynomial of degree `2n`, and provide it to `open` as is.
     // Then the method will add `(R(X) - R(z)) / (X - z)` (which is of the desired degree `2n - 1`), to the batch of polynomials.
     // Since we need a random polynomial defined over the extension field, and the `commit` method is over the base field,
-    // we actually need to commit to `SC::CHallenge::D` base field random polynomials.
+    // we actually need to commit to `SC::Challenge::D` base field random polynomials.
     // This is similar to what is done for the quotient polynomials.
     // TODO: This approach is only statistically zk. To make it perfectly zk, `R` would have to truly be an extension field polynomial.
     let (opt_r_commit, opt_r_data) = if SC::Pcs::ZK {
         let (r_commit, r_data) = pcs
-            .get_opt_randomization_poly_commitment(ext_trace_domain)
+            .get_opt_randomization_poly_commitment(core::iter::once(ext_trace_domain))
             .expect("ZK is enabled, so we should have randomization commitments");
         (Some(r_commit), Some(r_data))
     } else {
@@ -315,7 +346,7 @@ where
             .chain(round3)
             .collect();
 
-        pcs.open(rounds, &mut challenger)
+        pcs.open_with_preprocessing(rounds, &mut challenger, preprocessed_data_ref.is_some())
     });
     let trace_idx = SC::Pcs::TRACE_IDX;
     let quotient_idx = SC::Pcs::QUOTIENT_IDX;
@@ -354,8 +385,13 @@ where
     }
 }
 
+/// Prove a STARK for an AIR without preprocessed or periodic columns.
+///
+/// This is the simplest entry point. For AIRs with preprocessed columns,
+/// use [`prove_with_preprocessed`]. For AIRs with periodic columns,
+/// use [`prove_with_periodic`].
 #[instrument(skip_all)]
-#[allow(clippy::multiple_bound_locations, clippy::type_repetition_in_bounds)] // cfg not supported in where clauses?
+#[allow(clippy::multiple_bound_locations, clippy::type_repetition_in_bounds)]
 pub fn prove<
     SC,
     #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
@@ -370,13 +406,38 @@ where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
 {
-    prove_with_preprocessed::<SC, A>(config, air, trace, public_values, None)
+    prove_with_preprocessed_and_periodic::<SC, A, ()>(config, air, trace, public_values, None)
+}
+
+/// Prove a STARK for an AIR with periodic columns (but no preprocessed columns).
+///
+/// The type parameter `PE` specifies how to evaluate periodic columns on the LDE domain.
+/// Use [`TwoAdicPeriodicEvaluator`](p3_fri::TwoAdicPeriodicEvaluator) for two-adic STARKs
+/// or [`CirclePeriodicEvaluator`](p3_circle::CirclePeriodicEvaluator) for Circle STARKs.
+#[instrument(skip_all)]
+#[allow(clippy::multiple_bound_locations, clippy::type_repetition_in_bounds)]
+pub fn prove_with_periodic<
+    SC,
+    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    #[cfg(not(debug_assertions))] A,
+    PE,
+>(
+    config: &SC,
+    air: &A,
+    trace: RowMajorMatrix<Val<SC>>,
+    public_values: &[Val<SC>],
+) -> Proof<SC>
+where
+    SC: StarkGenericConfig,
+    A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
+    PE: PeriodicEvaluator<Val<SC>, Domain<SC>>,
+{
+    prove_with_preprocessed_and_periodic::<SC, A, PE>(config, air, trace, public_values, None)
 }
 
 #[instrument(skip_all)]
-// TODO: Group some arguments to remove the `allow`?
 #[allow(clippy::too_many_arguments)]
-pub fn quotient_values<SC, A, Mat>(
+pub fn quotient_values<SC, A, Mat, PE>(
     air: &A,
     public_values: &[Val<SC>],
     trace_domain: Domain<SC>,
@@ -390,22 +451,32 @@ where
     SC: StarkGenericConfig,
     A: for<'a> Air<ProverConstraintFolder<'a, SC>>,
     Mat: Matrix<Val<SC>> + Sync,
+    PE: PeriodicEvaluator<Val<SC>, Domain<SC>>,
 {
     let quotient_size = quotient_domain.size();
     let width = trace_on_quotient_domain.width();
     let mut sels = debug_span!("Compute Selectors")
         .in_scope(|| trace_domain.selectors_on_coset(quotient_domain));
 
+    // Compute periodic column values on quotient domain
+    let periodic_table = air.periodic_table();
+    let periodic_on_quotient = debug_span!("Compute Periodic Columns")
+        .in_scope(|| PE::eval_on_lde(&periodic_table, &trace_domain, &quotient_domain));
+
     let qdb = log2_strict_usize(quotient_domain.size()) - log2_strict_usize(trace_domain.size());
     let next_step = 1 << qdb;
 
     // We take PackedVal::<SC>::WIDTH worth of values at a time from a quotient_size slice, so we need to
     // pad with default values in the case where quotient_size is smaller than PackedVal::<SC>::WIDTH.
-    for _ in quotient_size..PackedVal::<SC>::WIDTH {
-        sels.is_first_row.push(Val::<SC>::default());
-        sels.is_last_row.push(Val::<SC>::default());
-        sels.is_transition.push(Val::<SC>::default());
-        sels.inv_vanishing.push(Val::<SC>::default());
+    if quotient_size < PackedVal::<SC>::WIDTH {
+        sels.is_first_row
+            .resize(PackedVal::<SC>::WIDTH, Val::<SC>::default());
+        sels.is_last_row
+            .resize(PackedVal::<SC>::WIDTH, Val::<SC>::default());
+        sels.is_transition
+            .resize(PackedVal::<SC>::WIDTH, Val::<SC>::default());
+        sels.inv_vanishing
+            .resize(PackedVal::<SC>::WIDTH, Val::<SC>::default());
     }
 
     let mut alpha_powers = alpha.powers().collect_n(constraint_count);
@@ -444,6 +515,10 @@ where
                 )
             });
 
+            // Extract packed periodic values for this chunk using modular indexing
+            let periodic_values: Vec<PackedVal<SC>> =
+                extract_periodic_values(&periodic_on_quotient, i_start);
+
             let accumulator = PackedChallenge::<SC>::ZERO;
             let mut folder = ProverConstraintFolder {
                 main: main.as_view(),
@@ -456,6 +531,7 @@ where
                 decomposed_alpha_powers: &decomposed_alpha_powers,
                 accumulator,
                 constraint_index: 0,
+                periodic_values,
             };
             air.eval(&mut folder);
 
@@ -467,4 +543,31 @@ where
                 .map(move |idx_in_packing| quotient.extract(idx_in_packing))
         })
         .collect()
+}
+
+/// Extract packed periodic values from a compact periodic LDE table using modular indexing.
+///
+/// The periodic table stores only `max_period × blowup` rows. We use modular indexing
+/// to access the correct values for each position in the quotient domain.
+#[inline]
+fn extract_periodic_values<F, P>(periodic_table: &PeriodicLdeTable<F>, i_start: usize) -> Vec<P>
+where
+    F: Clone + Send + Sync,
+    P: PackedValue<Value = F>,
+{
+    let num_periodic_cols = periodic_table.width();
+    if num_periodic_cols == 0 {
+        return vec![];
+    }
+
+    // For each column, gather WIDTH values using modular indexing
+    let mut result = Vec::with_capacity(num_periodic_cols);
+    for col_idx in 0..num_periodic_cols {
+        // Gather WIDTH values from the compact table
+        let values: Vec<F> = (0..P::WIDTH)
+            .map(|j| periodic_table.get(i_start + j, col_idx).clone())
+            .collect();
+        result.push(*P::from_slice(&values));
+    }
+    result
 }

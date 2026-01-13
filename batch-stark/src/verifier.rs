@@ -9,14 +9,15 @@ use p3_challenger::{CanObserve, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
 use p3_lookup::folder::VerifierConstraintFolderWithLookups;
+use p3_lookup::logup::LogUpGadget;
 use p3_lookup::lookup_traits::{
-    AirLookupHandler, AirNoLookup, EmptyLookupGadget, Lookup, LookupData, LookupGadget,
+    Lookup, LookupData, LookupError, LookupGadget, lookup_data_to_expr,
 };
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::VerticalPair;
 use p3_uni_stark::{
-    LookupError, SymbolicAirBuilder, SymbolicExpression, VerificationError,
-    VerifierConstraintFolder, recompose_quotient_from_chunks,
+    SymbolicAirBuilder, SymbolicExpression, VerificationError, VerifierConstraintFolder,
+    recompose_quotient_from_chunks,
 };
 use p3_util::zip_eq::zip_eq;
 use tracing::instrument;
@@ -26,24 +27,26 @@ use crate::config::{
     Challenge, Domain, PcsError, StarkGenericConfig as SGC, Val, observe_instance_binding,
 };
 use crate::proof::BatchProof;
+use crate::symbolic::get_log_num_quotient_chunks;
 
 #[instrument(skip_all)]
-pub fn verify_batch<SC, A, LG>(
+pub fn verify_batch<SC, A>(
     config: &SC,
     airs: &[A],
     proof: &BatchProof<SC>,
     public_values: &[Vec<Val<SC>>],
     common: &CommonData<SC>,
-    lookup_gadget: &LG,
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
     SC: SGC,
     SymbolicExpression<SC::Challenge>: From<SymbolicExpression<Val<SC>>>,
-    A: AirLookupHandler<SymbolicAirBuilder<Val<SC>, SC::Challenge>>
-        + for<'a> AirLookupHandler<VerifierConstraintFolderWithLookups<'a, SC>>,
+    A: Air<SymbolicAirBuilder<Val<SC>, SC::Challenge>>
+        + for<'a> Air<VerifierConstraintFolderWithLookups<'a, SC>>,
     Challenge<SC>: BasedVectorSpace<Val<SC>>,
-    LG: LookupGadget,
 {
+    // TODO: Extend if additional lookup gadgets are added.
+    let lookup_gadget = LogUpGadget::new();
+
     let BatchProof {
         commitments,
         opened_values,
@@ -57,11 +60,6 @@ where
     let pcs = config.pcs();
     let mut challenger = config.initialise_challenger();
 
-    // ZK mode is not supported yet
-    if config.is_zk() != 0 {
-        panic!("p3-batch-stark: ZK mode is not supported yet");
-    }
-
     // Sanity checks
     if airs.len() != opened_values.instances.len()
         || airs.len() != public_values.len()
@@ -71,6 +69,18 @@ where
         return Err(VerificationError::InvalidProofShape);
     }
 
+    // Check that the random commitments are/are not present depending on the ZK setting.
+    // - If ZK is enabled, the prover should have random commitments.
+    // - If ZK is not enabled, the prover should not have random commitments.
+    if (opened_values
+        .instances
+        .iter()
+        .any(|ov| ov.base_opened_values.random.is_some() != SC::Pcs::ZK))
+        || (commitments.random.is_some() != SC::Pcs::ZK)
+    {
+        return Err(VerificationError::RandomizationError);
+    }
+
     // Observe the number of instances up front to match the prover's transcript.
     let n_instances = airs.len();
     challenger.observe_base_as_algebra_element::<Challenge<SC>>(Val::<SC>::from_usize(n_instances));
@@ -78,9 +88,12 @@ where
     // Validate opened values shape per instance and observe per-instance binding data.
     // Precompute per-instance preprocessed widths and number of quotient chunks.
     let mut preprocessed_widths = Vec::with_capacity(airs.len());
+    // Number of quotient chunks per instance before ZK randomization.
+    let mut log_num_quotient_chunks = Vec::with_capacity(airs.len());
+    // The total number of quotient chunks, including ZK randomization.
     let mut num_quotient_chunks = Vec::with_capacity(airs.len());
 
-    for (i, _air) in airs.iter().enumerate() {
+    for (i, air) in airs.iter().enumerate() {
         let pre_w = common
             .preprocessed
             .as_ref()
@@ -88,11 +101,18 @@ where
             .unwrap_or(0);
         preprocessed_widths.push(pre_w);
 
-        // Derive the number of quotient chunks directly from the proof shape.
-        let n_chunks = opened_values.instances[i]
-            .base_opened_values
-            .quotient_chunks
-            .len();
+        let log_num_chunks = get_log_num_quotient_chunks::<Val<SC>, SC::Challenge, A, LogUpGadget>(
+            air,
+            pre_w,
+            public_values[i].len(),
+            &all_lookups[i],
+            &lookup_data_to_expr(&global_lookup_data[i]),
+            config.is_zk(),
+            &lookup_gadget,
+        );
+        log_num_quotient_chunks.push(log_num_chunks);
+
+        let n_chunks = 1 << (log_num_chunks + config.is_zk());
         num_quotient_chunks.push(n_chunks);
     }
 
@@ -118,6 +138,16 @@ where
             if chunk.len() != Challenge::<SC>::DIMENSION {
                 return Err(VerificationError::InvalidProofShape);
             }
+        }
+
+        // Validate random commit
+        if inst_opened_vals
+            .base_opened_values
+            .random
+            .as_ref()
+            .is_some_and(|r_comm| r_comm.len() != SC::Challenge::DIMENSION)
+        {
+            return Err(VerificationError::RandomizationError);
         }
 
         // Validate that any preprocessed width implied by CommonData matches the opened shapes.
@@ -165,7 +195,7 @@ where
 
     // Fetch lookups and sample their challenges.
     let challenges_per_instance =
-        get_perm_challenges::<SC, LG>(&mut challenger, all_lookups, lookup_gadget);
+        get_perm_challenges::<SC, LogUpGadget>(&mut challenger, all_lookups, &lookup_gadget);
 
     // Then, observe the permutation tables, if any.
     if is_lookup {
@@ -182,6 +212,12 @@ where
 
     // Observe quotient chunks commitment
     challenger.observe(commitments.quotient_chunks.clone());
+
+    // We've already checked that commitments.random is present if and only if ZK is enabled.
+    // Observe the random commitment if it is present.
+    if let Some(r_commit) = commitments.random.clone() {
+        challenger.observe(r_commit);
+    }
 
     // Sample OOD point
     let zeta = challenger.sample_algebra_element();
@@ -200,13 +236,31 @@ where
             )
         })
         .unzip();
+
+    if let Some(random_commit) = &commitments.random {
+        coms_to_verify.push((
+            random_commit.clone(),
+            ext_trace_domains
+                .iter()
+                .zip(opened_values.instances.iter())
+                .map(|(domain, inst_opened_vals)| {
+                    // We already checked that random is present for each instance when ZK is enabled.
+                    let random_vals = inst_opened_vals.base_opened_values.random.as_ref().unwrap();
+                    (*domain, vec![(zeta, random_vals.clone())])
+                })
+                .collect::<Vec<_>>(),
+        ));
+    }
+
     let trace_round: Vec<_> = ext_trace_domains
         .iter()
         .zip(opened_values.instances.iter())
-        .map(|(ext_dom, inst_opened_vals)| {
-            let zeta_next = ext_dom
+        .enumerate()
+        .map(|(i, (ext_dom, inst_opened_vals))| {
+            let zeta_next = trace_domains[i]
                 .next_point(zeta)
                 .ok_or(VerificationError::NextPointUnavailable)?;
+
             Ok((
                 *ext_dom,
                 vec![
@@ -229,17 +283,27 @@ where
     let quotient_domains: Vec<Vec<Domain<SC>>> = (0..degree_bits.len())
         .map(|i| {
             let ext_db = degree_bits[i];
-            let base_db = ext_db - config.is_zk();
+            let log_num_chunks = log_num_quotient_chunks[i];
             let n_chunks = num_quotient_chunks[i];
             let ext_dom = ext_trace_domains[i];
-            let qdom = ext_dom.create_disjoint_domain((1 << base_db) * n_chunks);
+            let qdom = ext_dom.create_disjoint_domain(1 << (ext_db + log_num_chunks));
             qdom.split_domains(n_chunks)
         })
         .collect();
 
+    // When ZK is enabled, the size of the quotient chunks' domains doubles.
+    let randomized_quotient_chunks_domains = quotient_domains
+        .iter()
+        .map(|doms| {
+            doms.iter()
+                .map(|dom| pcs.natural_domain_for_degree(dom.size() << (config.is_zk())))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
     // Build the per-matrix openings for the aggregated quotient commitment.
     let mut qc_round = Vec::new();
-    for (i, domains) in quotient_domains.iter().enumerate() {
+    for (i, domains) in randomized_quotient_chunks_domains.iter().enumerate() {
         let inst_qcs = &opened_values.instances[i]
             .base_opened_values
             .quotient_chunks;
@@ -281,18 +345,17 @@ where
 
             // Validate that the preprocessed data's base degree matches what we expect.
             let ext_db = degree_bits[inst_idx];
-            let expected_base_db = ext_db - config.is_zk();
 
             let meta = global.instances[inst_idx]
                 .as_ref()
                 .ok_or(VerificationError::InvalidProofShape)?;
-            if meta.matrix_index != matrix_index || meta.degree_bits != expected_base_db {
+            if meta.matrix_index != matrix_index || meta.degree_bits != ext_db {
                 return Err(VerificationError::InvalidProofShape);
             }
 
-            let base_db = meta.degree_bits;
-            let pre_domain = pcs.natural_domain_for_degree(1 << base_db);
-            let zeta_next_i = ext_trace_domains[inst_idx]
+            let meta_db = meta.degree_bits;
+            let pre_domain = pcs.natural_domain_for_degree(1 << meta_db);
+            let zeta_next_i = trace_domains[inst_idx]
                 .next_point(zeta)
                 .ok_or(VerificationError::NextPointUnavailable)?;
 
@@ -308,14 +371,16 @@ where
     if is_lookup {
         let permutation_commit = commitments.permutation.clone().unwrap();
         let mut permutation_round = Vec::new();
-        for (ext_dom, inst_opened_vals) in
-            ext_trace_domains.iter().zip(opened_values.instances.iter())
+        for (i, (ext_dom, inst_opened_vals)) in ext_trace_domains
+            .iter()
+            .zip(opened_values.instances.iter())
+            .enumerate()
         {
             if inst_opened_vals.permutation_local.len() != inst_opened_vals.permutation_next.len() {
                 return Err(VerificationError::InvalidProofShape);
             }
             if !inst_opened_vals.permutation_local.is_empty() {
-                let zeta_next = ext_dom
+                let zeta_next = trace_domains[i]
                     .next_point(zeta)
                     .ok_or(VerificationError::NextPointUnavailable)?;
                 permutation_round.push((
@@ -418,10 +483,10 @@ where
             quotient,
         };
 
-        verify_constraints_with_lookups::<SC, A, LG, PcsError<SC>>(
+        verify_constraints_with_lookups::<SC, A, LogUpGadget, PcsError<SC>>(
             air,
             &verifier_data,
-            lookup_gadget,
+            &lookup_gadget,
         )
         .map_err(|e| match e {
             VerificationError::OodEvaluationMismatch { .. } => {
@@ -496,7 +561,7 @@ pub fn verify_constraints_with_lookups<'a, SC, A, LG: LookupGadget, PcsErr: Debu
 ) -> Result<(), VerificationError<PcsErr>>
 where
     SC: SGC,
-    A: for<'b> AirLookupHandler<VerifierConstraintFolderWithLookups<'b, SC>>,
+    A: for<'b> Air<VerifierConstraintFolderWithLookups<'b, SC>>,
 {
     let VerifierData {
         trace_local,
@@ -540,6 +605,7 @@ where
         is_transition: sels.is_transition,
         alpha: *alpha,
         accumulator: SC::Challenge::ZERO,
+        periodic_values: vec![], // batch-stark doesn't support periodic columns yet
     };
     let mut folder = VerifierConstraintFolderWithLookups {
         inner: inner_folder,
@@ -550,7 +616,7 @@ where
         permutation_challenges,
     };
     // Evaluate AIR and lookup constraints.
-    <A as AirLookupHandler<_>>::eval(air, &mut folder, lookups, lookup_data, lookup_gadget);
+    A::eval_with_lookups(air, &mut folder, lookups, lookup_data, lookup_gadget);
     let folded_constraints = folder.inner.accumulator;
 
     // Check that constraints(zeta) / Z_H(zeta) = quotient(zeta)
@@ -559,36 +625,4 @@ where
     }
 
     Ok(())
-}
-
-pub fn verify_batch_no_lookups<SC, A>(
-    config: &SC,
-    airs: &[A],
-    proof: &BatchProof<SC>,
-    public_values: &[Vec<Val<SC>>],
-    common: &CommonData<SC>,
-) -> Result<(), VerificationError<PcsError<SC>>>
-where
-    SC: SGC,
-    SymbolicExpression<SC::Challenge>: From<SymbolicExpression<Val<SC>>>,
-    A: Air<SymbolicAirBuilder<Val<SC>, SC::Challenge>>
-        + for<'a> Air<VerifierConstraintFolderWithLookups<'a, SC>>
-        + Clone,
-    Challenge<SC>: BasedVectorSpace<Val<SC>>,
-{
-    let no_lookup_airs = airs
-        .iter()
-        .map(|a| AirNoLookup::new(a.clone()))
-        .collect::<Vec<_>>();
-
-    let empty_lookup_gadget = EmptyLookupGadget {};
-
-    verify_batch(
-        config,
-        &no_lookup_airs,
-        proof,
-        public_values,
-        common,
-        &empty_lookup_gadget,
-    )
 }

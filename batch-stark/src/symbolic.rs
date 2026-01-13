@@ -1,7 +1,8 @@
 use alloc::vec::Vec;
 
+use p3_air::Air;
 use p3_field::{ExtensionField, Field};
-use p3_lookup::lookup_traits::{AirLookupHandler, Lookup, LookupData, LookupGadget};
+use p3_lookup::lookup_traits::{Lookup, LookupData, LookupGadget};
 use p3_uni_stark::{SymbolicAirBuilder, SymbolicExpression};
 use p3_util::log2_ceil_usize;
 use tracing::instrument;
@@ -12,14 +13,14 @@ pub fn get_log_num_quotient_chunks<F, EF, A, LG>(
     preprocessed_width: usize,
     num_public_values: usize,
     contexts: &[Lookup<F>],
-    lookup_data: &[LookupData<EF>],
+    lookup_data: &[LookupData<SymbolicExpression<EF>>],
     is_zk: usize,
     lookup_gadget: &LG,
 ) -> usize
 where
     F: Field,
     EF: ExtensionField<F>,
-    A: AirLookupHandler<SymbolicAirBuilder<F, EF>>,
+    A: Air<SymbolicAirBuilder<F, EF>>,
     SymbolicExpression<EF>: From<SymbolicExpression<F>>,
     LG: LookupGadget,
 {
@@ -47,13 +48,13 @@ pub fn get_max_constraint_degree<F, EF, A, LG>(
     preprocessed_width: usize,
     num_public_values: usize,
     contexts: &[Lookup<F>],
-    lookup_data: &[LookupData<EF>],
+    lookup_data: &[LookupData<SymbolicExpression<EF>>],
     lookup_gadget: &LG,
 ) -> usize
 where
     F: Field,
     EF: ExtensionField<F>,
-    A: AirLookupHandler<SymbolicAirBuilder<F, EF>>,
+    A: Air<SymbolicAirBuilder<F, EF>>,
     SymbolicExpression<EF>: From<SymbolicExpression<F>>,
     LG: LookupGadget,
 {
@@ -80,13 +81,13 @@ pub fn get_symbolic_constraints<F, EF, A, LG>(
     preprocessed_width: usize,
     num_public_values: usize,
     contexts: &[Lookup<F>],
-    lookup_data: &[LookupData<EF>],
+    lookup_data: &[LookupData<SymbolicExpression<EF>>],
     lookup_gadget: &LG,
 ) -> (Vec<SymbolicExpression<F>>, Vec<SymbolicExpression<EF>>)
 where
     F: Field,
     EF: ExtensionField<F>,
-    A: AirLookupHandler<SymbolicAirBuilder<F, EF>>,
+    A: Air<SymbolicAirBuilder<F, EF>>,
     SymbolicExpression<EF>: From<SymbolicExpression<F>>,
     LG: LookupGadget,
 {
@@ -102,7 +103,7 @@ where
     );
 
     // Evaluate AIR and lookup constraints.
-    <A as AirLookupHandler<_>>::eval(air, &mut builder, contexts, lookup_data, lookup_gadget);
+    <A as Air<_>>::eval_with_lookups(air, &mut builder, contexts, lookup_data, lookup_gadget);
     let base_constraints = builder.base_constraints();
     let extension_constraints = builder.extension_constraints();
     (base_constraints, extension_constraints)
