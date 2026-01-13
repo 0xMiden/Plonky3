@@ -9,7 +9,6 @@ use p3_uni_stark::{
     VerifierConstraintFolder,
 };
 
-
 pub struct ProverConstraintFolderWithLookups<'a, SC: StarkGenericConfig> {
     pub inner: ProverConstraintFolder<'a, SC>,
     pub permutation: RowMajorMatrixView<'a, PackedChallenge<SC>>,

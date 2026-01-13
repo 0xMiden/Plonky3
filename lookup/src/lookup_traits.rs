@@ -1,11 +1,12 @@
+use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_air::lookup::LookupEvaluator;
 /// Public re-exports of lookup types.
 pub use p3_air::lookup::{Direction, Kind, Lookup, LookupData, LookupError, LookupInput};
 use p3_air::{
-    AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder, PairBuilder, PermutationAirBuilder,
-    SymbolicExpression,
+    Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, ExtensionBuilder, PairBuilder,
+    PermutationAirBuilder, SymbolicExpression,
 };
 use p3_field::{Field, PrimeCharacteristicRing};
 use p3_matrix::Matrix;
@@ -255,21 +256,10 @@ impl<AB: AirBuilder, A: Air<AB>> Air<AB> for AirNoLookup<A> {
     }
 }
 
-impl<AB: AirBuilderWithPublicValues + PairBuilder + PermutationAirBuilder, A: Air<AB>>
-    AirLookupHandler<AB> for AirNoLookup<A>
-{
-    fn add_lookup_columns(&mut self) -> Vec<usize> {
-        vec![]
-    }
-
-    fn get_lookups(&mut self) -> Vec<Lookup<AB::F>> {
-        vec![]
-    }
-}
-
 /// Empty lookup gadget for AIRs that do not use lookups.
 pub struct EmptyLookupGadget;
-impl LookupGadget for EmptyLookupGadget {
+
+impl LookupEvaluator for EmptyLookupGadget {
     fn num_aux_cols(&self) -> usize {
         0
     }
@@ -293,18 +283,9 @@ impl LookupGadget for EmptyLookupGadget {
         AB: PermutationAirBuilder + PairBuilder + AirBuilderWithPublicValues,
     {
     }
+}
 
-    fn verify_global_final_value<EF: Field>(
-        &self,
-        _all_expected_cumulated: &[EF],
-    ) -> Result<(), LookupError> {
-        Ok(())
-    }
-
-    fn constraint_degree<F: Field>(&self, _context: Lookup<F>) -> usize {
-        0
-    }
-
+impl LookupGadget for EmptyLookupGadget {
     fn generate_permutation<SC: StarkGenericConfig>(
         &self,
         _main: &RowMajorMatrix<Val<SC>>,
@@ -315,5 +296,16 @@ impl LookupGadget for EmptyLookupGadget {
         _permutation_challenges: &[SC::Challenge],
     ) -> RowMajorMatrix<SC::Challenge> {
         RowMajorMatrix::new(vec![], 0)
+    }
+
+    fn verify_global_final_value<EF: Field>(
+        &self,
+        _all_expected_cumulated: &[EF],
+    ) -> Result<(), LookupError> {
+        Ok(())
+    }
+
+    fn constraint_degree<F: Field>(&self, _context: Lookup<F>) -> usize {
+        0
     }
 }
