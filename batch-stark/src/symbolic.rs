@@ -127,6 +127,7 @@ where
         num_public_values,
         num_aux_cols,
         num_challenges,
+        air.periodic_columns().len(),
     );
 
     // Evaluate AIR and lookup constraints.

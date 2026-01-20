@@ -1,4 +1,7 @@
-//! STARK-specific quotient polynomial degree calculations.
+//! STARK-specific quotient degree computation functions.
+//!
+//! For symbolic constraint analysis utilities, see [`p3_air::SymbolicAirBuilder`]
+//! and the functions in [`p3_air::symbolic`].
 
 use p3_air::Air;
 use p3_air::symbolic::SymbolicAirBuilder;

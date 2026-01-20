@@ -101,6 +101,81 @@ pub trait BaseAir<F>: Sync {
     fn max_constraint_degree(&self) -> Option<usize> {
         None
     }
+
+    /// Return the periodic column data.
+    ///
+    /// Each inner `Vec<F>` represents one periodic column whose length is its period.
+    /// Periodic columns are public parameters — they are never committed as part of
+    /// the trace. Both prover and verifier compute them from this data.
+    ///
+    /// # Mathematical Model
+    ///
+    /// For a trace of length n over a multiplicative subgroup H = {g⁰, g¹, …, gⁿ⁻¹},
+    /// a periodic column with period p (where p | n, both powers of 2) is defined by:
+    ///
+    /// - Let r = n/p be the number of repetitions.
+    /// - The p values are evaluations of a polynomial f(x) of degree < p over
+    ///   the subgroup Hʳ = {g⁰, gʳ, g²ʳ, …, g⁽ᵖ⁻¹⁾ʳ} of order p.
+    /// - The periodic extension f'(X) = f(Xʳ) has degree < n and satisfies
+    ///   f'(gⁱ) = f(gⁱʳ), cycling through the p values as i increases.
+    ///
+    /// Returns `&[]` by default (no periodic columns).
+    fn periodic_columns(&self) -> &[Vec<F>] {
+        &[]
+    }
+
+    /// Return the number of periodic columns.
+    fn num_periodic_columns(&self) -> usize {
+        self.periodic_columns().len()
+    }
+
+    /// Return the period of the column at index `col_idx`, if it exists.
+    fn get_column_period(&self, col_idx: usize) -> Option<usize> {
+        self.periodic_columns().get(col_idx).map(|col| col.len())
+    }
+
+    /// Return the maximum period among all periodic columns, or `None` if there are none.
+    fn get_max_column_period(&self) -> Option<usize> {
+        self.periodic_columns().iter().map(|col| col.len()).max()
+    }
+
+    /// Return the periodic values for a given row index.
+    fn periodic_values(&self, row_index: usize) -> Vec<F>
+    where
+        F: Clone,
+    {
+        self.periodic_columns()
+            .iter()
+            .map(|col| col[row_index % col.len()].clone())
+            .collect()
+    }
+
+    /// Return a matrix with all periodic columns extended to a common height.
+    ///
+    /// Columns with smaller periods are repeated cyclically to fill the matrix.
+    /// Returns `None` if there are no periodic columns.
+    fn periodic_columns_matrix(&self) -> Option<RowMajorMatrix<F>>
+    where
+        F: Clone + Send + Sync,
+    {
+        let cols = self.periodic_columns();
+        if cols.is_empty() {
+            return None;
+        }
+
+        let max_period = self.get_max_column_period()?;
+        let num_cols = cols.len();
+
+        let mut values = Vec::with_capacity(max_period * num_cols);
+        for row in 0..max_period {
+            for col in cols {
+                let period = col.len();
+                values.push(col[row % period].clone());
+            }
+        }
+
+        Some(RowMajorMatrix::new(values, num_cols))
+    }
 }
 
 /// An extension of `BaseAir` that includes support for public values.
@@ -413,6 +488,22 @@ pub trait PermutationAirBuilder: ExtensionBuilder {
     fn permutation_randomness(&self) -> &[Self::RandomVar];
 }
 
+/// Trait for builders supporting periodic columns.
+///
+/// Periodic columns are columns whose values repeat with a period p dividing the trace
+/// length. At row i, the value of periodic column j equals `periodic_table[j][i mod p]`.
+///
+/// These columns are never committed to the proof - both prover and verifier compute them
+/// from the periodic column data provided by [`BaseAir::periodic_columns`].
+pub trait PeriodicAirBuilder: AirBuilder {
+    /// Variable type for periodic column values.
+    /// For the prover, this is base field; for the verifier, this is extension field.
+    type PeriodicVar: Into<Self::Expr> + Copy;
+
+    /// Return the evaluations of periodic columns at the current row.
+    fn periodic_values(&self) -> &[Self::PeriodicVar];
+}
+
 /// A wrapper around an [`AirBuilder`] that enforces constraints only when a specified condition is met.
 ///
 /// This struct allows selectively applying constraints to certain rows or under certain conditions in the AIR,
@@ -466,6 +557,14 @@ impl<AB: AirBuilder> AirBuilder for FilteredAirBuilder<'_, AB> {
     }
 }
 
+impl<AB: AirBuilderWithPublicValues> AirBuilderWithPublicValues for FilteredAirBuilder<'_, AB> {
+    type PublicVar = AB::PublicVar;
+
+    fn public_values(&self) -> &[Self::PublicVar] {
+        self.inner.public_values()
+    }
+}
+
 impl<AB: ExtensionBuilder> ExtensionBuilder for FilteredAirBuilder<'_, AB> {
     type EF = AB::EF;
     type ExprEF = AB::ExprEF;
@@ -501,5 +600,13 @@ impl<AB: AirBuilderWithContext> AirBuilderWithContext for FilteredAirBuilder<'_,
 
     fn eval_context(&self) -> &Self::EvalContext {
         self.inner.eval_context()
+    }
+}
+
+impl<AB: PeriodicAirBuilder> PeriodicAirBuilder for FilteredAirBuilder<'_, AB> {
+    type PeriodicVar = AB::PeriodicVar;
+
+    fn periodic_values(&self) -> &[Self::PeriodicVar] {
+        self.inner.periodic_values()
     }
 }
