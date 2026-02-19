@@ -104,9 +104,16 @@ where
         _ => None,
     };
 
+    let periodic_cols = air.periodic_columns();
+    let periodic_values: Vec<SC::Challenge> = periodic_cols
+        .iter()
+        .map(|col| trace_domain.evaluate_periodic_column_at(col, zeta))
+        .collect();
+
     let mut folder = VerifierConstraintFolder {
         main,
         preprocessed,
+        periodic_values: &periodic_values,
         public_values,
         is_first_row: sels.is_first_row,
         is_last_row: sels.is_last_row,

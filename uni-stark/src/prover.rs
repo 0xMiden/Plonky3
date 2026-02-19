@@ -72,11 +72,12 @@ where
         },
     );
 
-    // Compute the constraint polynomials as vectors of symbolic expressions.
-    // TODO(periodic-columns): pass air.num_periodic_columns() once the prover
-    // evaluates periodic column polynomials during constraint checking.
-    let symbolic_constraints =
-        get_symbolic_constraints(air, preprocessed_width, public_values.len(), 0);
+    let symbolic_constraints = get_symbolic_constraints(
+        air,
+        preprocessed_width,
+        public_values.len(),
+        air.num_periodic_columns(),
+    );
 
     // Count the number of constraints that we have.
     let constraint_count = symbolic_constraints.len();
@@ -211,6 +212,7 @@ where
     // at every point in the quotient domain. The degree of `Q(x)` is `<= deg(C(x)) - N = 2N - 2` in the case
     // where `deg(C) = 3`. (See the discussion above constraint_degree for more details.)
     let quotient_values = quotient_values(
+        pcs,
         air,
         public_values,
         trace_domain,
@@ -372,6 +374,7 @@ where
 // TODO: Group some arguments to remove the `allow`?
 #[allow(clippy::too_many_arguments)]
 pub fn quotient_values<SC, A, Mat>(
+    pcs: &SC::Pcs,
     air: &A,
     public_values: &[Val<SC>],
     trace_domain: Domain<SC>,
@@ -415,6 +418,10 @@ where
                 .collect()
         })
         .collect();
+
+    let periodic_cols = air.periodic_columns();
+    let periodic_table = pcs.build_periodic_lde_table(periodic_cols, trace_domain, quotient_domain);
+
     (0..quotient_size)
         .into_par_iter()
         .step_by(PackedVal::<SC>::WIDTH)
@@ -439,10 +446,24 @@ where
                 )
             });
 
+            let periodic_vals: Vec<PackedVal<SC>> = if periodic_table.is_empty() {
+                vec![]
+            } else {
+                (0..periodic_table.width())
+                    .map(|col_idx| {
+                        let slice: Vec<Val<SC>> = (0..PackedVal::<SC>::WIDTH)
+                            .map(|offset| *periodic_table.get(i_start + offset, col_idx))
+                            .collect();
+                        *PackedVal::<SC>::from_slice(&slice)
+                    })
+                    .collect()
+            };
+
             let accumulator = PackedChallenge::<SC>::ZERO;
             let mut folder = ProverConstraintFolder {
                 main: main.as_view(),
                 preprocessed: preprocessed.as_ref().map(|m| m.as_view()),
+                periodic_values: &periodic_vals,
                 public_values,
                 is_first_row,
                 is_last_row,
