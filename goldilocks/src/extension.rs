@@ -35,6 +35,29 @@ impl HasTwoAdicBinomialExtension<2> for Goldilocks {
     }
 }
 
+impl BinomiallyExtendableAlgebra<Self, 3> for Goldilocks {}
+
+impl BinomiallyExtendable<3> for Goldilocks {
+    // Verifiable in Sage with
+    // `R.<x> = GF(p)[]; assert (x^3 - 7).is_irreducible()`.
+    const W: Self = Self::new(7);
+
+    // DTH_ROOT = W^((p - 1)/3) = primitive cube root of unity.
+    const DTH_ROOT: Self = Self::new(18446744065119617025);
+
+    const EXT_GENERATOR: [Self; 3] = [Self::ZERO, Self::ONE, Self::ZERO];
+}
+
+impl HasTwoAdicBinomialExtension<3> for Goldilocks {
+    const EXT_TWO_ADICITY: usize = 32;
+
+    fn ext_two_adic_generator(bits: usize) -> [Self; 3] {
+        assert!(bits <= 32);
+
+        field_to_array(Self::two_adic_generator(bits))
+    }
+}
+
 impl BinomiallyExtendableAlgebra<Self, 5> for Goldilocks {}
 
 impl BinomiallyExtendable<5> for Goldilocks {
@@ -114,6 +137,29 @@ mod test_quadratic_extension {
         &super::ONES,
         &super::multiplicative_group_prime_factorization()
     );
+
+    test_extension_field!(super::F, super::EF);
+    test_two_adic_extension_field!(super::F, super::EF);
+
+    type Pef = <EF as ExtensionField<F>>::ExtensionPacking;
+    const PACKED_ZEROS: [Pef; 1] = [Pef::ZERO];
+    const PACKED_ONES: [Pef; 1] = [Pef::ONE];
+    test_packed_extension_field!(super::Pef, &super::PACKED_ZEROS, &super::PACKED_ONES);
+}
+
+#[cfg(test)]
+mod test_cubic_extension {
+
+    use p3_field::extension::BinomialExtensionField;
+    use p3_field::{ExtensionField, PrimeCharacteristicRing};
+    use p3_field_testing::{
+        test_extension_field, test_packed_extension_field, test_two_adic_extension_field,
+    };
+
+    use crate::Goldilocks;
+
+    type F = Goldilocks;
+    type EF = BinomialExtensionField<F, 3>;
 
     test_extension_field!(super::F, super::EF);
     test_two_adic_extension_field!(super::F, super::EF);
