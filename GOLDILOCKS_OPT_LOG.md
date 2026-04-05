@@ -313,3 +313,58 @@ in aarch64_neon/utils.rs `add_asm`.
 - All arithmetic operations work correctly on non-canonical inputs
 - Canonicalization only needed for: `PartialEq`, `Hash`, `Ord`,
   `Display`, `Debug`, `to_unique_u64`, `neg` (calls `as_canonical_u64`)
+
+---
+
+## Final State: Assembly Snapshot (aarch64)
+
+### `add` (6 instructions, 0 branches)
+```
+adds   x8, x1, x0          ; sum = a + b
+mov    w9, #-1              ; NEG_ORDER
+csel   x10, x9, xzr, hs    ; adj = carry ? NEG_ORDER : 0
+adds   x8, x10, x8         ; sum += adj
+add    x9, x8, x9          ; sum_corr = sum + NEG_ORDER
+csel   x0, x9, x8, hs      ; result = carry2 ? sum_corr : sum
+```
+
+### `reduce128` inner `add_no_canonicalize` (3 instructions)
+```
+adds   {result}, {x}, {y}
+csetm  {adj:w}, cs          ; 0xFFFFFFFF on carry
+add    {result}, {result}, {adj}
+```
+
+### `halve` (branchless, 5 instructions)
+```
+and    x8, x0, #1           ; lo_bit = x & 1
+lsr    x9, x0, #1           ; half = x >> 1
+neg    x8, x8               ; mask = -lo_bit
+and    x8, x8, HALF         ; mask & HALF_P_PLUS_1
+add    x0, x9, x8           ; half + correction
+```
+
+### GCD inner loop (parity branch + csel swap, ~9 avg insns/iter)
+```
+tbz    w9, #0, even_path    ; branch on parity (well-predicted)
+cmp    x9, x13              ; compare a, b
+csel   ...                  ; 4x conditional swap (branchless)
+sub    ...                  ; a -= b
+lsr    ...                  ; a >>= 1
+sub    ...                  ; f0 -= f1
+lsl    ...                  ; f1 <<= 1
+```
+
+---
+
+## Remaining Opportunities (Beyond Scalar Scope)
+
+1. **7th root addition chain**: Current 71 ops (63 sq + 8 mul) is already
+   24 ops better than naive. Exhaustive search tool needed to find shorter.
+2. **Packed field (NEON/AVX2)**: The main throughput path uses SIMD.
+   Scalar optimizations affect the tail/remainder processing only.
+3. **Extension field**: Degree-2 and degree-5 operations are base-field-bound.
+   The generic BinomialExtensionField implementation is already well-optimized.
+4. **`neg` without canonicalization**: Impossible with current non-canonical
+   representation. Would require switching to always-canonical representation
+   (tradeoff: slower add/sub).
