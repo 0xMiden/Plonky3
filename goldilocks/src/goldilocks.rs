@@ -251,6 +251,28 @@ impl PrimeCharacteristicRing for Goldilocks {
     }
 
     #[inline]
+    fn double(&self) -> Self {
+        // Specialized doubling: both operands are the same register,
+        // avoiding the register copy in the generic add path.
+        let (sum, over) = self.value.overflowing_add(self.value);
+        let (mut sum, over) = sum.overflowing_add(u64::from(over) * Self::NEG_ORDER);
+        if over {
+            // Double-overflow only possible for non-canonical inputs > ORDER.
+            unsafe {
+                assume(self.value > Self::ORDER_U64);
+            }
+            branch_hint();
+            sum += Self::NEG_ORDER;
+        }
+        Self::new(sum)
+    }
+
+    #[inline]
+    fn square(&self) -> Self {
+        reduce128((self.value as u128) * (self.value as u128))
+    }
+
+    #[inline]
     fn mul_2exp_u64(&self, exp: u64) -> Self {
         // In the Goldilocks field, 2^96 = -1 mod P and 2^192 = 1 mod P.
         if exp < 96 {
@@ -389,7 +411,8 @@ impl Field for Goldilocks {
     const GENERATOR: Self = Self::new(7);
 
     fn is_zero(&self) -> bool {
-        self.value == 0 || self.value == Self::ORDER_U64
+        // Bitwise OR avoids the short-circuit branch from ||.
+        (self.value == 0) | (self.value == Self::ORDER_U64)
     }
 
     fn try_inverse(&self) -> Option<Self> {

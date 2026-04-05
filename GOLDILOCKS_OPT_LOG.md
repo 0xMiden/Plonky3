@@ -88,3 +88,36 @@ branchless mask arithmetic: `(x >> 1) + ((0u64.wrapping_sub(x & 1)) & HALF_P_PLU
 The parity branch is 50/50 unpredictable for random inputs, causing ~50%
 mispredict rate. Branchless mask form eliminates all mispredictions. This
 matches the pattern already used in NEON and AVX2 packed halve.
+
+---
+
+## Opt 3: Specialized `double()` -- KEEP (neutral, cleaner)
+
+### Benchmarks (before -> after)
+- double-latency/2000: 1.70-1.75 µs -> 1.71 µs (neutral)
+- double-throughput/200: 597-603 ns -> 600 ns (neutral)
+
+### Conclusion: KEEP
+Neutral performance. LLVM already optimized the default `self + self` well.
+Override is kept for code clarity (explicit same-register assumption) and to
+provide stronger `assume` hints for callers with canonical inputs.
+
+---
+
+## Opt 4: Branchless `is_zero()` -- KEEP
+
+Changed `||` to `|` to avoid short-circuit branch.
+
+### Conclusion: KEEP (trivial change, eliminates branch)
+
+---
+
+## Opt 5: Specialized `square()` -- KEEP (neutral, cleaner)
+
+### Benchmarks (before -> after)
+- Goldilocks square: 895-910 ps -> 899 ps (neutral)
+- 7th_root: 299-303 ns -> 300 ns (neutral)
+
+### Conclusion: KEEP
+Neutral performance. LLVM already recognized the squaring pattern.
+Override kept for explicitness.
