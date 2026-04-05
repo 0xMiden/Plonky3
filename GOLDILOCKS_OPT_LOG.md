@@ -433,9 +433,24 @@ inversion (much faster than Fermat FLT) and the branchless halve. Lambdaworks'
 edge is the Karatsuba extension field arithmetic (fewer base muls) and the
 x86 MULX support for BMI2 CPUs.
 
-The Fp2 Karatsuba vs dot_product tradeoff is roughly neutral: Karatsuba saves
-1 base mul but adds 3 add/sub ops. The dot_product::<2> path batches two
-products in u128 with a single reduce128, partially offsetting the extra mul.
+### Fp2 assembly analysis (aarch64)
+
+| Operation | Plonky3 (dot_product) | Karatsuba (lambdaworks) |
+|-----------|----------------------|------------------------|
+| **Fp2 mul** | 88 insns, 10 mul/umulh (5 muls) | 87 insns, 7 mul/umulh (3 muls) |
+| **Fp2 square** | 71 insns, 7 mul/umulh (4 muls) | 72 insns, 6 mul/umulh (3 muls) |
+
+Both approaches produce nearly identical instruction counts. Karatsuba saves
+1-2 base muls but adds ~11 instructions of add/double/sub for `mul_by_7`
+(triple-double-sub chain). The dot_product::<2> path compensates by batching
+two products in u128 with a single reduce128.
+
+**Fp2 square benchmark**: 3.26 ns (Plonky3) ≈ 3.6× base mul. The theoretical
+minimum with Karatsuba (3 muls) would be ~3.9 ns due to the serial mul_by_7
+chain. The dot_product batching is the key advantage.
+
+**Conclusion**: No actionable improvement from switching to Karatsuba for Fp2.
+The generic BinomialExtensionField with dot_product is already competitive.
 
 ---
 
