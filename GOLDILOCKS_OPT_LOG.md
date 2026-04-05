@@ -398,6 +398,47 @@ and `mul_pow2_raw_dyn` helpers are available for direct callers that know K.
 
 ---
 
+## Comparison: Plonky3 vs Lambdaworks Goldilocks
+
+Source: https://github.com/lambdaclass/lambdaworks/blob/main/crates/math/src/field/fields/u64_goldilocks_field.rs
+
+### Identical implementations
+- add, sub, mul, square, reduce128, canonicalize: same algorithms
+- Both use branch_hint + assume for rare double-overflow paths
+- Both use `reduce128((a as u128) * (b as u128))` for multiplication
+
+### Plonky3 advantages
+| Feature | Plonky3 | Lambdaworks |
+|---------|---------|-------------|
+| aarch64 `add_no_canonicalize` | `adds + csetm + add` (3 insns) | Rust fallback (4 insns) |
+| x86 `add_no_canonicalize` | single correction (3 insns) | double correction (5 insns) |
+| Inverse | Binary GCD (128 ns) | Fermat FLT chain 63sq+9mul (~72 ops) |
+| halve | branchless mask | not implemented |
+| double | specialized with assume hints | delegates to add(a,a) |
+| mul_by_7 | LLVM-optimized `x * F::new(7)` (8 insns) | `double.double.double - x` (3 doubles + sub) |
+| mul_2exp_u64 | precomputed 96-entry table | not implemented |
+
+### Lambdaworks advantages
+| Feature | Lambdaworks | Plonky3 |
+|---------|-------------|---------|
+| x86 full mul asm | hand-written `mul` + reduction | relies on LLVM (similar quality) |
+| x86 MULX (BMI2) | available | not implemented |
+| Fp2 mul | Karatsuba (3 base muls) | dot_product (4 base muls, but u128 batched) |
+| Fp2 square | hand-written (2sq+1mul) | generic (uses dot_product) |
+| Fp3 mul | Karatsuba (6 muls) | not specifically optimized |
+
+### Key takeaway
+The implementations are very close. Plonky3's main edge is the binary GCD
+inversion (much faster than Fermat FLT) and the branchless halve. Lambdaworks'
+edge is the Karatsuba extension field arithmetic (fewer base muls) and the
+x86 MULX support for BMI2 CPUs.
+
+The Fp2 Karatsuba vs dot_product tradeoff is roughly neutral: Karatsuba saves
+1 base mul but adds 3 add/sub ops. The dot_product::<2> path batches two
+products in u128 with a single reduce128, partially offsetting the extra mul.
+
+---
+
 ## Remaining Opportunities (Beyond Scalar Scope)
 
 1. **7th root addition chain**: Current 71 ops (63 sq + 8 mul) is already
