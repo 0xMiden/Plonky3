@@ -454,6 +454,95 @@ The generic BinomialExtensionField with dot_product is already competitive.
 
 ---
 
+## Complete Trait Method Inventory
+
+### PrimeCharacteristicRing (field/src/field.rs)
+
+| Method | Default | Override? | Opportunity? |
+|--------|---------|-----------|-------------|
+| `ZERO, ONE, TWO, NEG_ONE` | — | Yes (L228-231) | — |
+| `from_prime_subfield` | — (required) | Yes (L234) | — |
+| `from_bool` | `if b { ONE } else { ZERO }` | Yes: `Self::new(b.into())` (L239) | Done, branchless |
+| `double` | `self + self` | Yes (L256) | Done, specialized |
+| `halve` | circular | Yes (L244) | Done, branchless |
+| `square` | `self * self` | Yes (L273) | Done, explicit reduce128 |
+| **`cube`** | `self.square() * self` | **No** | No — default is optimal (1 sq + 1 mul) |
+| **`xor`** | `self + y - 2*self*y` | **No** | No — only used for boolean AIR constraints, not hot |
+| **`xor3`** | `self.xor(y).xor(z)` | **No** | No — same |
+| **`andn`** | `(1-self) * y` | **No** | No — same |
+| **`bool_check`** | `self * (self - 1)` | **No** | No — same |
+| **`exp_u64`** | sq-and-mul loop | **No** | No — generic loop is fine, specializations go through exp_const_u64 |
+| **`exp_const_u64`** | match 0..7, fallback exp_u64 | **No** | No — default handles 0..7 with optimal chains |
+| **`exp_power_of_2`** | repeated squaring | **No** | No — just a loop of `square()`, already specialized |
+| `mul_2exp_u64` | `self * 2^exp` via exp_u64 | Yes (L278) | Done, table + shift-fold for small K |
+| `div_2exp_u64` | `self * (1/2)^exp` via exp | Yes (L299) | Done, halve() for K=1 |
+| **`powers`** | returns Powers iterator | **No** | No — trivial wrapper |
+| **`shifted_powers`** | returns Powers iterator | **No** | No — trivial wrapper |
+| `dot_product` | sum of products | Yes (L326) | Evaluated extending N=3,4,5 — regressed |
+| `sum_array` | tree sum / iterator | Yes (L311) | Evaluated N=4..7 — regressed |
+| `zero_vec` | `vec![ZERO; len]` | Yes (L376) | Done, `flatten_to_base` |
+
+### Field (field/src/field.rs)
+
+| Method | Default | Override? | Opportunity? |
+|--------|---------|-----------|-------------|
+| `Packing` | — (required) | Yes (L404-422) | — |
+| `GENERATOR` | — (required) | Yes: `7` (L425) | — |
+| `is_zero` | `*self == ZERO` | Yes (L427) | Done, branchless `\|` |
+| **`is_one`** | `*self == ONE` | **No** | Marginal — uses PartialEq which canonicalizes, branch is predictable |
+| `try_inverse` | — (required) | Yes (L432) | Evaluated branchless GCD — regressed |
+| **`inverse`** | `try_inverse().expect()` | **No** | No — just a wrapper |
+| **`add_slices`** | uses Packing | **No** | No — delegates to packed field |
+| `order` | — (required) | Yes (L441) | — |
+| **`bits`** | `order().bits()` | **No** | Marginal — could hardcode 64, but rarely called |
+
+### PrimeField64 (field/src/field.rs)
+
+| Method | Default | Override? | Opportunity? |
+|--------|---------|-----------|-------------|
+| `ORDER_U64` | — (required) | Yes (L539) | — |
+| `as_canonical_u64` | — (required) | Yes (L542) | Evaluated branchless — regressed |
+| **`to_unique_u64`** | `as_canonical_u64()` | **No** | No — must canonicalize, default is correct |
+
+### Algebra<Goldilocks> (field/src/field.rs)
+
+| Method | Default | Override? | Opportunity? |
+|--------|---------|-----------|-------------|
+| **`BATCHED_LC_CHUNK`** | `8` | **No** | Marginal — chunk=16 is 2% better, not worth override |
+| **`mixed_dot_product`** | products + sum_array | **No** | No — delegates to dot_product which is already specialized |
+| **`batched_linear_combination`** | chunks + mixed_dot_product | **No** | No — delegates to above |
+
+### Other traits
+
+| Trait/Method | Override? | Opportunity? |
+|-------------|-----------|-------------|
+| `TwoAdicField::TWO_ADICITY` | Yes: `32` | — |
+| `TwoAdicField::two_adic_generator` | Yes: table lookup | Done, optimal |
+| `InjectiveMonomial<7>::injective_exp_n` | No (default `exp_const_u64::<7>`) | No — default is optimal |
+| `PermutationMonomial<7>::injective_exp_root_n` | Yes: custom chain | Done |
+| `RawDataSerializable` | Yes (via macro) | Evaluated — already optimal |
+| `QuotientMap<u64>` | Yes | Done |
+| `QuotientMap<i64>` | Yes | Done |
+| Other `QuotientMap<*>` | Yes (via macros) | Done |
+
+### Summary
+
+**Total non-overridden methods with default implementations: 16**
+
+Of these, **0 have actionable optimization opportunities**:
+- `cube`: 1 sq + 1 mul is already optimal
+- `xor/xor3/andn/bool_check`: boolean AIR ops, not performance-critical
+- `exp_u64/exp_const_u64/exp_power_of_2`: generic loops over already-specialized square/mul
+- `powers/shifted_powers`: trivial iterators
+- `inverse`: wrapper around try_inverse
+- `is_one`: canonicalize + compare, branch is predictable
+- `add_slices`: delegates to packed field
+- `bits`: rarely called, could hardcode but not worth it
+- `to_unique_u64`: must canonicalize, default is correct
+- `BATCHED_LC_CHUNK/mixed_dot_product/batched_linear_combination`: 2% marginal at best
+
+---
+
 ## Remaining Opportunities (Beyond Scalar Scope)
 
 1. **7th root addition chain**: Current 71 ops (63 sq + 8 mul) is already
