@@ -190,6 +190,36 @@ The comment "It is faster to branch" is confirmed correct on Apple M4.
 
 ---
 
+## Opt GCD: Branchless `gcd_inner` for inversion -- SKIP
+
+### Assembly analysis (branched version, aarch64)
+LLVM already compiles `gcd_inner` to a semi-branchless form:
+- The `if a < b` swap uses 4 `csel` instructions (no branch)
+- Only the parity check `if a & 1 == 0` uses a real branch (`tbz`)
+- Even path: 4 instructions; odd path: 14 instructions
+
+The `tbz` branch has regularity (after subtraction, result is always even,
+leading to runs of even iterations), so the predictor handles it well.
+
+### Fully branchless version
+Replaced both branches with mask arithmetic (XOR-swap, conditional subtract).
+Each iteration: 20 instructions (first loop), 26 instructions (second loop).
+
+### Benchmarks (branched -> branchless)
+- Goldilocks inv: 128 ns -> 479 ns (**+274% regression**)
+
+### Why branchless is slower
+The branched version averages ~9 instructions/iteration (mix of 4-insn even
+path and 14-insn odd path). The branchless version forces 20 insns on EVERY
+iteration. Apple M4's branch predictor handles the `tbz` parity branch well
+enough that the branch penalty is small compared to the extra instruction cost.
+
+### Conclusion: SKIP
+The existing `gcd_inner` is already well-optimized by LLVM (using `csel` for
+the swap, only branching on parity). The branchless approach triples the cost.
+
+---
+
 ## Opt 11: `mul_pow2_raw<K>` const-generic helper + `mul_2exp_u64` dispatch -- PARTIAL
 
 ### `mul_pow2_raw<K>` for K in 1..32
