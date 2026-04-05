@@ -274,7 +274,7 @@ impl PrimeCharacteristicRing for Goldilocks {
 
     #[inline]
     fn mul_2exp_u64(&self, exp: u64) -> Self {
-        // In the Goldilocks field, 2^96 = -1 mod P and 2^192 = 1 mod P.
+        // 2^96 ≡ -1 (mod p), 2^192 ≡ 1 (mod p).
         if exp < 96 {
             *self * Self::POWERS_OF_TWO[exp as usize]
         } else if exp < 192 {
@@ -642,6 +642,35 @@ impl Sum for Goldilocks {
         let sum = iter.map(|x| x.value as u128).sum::<u128>();
         reduce128(sum)
     }
+}
+
+/// Multiply a raw u64 Goldilocks value by `2^K` using shift+fold arithmetic.
+///
+/// Uses pure u64 arithmetic (no u128). The value `x * 2^K` is split into
+/// `lo = x << K` (bits that stay) and `hi = x >> (64 - K)` (overflow).
+/// Since `2^64 ≡ NEG_ORDER (mod p)`, the result is `lo + hi * NEG_ORDER`.
+///
+/// This is faster than a full field multiply for small compile-time-known K
+/// because it avoids the u128 widening multiplication path. Best used when
+/// K is a const generic known at compile time.
+///
+/// K must be in `1..32`. For K = 0, the result is the input unchanged.
+/// For K ≥ 32, use `reduce128((value as u128) << K)` or the table-based
+/// `mul_2exp_u64` instead.
+#[allow(dead_code)] // Helper for future const-generic callers
+#[inline(always)]
+pub(crate) fn mul_pow2_raw<const K: u32>(value: u64) -> u64 {
+    const {
+        assert!(K > 0 && K < 32, "mul_pow2_raw requires 0 < K < 32");
+    }
+    let hi = value >> (64 - K);
+    let lo = value << K;
+    // hi < 2^K < 2^32, NEG_ORDER < 2^32, so hi * NEG_ORDER < 2^64.
+    // lo < 2^64 and correction < 2^64, so their sum < 2^65.
+    // Precondition for add_no_canonicalize_trashing_input: x + y < 2^64 + ORDER.
+    // Since lo + correction < 2^65 < 2^64 + ORDER (ORDER ≈ 2^64), this holds.
+    let correction = hi * Goldilocks::NEG_ORDER;
+    unsafe { add_no_canonicalize_trashing_input(lo, correction) }
 }
 
 /// Reduces to a 64-bit value. The result might not be in canonical form; it could be in between the

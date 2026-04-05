@@ -187,3 +187,23 @@ The borrow is exceedingly rare (~2^{-32}). The branched version with
 `branch_hint()` is perfectly predicted. Making it branchless adds
 `csel` latency to every multiply, which is a significant regression.
 The comment "It is faster to branch" is confirmed correct on Apple M4.
+
+---
+
+## Opt 11: `mul_pow2_raw<K>` const-generic helper + `mul_2exp_u64` dispatch -- PARTIAL
+
+### `mul_pow2_raw<K>` for K in 1..32
+Added a `pub(crate)` const-generic helper that multiplies by `2^K` using pure
+u64 shift+fold: `(x << K) + (x >> (64-K)) * NEG_ORDER`. No u128 arithmetic.
+For K < 32, `hi * NEG_ORDER < 2^64`, so the final addition uses
+`add_no_canonicalize_trashing_input` (pure u64 add with carry folding).
+
+### Wiring into `mul_2exp_u64` -- SKIP
+Attempted dispatching to `mul_pow2_raw::<K>` for K=2..8 via a match table
+with `exp % 192` normalization. Regressed +168-208% due to the modulo
+overhead and large match table penalizing the runtime benchmark.
+
+The existing table-multiply approach (`*self * POWERS_OF_TWO[exp]`) is
+optimal for runtime exp because LLVM resolves table lookups well and avoids
+u128 widening for the power. The `mul_pow2_raw` helper is kept for future
+callers that know K at compile time (const-generic context).
