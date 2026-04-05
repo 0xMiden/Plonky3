@@ -145,3 +145,32 @@ with the `2^96 ≡ -1` split/accumulate trick. The overhead of individual u64 ad
 tree summation slower than batch u128 accumulation. Similarly, the per-pair
 OFFSET-correction overhead in dot_product exceeds the savings from avoiding
 the fold's split/accumulate.
+
+---
+
+## Opt 8: `div_2exp_u64(1)` -> `halve()` -- KEEP
+
+### Benchmarks (before -> after)
+- div_2exp_u64(1): 241-248 ns -> 42.7 ns (**-83%**)
+
+### Conclusion: KEEP
+Massive improvement. The current path for div_2exp(1) goes through
+`mul_2exp_u64(191)` = full field multiply by `POWERS_OF_TWO[95]`.
+Direct `halve()` avoids the multiply entirely.
+
+---
+
+## Opt 9: `mul_2exp_u64` shift fast paths -- SKIP
+
+### Benchmarks (before -> after)
+- mul_2exp(1): 177-184 ns -> 179-180 ns (neutral)
+- mul_2exp(10): 177-180 ns -> 336-339 ns (**+88% regression**)
+- mul_2exp(32): 177-182 ns -> 337-343 ns (**+89% regression**)
+- mul_2exp(63): 714-780 ns -> 1124-1138 ns (**+44% regression**)
+
+### Conclusion: SKIP
+The `reduce128((value as u128) << exp)` path is significantly slower than
+multiplying by a precomputed table entry. The table multiply benefits from
+the compiler's highly optimized 64x64->128 multiply path, while shift+reduce128
+introduces extra u128 arithmetic overhead. The existing table approach is
+already optimal.
