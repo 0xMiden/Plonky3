@@ -172,5 +172,18 @@ Direct `halve()` avoids the multiply entirely.
 The `reduce128((value as u128) << exp)` path is significantly slower than
 multiplying by a precomputed table entry. The table multiply benefits from
 the compiler's highly optimized 64x64->128 multiply path, while shift+reduce128
-introduces extra u128 arithmetic overhead. The existing table approach is
-already optimal.
+introduces extra u128 arithmetic overhead. The existing table approach is already optimal.
+
+---
+
+## Opt 10: Branchless `reduce128` borrow path -- SKIP
+
+### Benchmarks (before -> after)
+- mul-latency/100: 354-365 ns -> 436-442 ns (**+21% regression**)
+- mul-throughput/25: 197-198 ns -> 227-228 ns (**+15% regression**)
+
+### Conclusion: SKIP
+The borrow is exceedingly rare (~2^{-32}). The branched version with
+`branch_hint()` is perfectly predicted. Making it branchless adds
+`csel` latency to every multiply, which is a significant regression.
+The comment "It is faster to branch" is confirmed correct on Apple M4.
