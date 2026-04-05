@@ -378,6 +378,24 @@ LLVM already generates optimal code for multiplication by compile-time
 constants through the `reduce128` path. Extension field W=7 multiplication
 is already 8 instructions with no room for improvement.
 
+### double().double() vs shift+fold vs table multiply for ×4
+
+| Method | Insns | Notes |
+|--------|-------|-------|
+| `mul_pow2_raw` (shift+fold) | 7 | `lsl #2 + lsr #62 + shift-sub + add_no_canon` |
+| `reduce128(x * 4)` (const inlined) | 7 | LLVM produces identical code to shift+fold |
+| `double().double()` | 11 | Two chained add-carry sequences |
+| `*self * POWERS_OF_TWO[exp]` (runtime) | ~15 | Full `mul + umulh + reduce128` when constant not inlined |
+
+**Key finding:** When LLVM can see the constant (compile-time known), it generates
+optimal shift+fold code (7 insns). When the constant comes from a runtime table
+lookup, it falls back to full `mul + umulh` (15 insns). `double().double()` is
+the middle ground at 11 insns but has a serial dependency.
+
+Adding runtime dispatch (if/else chain) to `mul_2exp_u64` regressed because
+the extra branches add latency that exceeds the savings. The `mul_pow2_raw`
+and `mul_pow2_raw_dyn` helpers are available for direct callers that know K.
+
 ---
 
 ## Remaining Opportunities (Beyond Scalar Scope)
