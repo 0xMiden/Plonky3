@@ -357,6 +357,29 @@ lsl    ...                  ; f1 <<= 1
 
 ---
 
+## Opt 15: Multiply by small constants (4, 7) -- SKIP (LLVM already optimal)
+
+### Assembly analysis
+LLVM already converts `reduce128((x as u128) * c)` for small constant `c`
+into near-optimal code:
+
+| Constant | Low part | High part | Total |
+|----------|----------|-----------|-------|
+| ×3 | `add x, x, x lsl #1` | `umulh` + shift-sub | 8 insns |
+| ×4 | `lsl #2` | `lsr #62` + shift-sub | 7 insns (no umulh!) |
+| ×7 | `lsl #3; sub` | `umulh` + shift-sub | 8 insns |
+
+Attempted umulh-free alternatives (shift + borrow detection) produced the
+same or more instructions (8-9). Apple M4 `umulh` is 1-cycle pipelined,
+so there is no benefit to avoiding it.
+
+### Conclusion: SKIP
+LLVM already generates optimal code for multiplication by compile-time
+constants through the `reduce128` path. Extension field W=7 multiplication
+is already 8 instructions with no room for improvement.
+
+---
+
 ## Remaining Opportunities (Beyond Scalar Scope)
 
 1. **7th root addition chain**: Current 71 ops (63 sq + 8 mul) is already
