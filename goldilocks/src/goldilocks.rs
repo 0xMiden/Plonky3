@@ -732,7 +732,30 @@ unsafe fn add_no_canonicalize_trashing_input(x: u64, y: u64) -> u64 {
 }
 
 #[inline(always)]
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(target_arch = "aarch64")]
+unsafe fn add_no_canonicalize_trashing_input(x: u64, y: u64) -> u64 {
+    // Same trick as x86_64 sbb: use the carry flag from `adds` to produce
+    // NEG_ORDER (0xFFFFFFFF) on overflow via `csetm` (conditional set mask).
+    // csetm writes all-ones to a 32-bit register on carry, which is exactly NEG_ORDER.
+    unsafe {
+        let result: u64;
+        let _adj: u64;
+        core::arch::asm!(
+            "adds  {result}, {x}, {y}",
+            "csetm {adj:w}, cs",
+            "add   {result}, {result}, {adj}",
+            x = in(reg) x,
+            y = in(reg) y,
+            result = out(reg) result,
+            adj = out(reg) _adj,
+            options(pure, nomem, nostack),
+        );
+        result
+    }
+}
+
+#[inline(always)]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 unsafe fn add_no_canonicalize_trashing_input(x: u64, y: u64) -> u64 {
     let (res_wrapped, carry) = x.overflowing_add(y);
     // Below cannot overflow unless the assumption if x + y < 2**64 + ORDER is incorrect.
@@ -756,9 +779,6 @@ fn gcd_inversion(input: Goldilocks) -> Goldilocks {
     // We split the iterations into 2 rounds of length 63.
     const ROUND_SIZE: usize = 63;
 
-    // In theory we could make this slightly faster by replacing the first `gcd_inner` by a copy-pasted
-    // version which doesn't do any computations involving g. But either the compiler works this out
-    // for itself or the speed up is negligible as I couldn't notice any difference in benchmarks.
     let (f00, _, f10, _) = gcd_inner::<ROUND_SIZE>(&mut a, &mut b);
     let (_, _, f11, g11) = gcd_inner::<ROUND_SIZE>(&mut a, &mut b);
 

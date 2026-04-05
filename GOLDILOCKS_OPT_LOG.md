@@ -285,6 +285,26 @@ Uses `impl_raw_serializable_primefield64!()` macro. All stream methods call
 branch is well-predicted (~2^{-32} taken rate). No scalar optimization
 available -- vectorized canonicalization would be a packed-field change.
 
+---
+
+## Opt 14: aarch64 inline asm for `add_no_canonicalize_trashing_input` -- KEEP
+
+### Assembly (Rust fallback -> inline asm)
+Rust fallback compiles to `adds + mov #-1 + csel + add` (4 instructions).
+Inline asm uses `adds + csetm + add` (3 instructions). Saves 1 instruction
+per call by using `csetm` to produce `0xFFFFFFFF` directly from the carry flag,
+matching the x86_64 `sbb` trick.
+
+### Benchmarks
+Neutral on Apple M4 (M4 can fuse/parallel mov+csel). But the instruction
+reduction may help on narrower aarch64 chips.
+
+### Conclusion: KEEP
+Cleaner code, 1 fewer instruction, matches the pattern already used
+in aarch64_neon/utils.rs `add_asm`.
+
+---
+
 ### Representation invariant
 - `value: u64` can be any value in `[0, 2^64)`
 - Canonical range: `[0, ORDER)` where `ORDER = 2^64 - 2^32 + 1`
