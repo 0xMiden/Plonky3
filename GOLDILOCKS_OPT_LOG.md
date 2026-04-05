@@ -47,3 +47,44 @@ Goldilocks batched_lc chunk=16       time: [111.3-111.6 ns]
 All scalar Goldilocks operations are inlined by LLVM on aarch64. Assembly
 for each operation is captured inline with the corresponding optimization
 commit below by inspecting the benchmark assembly or using `--emit=asm`.
+
+---
+
+## Opt 1: Branchless `neg()` -- SKIP
+
+### Approach A: `ORDER.wrapping_sub(value)` (no canonicalization)
+- **Result:** INCORRECT. Fails for non-canonical inputs (v > ORDER).
+  `wrapping_sub` gives `2^64 - (v - ORDER)`, which represents `NEG_ORDER - (v - ORDER) mod p`,
+  not `-(v mod p)`. The packed NEON neg also canonicalizes before negating.
+
+### Approach B: Branchless canonicalization + subtract
+```rust
+let mask = ((c >= ORDER) as u64).wrapping_neg();
+let canonical = c.wrapping_sub(ORDER & mask);
+Self::new(ORDER - canonical)
+```
+- **Benchmarks (before -> after):**
+  - neg-latency/2000: 5.04 µs -> 5.92 µs (**+17% REGRESSION**)
+  - neg-throughput/200: ~710 ns -> ~711 ns (neutral)
+
+### Conclusion: SKIP
+The branch in `as_canonical_u64` is taken ~2^{-32} of the time, making it
+almost perfectly predicted. Branchless mask arithmetic adds 2-3 cycles of
+latency to every call for no benefit. On aarch64 (Apple M4), the branch
+predictor wins decisively.
+
+---
+
+## Opt 2: Branchless `halve()` -- KEEP
+
+### Implementation
+Replaced `halve_u64::<P>(self.value)` (which uses `if x & 1 == 0`) with
+branchless mask arithmetic: `(x >> 1) + ((0u64.wrapping_sub(x & 1)) & HALF_P_PLUS_1)`.
+
+### Benchmarks (before -> after)
+- Goldilocks halve/200: 53.1 ns -> 42.3 ns (**-20.3%**)
+
+### Conclusion: KEEP
+The parity branch is 50/50 unpredictable for random inputs, causing ~50%
+mispredict rate. Branchless mask form eliminates all mispredictions. This
+matches the pattern already used in NEON and AVX2 packed halve.
