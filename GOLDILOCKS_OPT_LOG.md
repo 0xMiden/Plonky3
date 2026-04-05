@@ -237,3 +237,59 @@ The existing table-multiply approach (`*self * POWERS_OF_TWO[exp]`) is
 optimal for runtime exp because LLVM resolves table lookups well and avoids
 u128 widening for the power. The `mul_pow2_raw` helper is kept for future
 callers that know K at compile time (const-generic context).
+
+---
+
+## Opt 12: `reduce128` shift-sub for `x_hi_lo * NEG_ORDER` -- SKIP (LLVM no-op)
+
+### Assembly check
+Inspecting `try_inverse` assembly shows LLVM already converts
+`x * NEG_ORDER` (where `NEG_ORDER = 0xFFFFFFFF = 2^32 - 1`) into
+`lsl + sub` (shift-left-32 then subtract original). No code change needed.
+
+---
+
+## Opt 13: Scalar `BATCHED_LC_CHUNK` tuning -- SKIP (marginal)
+
+### Benchmarks
+```
+chunk=1:  139 ns
+chunk=2:  128 ns
+chunk=4:  122 ns
+chunk=8:  114 ns (current default)
+chunk=16: 112 ns (best)
+chunk=32: 121 ns
+chunk=64: 133 ns
+```
+
+chunk=16 is 2% better than chunk=8. Too marginal to justify overriding
+the Algebra trait for scalar Goldilocks. The packed types already override
+BATCHED_LC_CHUNK (AVX2=2, NEON=2, AVX512=4) where it matters.
+
+---
+
+## Representation & Trait Audit
+
+### Methods already optimal (no change needed)
+- `from_bool`: overridden with branchless `Self::new(b.into())`
+- `zero_vec`: overridden with `flatten_to_base(vec![0u64; len])`
+- `two_adic_generator`: O(1) table lookup `TWO_ADIC_GENERATORS[bits]`
+- `to_unique_u64`: defaults to `as_canonical_u64()`, correct since
+  representation is non-canonical (0 and ORDER both represent zero)
+- `exp_power_of_2`: repeated `square()` -- no Goldilocks shortcut exists
+- `exp_const_u64`: handles 0..7 with optimal addition chains
+
+### Serialization (`RawDataSerializable`)
+Uses `impl_raw_serializable_primefield64!()` macro. All stream methods call
+`to_unique_u64()` which calls `as_canonical_u64()`. The canonicalization
+branch is well-predicted (~2^{-32} taken rate). No scalar optimization
+available -- vectorized canonicalization would be a packed-field change.
+
+### Representation invariant
+- `value: u64` can be any value in `[0, 2^64)`
+- Canonical range: `[0, ORDER)` where `ORDER = 2^64 - 2^32 + 1`
+- Only redundancy: `0` and `ORDER` both represent zero
+- `as_canonical_u64()`: single conditional subtract, well-predicted
+- All arithmetic operations work correctly on non-canonical inputs
+- Canonicalization only needed for: `PartialEq`, `Hash`, `Ord`,
+  `Display`, `Debug`, `to_unique_u64`, `neg` (calls `as_canonical_u64`)
