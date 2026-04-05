@@ -320,8 +320,7 @@ impl PrimeCharacteristicRing for Goldilocks {
             0 => Self::ZERO,
             1 => lhs[0] * rhs[0],
             2 => {
-                // We unroll the N = 2 case as it is slightly faster and this is an important case
-                // as a major use is in extension field arithmetic and Goldilocks has a degree 2 extension.
+                // Unrolled: major use in degree-2 extension field arithmetic.
                 let long_prod_0 = (lhs[0].value as u128) * (rhs[0].value as u128);
                 let long_prod_1 = (lhs[1].value as u128) * (rhs[1].value as u128);
 

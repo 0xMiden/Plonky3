@@ -121,3 +121,27 @@ Changed `||` to `|` to avoid short-circuit branch.
 ### Conclusion: KEEP
 Neutral performance. LLVM already recognized the squaring pattern.
 Override kept for explicitness.
+
+---
+
+## Opt 6+7: Extend `sum_array` N=4..7 and `dot_product` N=3,4,5 -- SKIP
+
+### sum_array tree summation (before -> after)
+- tree sum/200, N=4: 361-370 ns -> 398-401 ns (**+10% regression**)
+- tree sum/200, N=5: 426-430 ns -> 522-524 ns (**+22% regression**)
+- tree sum/200, N=6: 494-513 ns -> 586-590 ns (**+15% regression**)
+- tree sum/200, N=7: 549-559 ns -> 682-687 ns (**+24% regression**)
+
+### dot_product OFFSET-correction unrolling (before -> after)
+- dot product/3: 2.39-2.42 ns -> 3.24 ns (**+35% regression**)
+- dot product/4: 3.05-3.10 ns -> 4.49 ns (**+45% regression**)
+- dot product/5: 3.66-3.69 ns -> 5.83 ns (**+58% regression**)
+
+### Conclusion: SKIP
+Unlike MontyField31 (32-bit field where scalar add is cheap), Goldilocks (64-bit)
+benefits more from the u128 delayed-reduction path in `Sum` and the generic fold
+with the `2^96 ≡ -1` split/accumulate trick. The overhead of individual u64 adds
+(with carry folding) is larger for 64-bit fields than for 32-bit fields, making
+tree summation slower than batch u128 accumulation. Similarly, the per-pair
+OFFSET-correction overhead in dot_product exceeds the savings from avoiding
+the fold's split/accumulate.
