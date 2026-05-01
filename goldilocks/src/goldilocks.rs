@@ -38,6 +38,13 @@ pub struct Goldilocks {
 }
 
 impl Goldilocks {
+    /// Multiply by 4. Naive baseline implementation; the bench harness uses
+    /// this as the reference point for shift+fold optimizations.
+    #[inline(always)]
+    pub fn quadruple(&self) -> Self {
+        self.double().double()
+    }
+
     /// Create a new field element from any `u64`.
     ///
     /// Any `u64` value is accepted. No reduction is performed since
