@@ -655,44 +655,22 @@ impl Sum for Goldilocks {
     }
 }
 
-/// Multiply a raw u64 Goldilocks value by `2^K` using shift+fold arithmetic.
+/// Multiply a raw u64 Goldilocks value by `2^k` using shift+fold arithmetic.
 ///
-/// Uses pure u64 arithmetic (no u128). The value `x * 2^K` is split into
-/// `lo = x << K` (bits that stay) and `hi = x >> (64 - K)` (overflow).
+/// Uses pure u64 arithmetic (no u128). The value `x * 2^k` is split into
+/// `lo = x << k` (bits that stay) and `hi = x >> (64 - k)` (overflow).
 /// Since `2^64 ≡ NEG_ORDER (mod p)`, the result is `lo + hi * NEG_ORDER`.
 ///
-/// This is faster than a full field multiply for small compile-time-known K
-/// because it avoids the u128 widening multiplication path. Best used when
-/// K is a const generic known at compile time.
-///
-/// K must be in `1..32`. For K = 0, the result is the input unchanged.
-/// For K ≥ 32, use `reduce128((value as u128) << K)` or the table-based
-/// `mul_2exp_u64` instead.
-/// Runtime version of `mul_pow2_raw` for when K is not a compile-time constant.
-/// K must be in `1..32`.
-#[allow(dead_code)]
+/// `k` must be in `1..32`. For k ≥ 32, use `reduce128((value as u128) << k)`
+/// or the table-based `mul_2exp_u64` instead.
 #[inline(always)]
 pub(crate) fn mul_pow2_raw_dyn(value: u64, k: u32) -> u64 {
     debug_assert!(k > 0 && k < 32);
     let hi = value >> (64 - k);
     let lo = value << k;
-    let correction = hi * Goldilocks::NEG_ORDER;
-    unsafe { add_no_canonicalize_trashing_input(lo, correction) }
-}
-
-/// Const-generic version of multiply by `2^K` using shift+fold.
-#[allow(dead_code)]
-#[inline(always)]
-pub(crate) fn mul_pow2_raw<const K: u32>(value: u64) -> u64 {
-    const {
-        assert!(K > 0 && K < 32, "mul_pow2_raw requires 0 < K < 32");
-    }
-    let hi = value >> (64 - K);
-    let lo = value << K;
-    // hi < 2^K < 2^32, NEG_ORDER < 2^32, so hi * NEG_ORDER < 2^64.
-    // lo < 2^64 and correction < 2^64, so their sum < 2^65.
-    // Precondition for add_no_canonicalize_trashing_input: x + y < 2^64 + ORDER.
-    // Since lo + correction < 2^65 < 2^64 + ORDER (ORDER ≈ 2^64), this holds.
+    // hi < 2^k < 2^32, NEG_ORDER < 2^32, so hi * NEG_ORDER < 2^64.
+    // lo + correction < 2^65 < 2^64 + ORDER, satisfying the precondition for
+    // add_no_canonicalize_trashing_input.
     let correction = hi * Goldilocks::NEG_ORDER;
     unsafe { add_no_canonicalize_trashing_input(lo, correction) }
 }
@@ -803,6 +781,9 @@ fn gcd_inversion(input: Goldilocks) -> Goldilocks {
     // We split the iterations into 2 rounds of length 63.
     const ROUND_SIZE: usize = 63;
 
+    // In theory we could make this slightly faster by replacing the first `gcd_inner` by a copy-pasted
+    // version which doesn't do any computations involving g. But either the compiler works this out
+    // for itself or the speed up is negligible as I couldn't notice any difference in benchmarks.
     let (f00, _, f10, _) = gcd_inner::<ROUND_SIZE>(&mut a, &mut b);
     let (_, _, f11, g11) = gcd_inner::<ROUND_SIZE>(&mut a, &mut b);
 
