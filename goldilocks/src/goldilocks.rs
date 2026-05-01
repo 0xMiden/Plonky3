@@ -80,15 +80,6 @@ impl Goldilocks {
     /// Two's complement of `ORDER`, i.e. `2^64 - ORDER = 2^32 - 1`.
     const NEG_ORDER: u64 = Self::ORDER_U64.wrapping_neg();
 
-    /// Multiply by 4 using shift+fold (7 instructions on aarch64).
-    ///
-    /// Faster than `self.double().double()` (11 insns, serial dependency)
-    /// and avoids the full field multiply path when LLVM can't inline the constant.
-    #[inline(always)]
-    pub fn quadruple(&self) -> Self {
-        Self::new(mul_pow2_raw_dyn(self.value, 2))
-    }
-
     /// A list of generators for the two-adic subgroups of the goldilocks field.
     ///
     /// These satisfy the properties that `TWO_ADIC_GENERATORS[0] = 1` and `TWO_ADIC_GENERATORS[i+1]^2 = TWO_ADIC_GENERATORS[i]`.
@@ -276,22 +267,13 @@ impl PrimeCharacteristicRing for Goldilocks {
 
     #[inline]
     fn mul_2exp_u64(&self, exp: u64) -> Self {
-        // 2^96 ≡ -1 (mod p), 2^192 ≡ 1 (mod p).
-        // For small exponents, shift+fold avoids the full field multiply.
-        // When exp is a compile-time constant, LLVM eliminates dead branches.
-        match exp {
-            0 => *self,
-            1 => self.double(),
-            2 => Self::new(mul_pow2_raw_dyn(self.value, 2)),
-            3 => Self::new(mul_pow2_raw_dyn(self.value, 3)),
-            4 => Self::new(mul_pow2_raw_dyn(self.value, 4)),
-            5 => Self::new(mul_pow2_raw_dyn(self.value, 5)),
-            6 => Self::new(mul_pow2_raw_dyn(self.value, 6)),
-            7 => Self::new(mul_pow2_raw_dyn(self.value, 7)),
-            8 => Self::new(mul_pow2_raw_dyn(self.value, 8)),
-            _ if exp < 96 => *self * Self::POWERS_OF_TWO[exp as usize],
-            _ if exp < 192 => -*self * Self::POWERS_OF_TWO[(exp - 96) as usize],
-            _ => self.mul_2exp_u64(exp % 192),
+        // In the Goldilocks field, 2^96 = -1 mod P and 2^192 = 1 mod P.
+        if exp < 96 {
+            *self * Self::POWERS_OF_TWO[exp as usize]
+        } else if exp < 192 {
+            -*self * Self::POWERS_OF_TWO[(exp - 96) as usize]
+        } else {
+            self.mul_2exp_u64(exp % 192)
         }
     }
 
@@ -653,26 +635,6 @@ impl Sum for Goldilocks {
         let sum = iter.map(|x| x.value as u128).sum::<u128>();
         reduce128(sum)
     }
-}
-
-/// Multiply a raw u64 Goldilocks value by `2^k` using shift+fold arithmetic.
-///
-/// Uses pure u64 arithmetic (no u128). The value `x * 2^k` is split into
-/// `lo = x << k` (bits that stay) and `hi = x >> (64 - k)` (overflow).
-/// Since `2^64 ≡ NEG_ORDER (mod p)`, the result is `lo + hi * NEG_ORDER`.
-///
-/// `k` must be in `1..32`. For k ≥ 32, use `reduce128((value as u128) << k)`
-/// or the table-based `mul_2exp_u64` instead.
-#[inline(always)]
-pub(crate) fn mul_pow2_raw_dyn(value: u64, k: u32) -> u64 {
-    debug_assert!(k > 0 && k < 32);
-    let hi = value >> (64 - k);
-    let lo = value << k;
-    // hi < 2^k < 2^32, NEG_ORDER < 2^32, so hi * NEG_ORDER < 2^64.
-    // lo + correction < 2^65 < 2^64 + ORDER, satisfying the precondition for
-    // add_no_canonicalize_trashing_input.
-    let correction = hi * Goldilocks::NEG_ORDER;
-    unsafe { add_no_canonicalize_trashing_input(lo, correction) }
 }
 
 /// Reduces to a 64-bit value. The result might not be in canonical form; it could be in between the

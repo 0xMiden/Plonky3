@@ -1,5 +1,4 @@
 use core::any::type_name;
-use core::hint::black_box;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use p3_field::{Field, PrimeCharacteristicRing};
@@ -64,18 +63,6 @@ fn bench_field(c: &mut Criterion) {
     benchmark_double_throughput::<F, REPS>(c, name);
 
     benchmark_chunked_linear_combination::<F, F, 100>(c, name);
-
-    // Goldilocks-specific benchmarks
-    {
-        let mut rng = SmallRng::seed_from_u64(1);
-        c.bench_function(&format!("{name} quadruple"), |b| {
-            b.iter_batched(
-                || rng.random::<F>(),
-                |x| black_box(black_box(x).quadruple()),
-                BatchSize::SmallInput,
-            );
-        });
-    }
 
     let mut rng = SmallRng::seed_from_u64(1);
     c.bench_function("7th_root", |b| {
