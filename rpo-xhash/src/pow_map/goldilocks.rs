@@ -38,9 +38,10 @@ impl Permutation<[Goldilocks; 12]> for PowMap12 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rand::rngs::StdRng;
     use rand::{RngExt, SeedableRng};
+
+    use super::*;
 
     #[test]
     fn w12_changes_state() {

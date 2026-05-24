@@ -20,10 +20,9 @@ use p3_baby_bear::{BabyBear, MdsMatrixBabyBear};
 use p3_field::PrimeField32;
 use rand::RngExt;
 
+use super::XHash;
 use crate::pow_map::babybear::PowMap24;
 use crate::rpo::babybear::SboxBB;
-
-use super::XHash;
 
 /// 3 rounds for XHash-BabyBear.
 pub const XHASH_BB_ROUNDS: usize = 3;
@@ -47,10 +46,11 @@ pub fn xhash_babybear(rng: &mut impl rand::Rng) -> XHashBabyBear {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use p3_symmetric::Permutation;
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
+
+    use super::*;
 
     #[test]
     fn xhash_babybear_deterministic() {

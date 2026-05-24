@@ -11,11 +11,10 @@ use p3_mds::MdsPermutation;
 use p3_mersenne_31::Mersenne31;
 use rand::RngExt;
 
+use super::XHash;
 use crate::mds_m31_bb::Mds24M31BBCol;
 use crate::pow_map::m31::PowMap24;
 use crate::rpo::m31::{RpoCirMds24, SboxM31};
-
-use super::XHash;
 
 /// 3 rounds for XHash-M31 (Section 3, paper specifies 3 rounds).
 pub const XHASH_M31_ROUNDS: usize = 3;
@@ -46,10 +45,11 @@ pub fn xhash_m31_bb_mds(rng: &mut impl rand::Rng) -> XHashM31BBMds {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use p3_symmetric::Permutation;
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
+
+    use super::*;
 
     #[test]
     fn xhash_m31_deterministic() {

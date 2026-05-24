@@ -98,9 +98,10 @@ impl MdsPermutation<Mersenne31, 24> for Mds24M31BBCol {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rand::rngs::StdRng;
     use rand::{RngExt, SeedableRng};
+
+    use super::*;
 
     #[test]
     fn changes_state() {

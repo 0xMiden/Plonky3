@@ -9,6 +9,7 @@
 //! After all rounds, a final linear layer applies MDS and adds RC.
 
 use alloc::vec::Vec;
+
 use p3_field::{Field, PackedValue, PrimeField};
 use p3_mds::MdsPermutation;
 use p3_symmetric::{CryptographicPermutation, Permutation};

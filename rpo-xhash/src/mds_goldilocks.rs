@@ -45,8 +45,9 @@ impl MdsPermutation<Goldilocks, 12> for MdsBase12 {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use p3_field::PrimeCharacteristicRing;
+
+    use super::*;
 
     // First row of miden-crypto's RPO/RPX MDS matrix.
     const MDS12_ROW: [Goldilocks; 12] = [

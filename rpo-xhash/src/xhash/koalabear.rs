@@ -1,4 +1,4 @@
-//! XHash-KoalaBear: 3 rounds, base d=5, extension X^3 over F_{p^3} (α³+α+4=0).
+//! XHash-KoalaBear: 3 rounds, base d=3, extension X^3 over F_{p^3} (α³+α+4=0).
 //!
 //! d=3 is the cheapest possible extension S-box (1 sqr + 1 mul per triplet).
 //!
@@ -13,10 +13,9 @@ use p3_field::PrimeField32;
 use p3_koala_bear::{KoalaBear, MdsMatrixKoalaBear};
 use rand::RngExt;
 
+use super::XHash;
 use crate::pow_map::koalabear::PowMap24;
 use crate::rpo::koalabear::SboxKB;
-
-use super::XHash;
 
 /// 3 rounds for XHash-KoalaBear.
 pub const XHASH_KB_ROUNDS: usize = 3;
@@ -40,10 +39,11 @@ pub fn xhash_koalabear(rng: &mut impl rand::Rng) -> XHashKoalaBear {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use p3_symmetric::Permutation;
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
+
+    use super::*;
 
     #[test]
     fn xhash_koalabear_deterministic() {

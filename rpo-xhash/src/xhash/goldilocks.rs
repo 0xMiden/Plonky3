@@ -15,11 +15,10 @@
 use p3_goldilocks::Goldilocks;
 use rand::RngExt;
 
+use super::XHash;
 use crate::mds_goldilocks::MdsBase12;
 use crate::pow_map::goldilocks::PowMap12;
 use crate::rpo::goldilocks::SboxGL;
-
-use super::XHash;
 
 /// 3 rounds for XHash-Goldilocks (matches miden-crypto's RPX256 round count).
 pub const XHASH_GL_ROUNDS: usize = 3;
@@ -38,10 +37,11 @@ pub fn xhash_goldilocks(rng: &mut impl rand::Rng) -> XHashGoldilocks {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use p3_symmetric::Permutation;
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
+
+    use super::*;
 
     #[test]
     fn xhash_goldilocks_deterministic() {

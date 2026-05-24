@@ -46,11 +46,12 @@ pub mod babybear {
 
 #[cfg(test)]
 mod tests {
-    use super::babybear;
     use p3_baby_bear::BabyBear;
     use p3_field::{PrimeCharacteristicRing, PrimeField32};
     use rand::rngs::StdRng;
     use rand::{RngExt, SeedableRng};
+
+    use super::babybear;
 
     #[test]
     fn babybear_fp2_matches_naive_field_ops() {

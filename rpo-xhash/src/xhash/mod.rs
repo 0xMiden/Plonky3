@@ -15,6 +15,7 @@
 //!   Final: MDS → RC
 
 use alloc::vec::Vec;
+
 use p3_field::PrimeField;
 use p3_mds::MdsPermutation;
 use p3_symmetric::{CryptographicPermutation, Permutation};

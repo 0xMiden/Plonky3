@@ -23,12 +23,11 @@ use p3_field::PrimeField32;
 use p3_field::{Field, PackedValue, PrimeCharacteristicRing};
 use rand::RngExt;
 
+use super::{RpoHash, RpoSbox};
 #[cfg(not(target_arch = "aarch64"))]
 use crate::reduce::monty31::from_raw_monty_u32;
 #[cfg(not(target_arch = "aarch64"))]
 use crate::reduce::monty31::monty_reduce_bb;
-
-use super::{RpoHash, RpoSbox};
 
 /// 7 rounds (same as RPO-M31 for comparable security at similar field size).
 pub const RPO_BB_ROUNDS: usize = 7;
@@ -80,7 +79,7 @@ fn apply_pow7(state: &mut [BabyBear; 24]) {
     }
 }
 
-/// x^{1/7} = x^{1725656503} for 24 BabyBear elements (operates on raw Montgomery residues).
+/// x^{1/7} = x^{1725656503} for 24 BabyBear elements.
 ///
 /// Exponent 0x66DB6DB7 = 0o14_66666666_7 (octal): digit '14' prefix,
 /// eight repeating '6's, final '7'.
@@ -246,10 +245,11 @@ pub fn rpo_babybear(rng: &mut impl rand::Rng) -> RpoBabyBear {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use p3_symmetric::Permutation;
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
+
+    use super::*;
 
     #[test]
     fn pow7_roundtrip() {

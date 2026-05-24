@@ -19,9 +19,8 @@ use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks;
 use rand::RngExt;
 
-use crate::mds_goldilocks::MdsBase12;
-
 use super::{RpoHash, RpoSbox};
+use crate::mds_goldilocks::MdsBase12;
 
 /// RPO-Goldilocks: 7 rounds (matches miden-crypto / RPO256 spec).
 pub const RPO_GL_ROUNDS: usize = 7;
@@ -127,10 +126,11 @@ pub fn rpo_goldilocks(rng: &mut impl rand::Rng) -> RpoGoldilocks {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use p3_symmetric::Permutation;
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
+
+    use super::*;
 
     #[test]
     fn pow7_roundtrip() {
@@ -187,10 +187,11 @@ mod tests {
 
 #[cfg(test)]
 mod miden_compat {
-    use super::{MdsBase12, RpoSbox, SboxGL};
-    use crate::rpo::add_rc;
     use p3_goldilocks::Goldilocks;
     use p3_symmetric::Permutation;
+
+    use super::{MdsBase12, RpoSbox, SboxGL};
+    use crate::rpo::add_rc;
 
     /// First-half round constants (forward step), copied verbatim from
     /// miden-crypto/src/hash/algebraic_sponge/rescue/mod.rs.

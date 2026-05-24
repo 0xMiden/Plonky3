@@ -31,9 +31,8 @@ use p3_mersenne_31::Mersenne31;
 use p3_symmetric::Permutation;
 use rand::RngExt;
 
-use crate::reduce::m31::reduce;
-
 use super::{RpoHash, RpoSbox};
+use crate::reduce::m31::reduce;
 
 /// Number of rounds for RPO-M31 (Section 3, 7 rounds = 14 steps + final).
 pub const RPO_M31_ROUNDS: usize = 7;
@@ -302,10 +301,11 @@ pub fn rpo_m31_bb_mds(rng: &mut impl rand::Rng) -> RpoM31BBMds {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use p3_symmetric::Permutation;
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
+
+    use super::*;
 
     #[test]
     fn pow5_roundtrip() {
