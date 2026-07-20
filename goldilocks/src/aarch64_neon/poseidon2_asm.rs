@@ -1164,9 +1164,20 @@ pub fn external_terminal_permute_dual_w8(
 // Each operates on both packed lanes simultaneously using uint64x2_t.
 
 #[inline(always)]
+unsafe fn canonicalize_neon(x: uint64x2_t) -> uint64x2_t {
+    unsafe {
+        let p_vec = vdupq_n_u64(P);
+        let ge_p = vcgeq_u64(x, p_vec);
+        let sub = vandq_u64(ge_p, p_vec);
+        vsubq_u64(x, sub)
+    }
+}
+
+#[inline(always)]
 unsafe fn add_neon(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t {
     unsafe {
-        let res = vaddq_u64(a, b);
+        let b_canon = canonicalize_neon(b);
+        let res = vaddq_u64(a, b_canon);
         let overflow = vcgtq_u64(a, res);
         let adj = vshrq_n_u64::<32>(overflow);
         vaddq_u64(res, adj)
@@ -1176,8 +1187,9 @@ unsafe fn add_neon(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t {
 #[inline(always)]
 unsafe fn sub_neon(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t {
     unsafe {
-        let res = vsubq_u64(a, b);
-        let underflow = vcgtq_u64(b, a);
+        let b_canon = canonicalize_neon(b);
+        let res = vsubq_u64(a, b_canon);
+        let underflow = vcgtq_u64(b_canon, a);
         let adj = vshrq_n_u64::<32>(underflow);
         vsubq_u64(res, adj)
     }
@@ -1316,8 +1328,8 @@ pub fn internal_permute_neon_w12(state: &mut [uint64x2_t; 12], constants: &[u64]
 
             let s0_0 = vgetq_lane_u64::<0>(s0);
             let s0_1 = vgetq_lane_u64::<1>(s0);
-            let s0_2_0 = mul_asm(s0_0, s0_0);
-            let s0_2_1 = mul_asm(s0_1, s0_1);
+            let s0_2_0 = multiply_p2(s0_0, s0_0);
+            let s0_2_1 = multiply_p2(s0_1, s0_1);
 
             let sum1 = add_neon(state[1], state[2]);
             let sum2 = add_neon(state[3], state[4]);
@@ -1325,10 +1337,10 @@ pub fn internal_permute_neon_w12(state: &mut [uint64x2_t; 12], constants: &[u64]
             let sum4 = add_neon(state[7], state[8]);
             let sum5 = add_neon(state[9], state[10]);
 
-            let s0_3_0 = mul_asm(s0_2_0, s0_0);
-            let s0_3_1 = mul_asm(s0_2_1, s0_1);
-            let s0_4_0 = mul_asm(s0_2_0, s0_2_0);
-            let s0_4_1 = mul_asm(s0_2_1, s0_2_1);
+            let s0_3_0 = multiply_p2(s0_2_0, s0_0);
+            let s0_3_1 = multiply_p2(s0_2_1, s0_1);
+            let s0_4_0 = multiply_p2(s0_2_0, s0_2_0);
+            let s0_4_1 = multiply_p2(s0_2_1, s0_2_1);
 
             let sum12 = add_neon(sum1, sum2);
             let sum34 = add_neon(sum3, sum4);
@@ -1352,8 +1364,8 @@ pub fn internal_permute_neon_w12(state: &mut [uint64x2_t; 12], constants: &[u64]
             let d10 = div4_neon(state[10]);
             let d11 = div8_neon(state[11]);
 
-            let s0_7_0 = mul_asm(s0_3_0, s0_4_0);
-            let s0_7_1 = mul_asm(s0_3_1, s0_4_1);
+            let s0_7_0 = multiply_p2(s0_3_0, s0_4_0);
+            let s0_7_1 = multiply_p2(s0_3_1, s0_4_1);
             let s0_7 = vcombine_u64(vcreate_u64(s0_7_0), vcreate_u64(s0_7_1));
 
             let sum = add_neon(sum_hi, s0_7);
@@ -1373,6 +1385,91 @@ pub fn internal_permute_neon_w12(state: &mut [uint64x2_t; 12], constants: &[u64]
         }
     }
     state[0] = s0;
+}
+
+// Scalar Goldilocks multiply after 0xPolygonZero/plonky2's
+// `poseidon_goldilocks_neon.rs` (MIT/Apache-2.0). Unlike `mul_asm`, whose
+// single asm block is opaque to the scheduler, these helpers are mostly plain
+// Rust, so LLVM interleaves the four s0 chains of the internal rounds. The
+// wraparound correction after the `lo - (hi >> 32)` step is a branch rather
+// than two ALU ops: it is taken with probability ~2^-32.
+
+const EPSILON: u64 = P.wrapping_neg();
+
+#[inline(always)]
+fn branch_hint() {
+    unsafe {
+        asm!("", options(nomem, nostack, preserves_flags));
+    }
+}
+
+#[inline(always)]
+unsafe fn add_with_wraparound(a: u64, b: u64) -> u64 {
+    let res: u64;
+    let adj: u64;
+    unsafe {
+        asm!(
+            "adds  {res}, {a}, {b}",
+            "csetm {adj:w}, cs",
+            a = in(reg) a,
+            b = in(reg) b,
+            res = lateout(reg) res,
+            adj = lateout(reg) adj,
+            options(pure, nomem, nostack),
+        );
+    }
+    res + adj
+}
+
+#[inline(always)]
+unsafe fn sub_with_wraparound_lsr32(a: u64, b: u64) -> u64 {
+    let mut b_hi = b >> 32;
+    // Optimization barrier (plonky2 idiom): keeps LLVM from folding the shift
+    // into the comparison below, which would lose the single-`lsr` form.
+    unsafe {
+        asm!(
+            "/* {0} */",
+            inlateout(reg) b_hi,
+            options(nomem, nostack, preserves_flags, pure),
+        );
+    }
+    match a.checked_sub(b_hi) {
+        Some(res) => res,
+        None => {
+            branch_hint();
+            let res_wrapped = a.wrapping_sub(b_hi);
+            res_wrapped - EPSILON
+        }
+    }
+}
+
+#[inline(always)]
+unsafe fn mul_epsilon_scalar(x: u64) -> u64 {
+    let res;
+    unsafe {
+        asm!(
+            "umull {res}, {x:w}, {epsilon:w}",
+            x = in(reg) x,
+            epsilon = in(reg) EPSILON,
+            res = lateout(reg) res,
+            options(pure, nomem, nostack, preserves_flags),
+        );
+    }
+    res
+}
+
+/// Scalar Goldilocks multiply; result is a valid (not necessarily canonical)
+/// representative for any `u64` inputs.
+#[inline(always)]
+unsafe fn multiply_p2(x: u64, y: u64) -> u64 {
+    let xy = (x as u128) * (y as u128);
+    let xy_lo = xy as u64;
+    let xy_hi = (xy >> 64) as u64;
+    unsafe {
+        let res0 = sub_with_wraparound_lsr32(xy_lo, xy_hi);
+        let xy_hi_lo_mul_epsilon = mul_epsilon_scalar(xy_hi);
+        add_with_wraparound(res0, xy_hi_lo_mul_epsilon)
+    }
 }
 
 #[inline]
@@ -1510,6 +1607,178 @@ pub fn internal_permute_neon<const WIDTH: usize>(
 
 // NEON-based external round: S-box stays scalar, MDS uses NEON.
 
+/// One Goldilocks field-mul as an SVE2 asm-template fragment:
+/// `zD = zA · zB mod P`, valid representatives in and out.
+///
+/// SVE2 provides the vector 64-bit `mul`/`umulh` that NEON lacks; the
+/// wraparound corrections use predicated add/sub. Contract with the enclosing
+/// asm block: `p7` holds `ptrue.d`, `z30` holds the EPSILON splat, and
+/// `z24`–`z26` and `p1` are clobbered (all declared by the callers below).
+#[cfg(target_feature = "sve2")]
+macro_rules! sve2_fm {
+    ($d:literal, $a:literal, $b:literal) => {
+        concat!(
+            "umulh z24.d, z", $a, ".d, z", $b, ".d\n",
+            "mul   z", $d, ".d, z", $a, ".d, z", $b, ".d\n",
+            "lsr   z25.d, z24.d, #32\n",
+            "cmphi p1.d, p7/z, z25.d, z", $d, ".d\n",
+            "sub   z", $d, ".d, z", $d, ".d, z25.d\n",
+            "sub   z", $d, ".d, p1/m, z", $d, ".d, z30.d\n",
+            "lsl   z26.d, z24.d, #32\n",
+            "and   z24.d, z24.d, #0xFFFFFFFF\n",
+            "sub   z26.d, z26.d, z24.d\n",
+            "add   z", $d, ".d, z", $d, ".d, z26.d\n",
+            "cmphi p1.d, p7/z, z26.d, z", $d, ".d\n",
+            "add   z", $d, ".d, p1/m, z", $d, ".d, z30.d\n",
+        )
+    };
+}
+
+/// x^7 S-box for 4 state elements (both lanes each) entirely in the vector
+/// domain: 16 field-muls, register-resident, no lane extraction. States arrive
+/// in z0–z3; x² in z4–z7, x³ in z8–z11, x⁴ in z12–z15, x⁷ back into z0–z3.
+#[cfg(target_feature = "sve2")]
+#[inline(always)]
+unsafe fn sbox4_sve2(state: &mut [uint64x2_t; 4]) {
+    unsafe {
+        let (s0, s1, s2, s3): (uint64x2_t, uint64x2_t, uint64x2_t, uint64x2_t);
+        asm!(
+            "ptrue p7.d",
+            "mov   {tmp}, #0xFFFFFFFF",
+            "dup   z30.d, {tmp}",
+            // x^2
+            sve2_fm!("4", "0", "0"),
+            sve2_fm!("5", "1", "1"),
+            sve2_fm!("6", "2", "2"),
+            sve2_fm!("7", "3", "3"),
+            // x^3 = x^2 · x
+            sve2_fm!("8", "4", "0"),
+            sve2_fm!("9", "5", "1"),
+            sve2_fm!("10", "6", "2"),
+            sve2_fm!("11", "7", "3"),
+            // x^4 = x^2 · x^2
+            sve2_fm!("12", "4", "4"),
+            sve2_fm!("13", "5", "5"),
+            sve2_fm!("14", "6", "6"),
+            sve2_fm!("15", "7", "7"),
+            // x^7 = x^3 · x^4
+            sve2_fm!("0", "8", "12"),
+            sve2_fm!("1", "9", "13"),
+            sve2_fm!("2", "10", "14"),
+            sve2_fm!("3", "11", "15"),
+            tmp = out(reg) _,
+            inout("v0") state[0] => s0,
+            inout("v1") state[1] => s1,
+            inout("v2") state[2] => s2,
+            inout("v3") state[3] => s3,
+            out("v4") _, out("v5") _, out("v6") _, out("v7") _,
+            out("v8") _, out("v9") _, out("v10") _, out("v11") _,
+            out("v12") _, out("v13") _, out("v14") _, out("v15") _,
+            out("v24") _, out("v25") _, out("v26") _, out("v30") _,
+            out("p1") _, out("p7") _,
+            options(pure, nomem, nostack),
+        );
+        state[0] = s0;
+        state[1] = s1;
+        state[2] = s2;
+        state[3] = s3;
+    }
+}
+
+/// x^7 S-box for 6 state elements — wider block for W12: 6 independent multiply
+/// chains per stage (vs 4) to cover the SVE mul latency, and one fewer block
+/// boundary. Register budget: states z0–z5, x² z6–z11, x³ z12–z17, x⁴ z18–z23,
+/// temps z24–z26, EPSILON z30 — 28 of 32.
+#[cfg(target_feature = "sve2")]
+#[inline(always)]
+unsafe fn sbox6_sve2(state: &mut [uint64x2_t; 6]) {
+    unsafe {
+        let (s0, s1, s2, s3, s4, s5): (
+            uint64x2_t,
+            uint64x2_t,
+            uint64x2_t,
+            uint64x2_t,
+            uint64x2_t,
+            uint64x2_t,
+        );
+        asm!(
+            "ptrue p7.d",
+            "mov   {tmp}, #0xFFFFFFFF",
+            "dup   z30.d, {tmp}",
+            // x^2
+            sve2_fm!("6", "0", "0"),
+            sve2_fm!("7", "1", "1"),
+            sve2_fm!("8", "2", "2"),
+            sve2_fm!("9", "3", "3"),
+            sve2_fm!("10", "4", "4"),
+            sve2_fm!("11", "5", "5"),
+            // x^3 = x^2 · x
+            sve2_fm!("12", "6", "0"),
+            sve2_fm!("13", "7", "1"),
+            sve2_fm!("14", "8", "2"),
+            sve2_fm!("15", "9", "3"),
+            sve2_fm!("16", "10", "4"),
+            sve2_fm!("17", "11", "5"),
+            // x^4 = x^2 · x^2
+            sve2_fm!("18", "6", "6"),
+            sve2_fm!("19", "7", "7"),
+            sve2_fm!("20", "8", "8"),
+            sve2_fm!("21", "9", "9"),
+            sve2_fm!("22", "10", "10"),
+            sve2_fm!("23", "11", "11"),
+            // x^7 = x^3 · x^4
+            sve2_fm!("0", "12", "18"),
+            sve2_fm!("1", "13", "19"),
+            sve2_fm!("2", "14", "20"),
+            sve2_fm!("3", "15", "21"),
+            sve2_fm!("4", "16", "22"),
+            sve2_fm!("5", "17", "23"),
+            tmp = out(reg) _,
+            inout("v0") state[0] => s0,
+            inout("v1") state[1] => s1,
+            inout("v2") state[2] => s2,
+            inout("v3") state[3] => s3,
+            inout("v4") state[4] => s4,
+            inout("v5") state[5] => s5,
+            out("v6") _, out("v7") _, out("v8") _, out("v9") _,
+            out("v10") _, out("v11") _, out("v12") _, out("v13") _,
+            out("v14") _, out("v15") _, out("v16") _, out("v17") _,
+            out("v18") _, out("v19") _, out("v20") _, out("v21") _,
+            out("v22") _, out("v23") _, out("v24") _, out("v25") _,
+            out("v26") _, out("v30") _,
+            out("p1") _, out("p7") _,
+            options(pure, nomem, nostack),
+        );
+        state[0] = s0;
+        state[1] = s1;
+        state[2] = s2;
+        state[3] = s3;
+        state[4] = s4;
+        state[5] = s5;
+    }
+}
+
+/// x^7 S-box layer over the whole state, SVE2. Six-element blocks where the
+/// width allows (six independent multiply chains cover the vector-mul latency
+/// better than four), four-element blocks otherwise.
+#[cfg(target_feature = "sve2")]
+#[inline(always)]
+unsafe fn sbox_neon<const WIDTH: usize>(state: &mut [uint64x2_t; WIDTH]) {
+    const { assert!(WIDTH % 6 == 0 || WIDTH % 4 == 0) }
+    unsafe {
+        if WIDTH % 6 == 0 {
+            for chunk in state.chunks_exact_mut(6) {
+                sbox6_sve2(chunk.try_into().unwrap());
+            }
+        } else {
+            for chunk in state.chunks_exact_mut(4) {
+                sbox4_sve2(chunk.try_into().unwrap());
+            }
+        }
+    }
+}
+
+#[cfg(not(target_feature = "sve2"))]
 #[inline(always)]
 unsafe fn sbox_neon<const WIDTH: usize>(state: &mut [uint64x2_t; WIDTH]) {
     unsafe {
@@ -2635,6 +2904,20 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_add_neon_second_order_overflow() {
+        unsafe {
+            let (r0, r1) = read_neon(add_neon(
+                make_neon(u64::MAX, u64::MAX),
+                make_neon(u64::MAX, u64::MAX),
+            ));
+            let expected = add_asm(u64::MAX, u64::MAX);
+            assert_eq!(canon(r0), canon(expected));
+            assert_eq!(canon(r1), canon(expected));
+            assert_eq!(canon(expected), (1u64 << 33) - 4);
+        }
+    }
+
     fn test_internal_neon_matches_scalar<const WIDTH: usize>(
         diag: [F; WIDTH],
         neon_fn: fn(&mut [uint64x2_t; WIDTH], &[u64]),
@@ -3127,5 +3410,101 @@ mod tests {
             &GOLDILOCKS_POSEIDON2_RC_16_EXTERNAL_FINAL,
         );
         check_1d("RC_16_INTERNAL", &GOLDILOCKS_POSEIDON2_RC_16_INTERNAL);
+    }
+}
+
+#[cfg(test)]
+mod field_op_tests {
+    use p3_field::PrimeField64;
+    use proptest::prelude::*;
+    use rand::rngs::SmallRng;
+    use rand::{RngExt, SeedableRng};
+
+    use super::*;
+    use crate::Goldilocks;
+
+    /// Raw operand patterns stressing every wraparound correction: field
+    /// extremes, the epsilon window, and non-canonical values up to u64::MAX.
+    /// The ops under test accept any u64 residue.
+    const EDGE: [u64; 8] = [0, 1, (1 << 32) - 1, 1 << 32, 1 << 63, P - 1, P, u64::MAX];
+
+    fn mul_ref(x: u64, y: u64) -> u64 {
+        ((x as u128 % P as u128) * (y as u128 % P as u128) % P as u128) as u64
+    }
+
+    fn pow7_ref(x: u64) -> u64 {
+        let x2 = mul_ref(x, x);
+        let x3 = mul_ref(x2, x);
+        mul_ref(mul_ref(x2, x2), x3)
+    }
+
+    fn canonical(x: u64) -> u64 {
+        Goldilocks::new(x).as_canonical_u64()
+    }
+
+    #[test]
+    fn multiply_p2_matches_reference() {
+        // 2^63 · 2^63 has a zero low product half, forcing the rare borrow
+        // branch in `sub_with_wraparound_lsr32`.
+        assert_eq!(canonical(unsafe { multiply_p2(1 << 63, 1 << 63) }), mul_ref(1 << 63, 1 << 63));
+
+        for &x in &EDGE {
+            for &y in &EDGE {
+                assert_eq!(
+                    canonical(unsafe { multiply_p2(x, y) }),
+                    mul_ref(x, y),
+                    "x={x:#x} y={y:#x}"
+                );
+            }
+        }
+
+        let mut rng = SmallRng::seed_from_u64(0x1234);
+        for _ in 0..100_000 {
+            let (x, y): (u64, u64) = (rng.random(), rng.random());
+            assert_eq!(canonical(unsafe { multiply_p2(x, y) }), mul_ref(x, y), "x={x:#x} y={y:#x}");
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn multiply_p2_matches_reference_prop(x in any::<u64>(), y in any::<u64>()) {
+            prop_assert_eq!(canonical(unsafe { multiply_p2(x, y) }), mul_ref(x, y));
+        }
+    }
+
+    fn check_sbox<const W: usize>(raw: &dyn Fn(usize, usize) -> u64) {
+        unsafe {
+            let mut state: [uint64x2_t; W] = core::array::from_fn(|i| {
+                vcombine_u64(vcreate_u64(raw(i, 0)), vcreate_u64(raw(i, 1)))
+            });
+            sbox_neon(&mut state);
+            for i in 0..W {
+                let lanes = [vgetq_lane_u64::<0>(state[i]), vgetq_lane_u64::<1>(state[i])];
+                for (lane, got) in lanes.into_iter().enumerate() {
+                    assert_eq!(
+                        canonical(got),
+                        pow7_ref(raw(i, lane)),
+                        "width {W}, element {i}, lane {lane}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sbox_neon_matches_reference() {
+        // Edge values in every (element, lane) arrangement the rotation gives;
+        // widths cover both the 6-element and 4-element block dispatch.
+        for rot in 0..EDGE.len() {
+            check_sbox::<8>(&|i, lane| EDGE[(i + 3 * lane + rot) % EDGE.len()]);
+            check_sbox::<12>(&|i, lane| EDGE[(i + 3 * lane + rot) % EDGE.len()]);
+            check_sbox::<16>(&|i, lane| EDGE[(i + 3 * lane + rot) % EDGE.len()]);
+        }
+
+        let mut rng = SmallRng::seed_from_u64(0x5B0C);
+        for _ in 0..500 {
+            let vals: [[u64; 2]; 12] = core::array::from_fn(|_| [rng.random(), rng.random()]);
+            check_sbox::<12>(&|i, lane| vals[i][lane]);
+        }
     }
 }
