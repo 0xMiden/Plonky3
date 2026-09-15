@@ -84,8 +84,10 @@ fn cloned_dfts_complete_with_cold_and_warm_caches() {
             });
             let _ = done.send(result);
         });
+        // A hang guard, not a performance bound: debug builds on loaded CI runners take tens
+        // of seconds per pool size.
         let result = completed
-            .recv_timeout(Duration::from_secs(30))
+            .recv_timeout(Duration::from_secs(300))
             .unwrap_or_else(|error| {
                 panic!(
                     "shared-cache worker did not report completion with {threads} threads: {error}"
